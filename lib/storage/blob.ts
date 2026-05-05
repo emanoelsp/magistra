@@ -78,19 +78,23 @@ export interface UploadOptions {
   contentType: string;
 }
 
-/** Upload a file. Returns the public URL stored in Firestore. */
+/** Upload a file. Returns the URL stored in Firestore. */
 export async function uploadFile({ path, buffer, contentType }: UploadOptions): Promise<string> {
   const blob = await put(path, buffer, {
-    access: "public",
+    access: "private",
     contentType,
     addRandomSuffix: false,
   });
   return blob.url;
 }
 
-/** Download a file by its URL. Works with Vercel Blob URLs (and plain https:// URLs). */
+/** Download a file by its URL. Adds auth header for private Vercel Blob URLs. */
 export async function downloadFile(url: string): Promise<Buffer> {
-  const res = await fetch(url);
+  const headers: Record<string, string> = {};
+  if (url.includes("blob.vercel-storage.com") && process.env.BLOB_READ_WRITE_TOKEN) {
+    headers["Authorization"] = `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`;
+  }
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`Storage fetch failed: ${res.status} ${url}`);
   return Buffer.from(await res.arrayBuffer());
 }

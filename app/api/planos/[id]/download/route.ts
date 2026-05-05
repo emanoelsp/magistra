@@ -9,6 +9,21 @@ import { downloadFile } from "../../../../../lib/storage/blob";
 import { injectPlaceholders, fillDocx } from "../../../../../lib/utils/docx-filler";
 import type { PlanoRecord, TemplateFieldSchema, TemplateRecord } from "../../../../../lib/types/firestore";
 
+function sanitizeFilename(name: string, ext: string): string {
+  const safe = name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9\s\-_()]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+  return (safe || "plano") + "." + ext;
+}
+
+function escapeTemplateDelimiters(value: string): string {
+  return value.replace(/\{\{/g, "{ {").replace(/\}\}/g, "} }");
+}
+
 function htmlToPlainText(html: string): string {
   if (!html || !html.trim().startsWith("<")) return html;
   return html
@@ -281,19 +296,23 @@ export async function GET(
           docxBuffer = injectPlaceholders(origRaw, schema);
         }
 
-        const filledBuffer = fillDocx(docxBuffer, schema, conteudo);
+        const safeConteudo = Object.fromEntries(
+          Object.entries(conteudo).map(([k, v]) => [k, escapeTemplateDelimiters(v)]),
+        );
+        const filledBuffer = fillDocx(docxBuffer, schema, safeConteudo);
         const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         const filledBlob = new Blob([new Uint8Array(filledBuffer)], { type: mimeType });
+        const docxFilename = sanitizeFilename(templateNome, ext);
 
         return new NextResponse(filledBlob, {
           headers: {
             "Content-Type": mimeType,
-            "Content-Disposition": `attachment; filename="plano-${id.slice(0, 8)}.docx"`,
+            "Content-Disposition": `attachment; filename="${docxFilename}"`,
             "Content-Length": String(filledBuffer.length),
           },
         });
       } catch (docxErr) {
-        console.warn("[PlanoMestre/download] Falha no DOCX, fallback para PDF:", docxErr);
+        console.error("[PlanoMestre/download] Falha no DOCX:", docxErr);
       }
     }
 
@@ -313,10 +332,11 @@ export async function GET(
     }
 
     const pdfBuffer = Buffer.from(pdfBytes);
+    const pdfFilename = sanitizeFilename(templateNome, "pdf");
     return new NextResponse(pdfBuffer, {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="plano-${id.slice(0, 8)}.pdf"`,
+        "Content-Disposition": `attachment; filename="${pdfFilename}"`,
         "Content-Length": String(pdfBuffer.length),
       },
     });
