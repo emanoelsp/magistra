@@ -721,7 +721,7 @@ export function PlanGenerationWizard({
           {/* Rodapé do documento */}
           <div className="flex items-center justify-between border-t border-slate-100 px-8 py-4">
             <p className="text-xs text-slate-400">
-              Gerado por <span className="font-semibold text-slate-600">PlanoMestre</span> · {userName}
+              Gerado por <span className="font-semibold text-slate-600">PlanoMagistra</span> · {userName}
             </p>
             {!savedPlanoId && (
               <button

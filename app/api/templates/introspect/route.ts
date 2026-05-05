@@ -24,7 +24,7 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       const isRetryable = status === 503 || status === 429 || msg.includes("503") || msg.includes("high demand");
       if (!isRetryable || attempt === MAX_RETRIES) throw err;
       const delay = RETRY_DELAY_MS * attempt;
-      console.log(`[PlanoMestre] Retry ${attempt}/${MAX_RETRIES} em ${delay}ms (modelo sob demanda)...`);
+      console.log(`[PlanoMagistra] Retry ${attempt}/${MAX_RETRIES} em ${delay}ms (modelo sob demanda)...`);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     const templateId = (formData.get("templateId") as string | null) ?? null;
     const file = formData.get("file") as File | null;
 
-    console.log("[PlanoMestre] 2. Extraindo campos do template...", { templateId, arquivo: (file as File & { name?: string })?.name, modelo: MODEL_NAME });
+    console.log("[PlanoMagistra] 2. Extraindo campos do template...", { templateId, arquivo: (file as File & { name?: string })?.name, modelo: MODEL_NAME });
 
     if (!templateId || !file) {
       return NextResponse.json({ error: "templateId e arquivo PDF são obrigatórios." }, { status: 400 });
@@ -222,7 +222,7 @@ export async function POST(request: Request) {
       schema_campos: schema,
     });
 
-    console.log("[PlanoMestre] 2. Campos extraídos com sucesso", { templateId, totalCampos: (schema as unknown[]).length });
+    console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: (schema as unknown[]).length });
 
     // Async: regenerate the fillable DOCX now that schema is known
     void (async () => {
@@ -249,7 +249,7 @@ export async function POST(request: Request) {
         });
         await db.collection("templates").doc(templateId).update({ arquivo_fillable_url: fillableUrl });
       } catch (e) {
-        console.warn("[PlanoMestre/introspect] Falha ao regenerar DOCX preenchível:", e);
+        console.warn("[PlanoMagistra/introspect] Falha ao regenerar DOCX preenchível:", e);
       }
     })();
 

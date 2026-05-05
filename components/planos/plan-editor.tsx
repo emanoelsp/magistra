@@ -594,7 +594,7 @@ function AISuggestionsPanel({
         </span>
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">
-            PlanoMestre IA
+            PlanoMagistra IA
           </p>
           <p className="text-sm font-medium text-slate-800">
             {activeField ? activeField.label : "Sugestões por campo"}

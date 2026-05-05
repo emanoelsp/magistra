@@ -61,7 +61,7 @@ export default async function DashboardPage() {
         <div className="flex flex-col gap-8 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.24em] text-emerald-300">Dashboard</p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight">Visão geral do PlanoMestre</h1>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight">Visão geral do PlanoMagistra</h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
               Acompanhe capacidade operacional, volume de geração e o estado atual dos fluxos pedagógicos.
             </p>

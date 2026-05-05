@@ -152,7 +152,7 @@ export async function POST(request: Request) {
         });
       });
     } catch (err) {
-      console.error("[PlanoMestre/api/ia/campo] Erro no Gemini:", err);
+      console.error("[PlanoMagistra/api/ia/campo] Erro no Gemini:", err);
       return NextResponse.json({ error: "Falha ao gerar sugestões." }, { status: 502 });
     }
 
@@ -172,7 +172,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ sugestoes });
   } catch (error) {
-    console.error("[PlanoMestre/api/ia/campo] Erro:", error);
+    console.error("[PlanoMagistra/api/ia/campo] Erro:", error);
     return NextResponse.json({ error: "Falha ao gerar sugestões para o campo." }, { status: 500 });
   }
 }

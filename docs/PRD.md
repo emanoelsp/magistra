@@ -1,4 +1,4 @@
-# PRD — PlanoMestre
+# PRD — PlanoMagistra
 
 ## Objetivo
 
@@ -16,7 +16,7 @@ Cada escola tem um template Word diferente. O professor precisa:
 3. Copiar e adaptar os conteúdos campo a campo
 4. Salvar e postar no sistema da escola
 
-Isso leva 2–4h por plano. O PlanoMestre transforma isso em 20–30 minutos.
+Isso leva 2–4h por plano. O PlanoMagistra transforma isso em 20–30 minutos.
 
 ---
 

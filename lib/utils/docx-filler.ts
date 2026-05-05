@@ -1,5 +1,5 @@
 /**
- * docx-filler — PlanoMestre
+ * docx-filler — PlanoMagistra
  *
  * Label-based injection: no span/shading requirements.
  * For each table row we scan cells left-to-right:
