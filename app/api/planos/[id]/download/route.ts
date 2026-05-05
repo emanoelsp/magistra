@@ -312,7 +312,7 @@ export async function GET(
           },
         });
       } catch (docxErr) {
-        console.error("[PlanoMestre/download] Falha no DOCX:", docxErr);
+        console.warn("[PlanoMagistra/download] Falha no DOCX, fallback para PDF:", docxErr);
       }
     }
 
@@ -324,7 +324,7 @@ export async function GET(
         const originalBuffer = await downloadFile(arquivoUrl);
         pdfBytes = await overlayValuesOnPdf(originalBuffer, schema, conteudo);
       } catch (storageErr) {
-        console.warn("[PlanoMestre/download] Storage indisponível, usando PDF gerado:", storageErr);
+        console.warn("[PlanoMagistra/download] Storage indisponível, usando PDF gerado:", storageErr);
         pdfBytes = await buildFallbackPdf(templateNome, schema, conteudo);
       }
     } else {
@@ -341,7 +341,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("[PlanoMestre/download] Erro:", error);
+    console.error("[PlanoMagistra/download] Erro:", error);
     return NextResponse.json({ error: "Falha ao gerar PDF." }, { status: 500 });
   }
 }

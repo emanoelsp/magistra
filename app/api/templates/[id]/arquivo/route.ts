@@ -51,7 +51,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("[PlanoMestre/api/templates/[id]/arquivo] Erro:", error);
+    console.error("[PlanoMagistra/api/templates/[id]/arquivo] Erro:", error);
     return NextResponse.json({ error: "Falha ao carregar arquivo." }, { status: 500 });
   }
 }

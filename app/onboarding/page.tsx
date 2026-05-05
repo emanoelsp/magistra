@@ -11,7 +11,7 @@ const PLANS = [
     badge: "Grátis no MVP",
     price: "R$ 19,90",
     period: "/ mês",
-    description: "Para professores que querem experimentar o PlanoMestre.",
+    description: "Para professores que querem experimentar o PlanoMagistra.",
     features: [
       "2 templates ativos",
       "3 planos por mês",
@@ -97,7 +97,7 @@ export default function OnboardingPage() {
       <div className="text-center">
         <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-4 py-1.5 text-sm font-semibold text-emerald-700">
           <Sparkles className="h-4 w-4" />
-          Bem-vindo ao PlanoMestre
+          Bem-vindo ao PlanoMagistra
         </span>
         <h1 className="mt-5 text-4xl font-semibold tracking-tight text-slate-950">
           Escolha seu plano

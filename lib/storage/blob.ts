@@ -1,5 +1,5 @@
 /**
- * Storage abstraction — PlanoMestre
+ * Storage abstraction — PlanoMagistra
  *
  * Implementação atual: Vercel Blob (tier gratuito 500 MB)
  * Env var necessária: BLOB_READ_WRITE_TOKEN (gerada em vercel.com → Storage → Blob)
@@ -17,7 +17,7 @@
  *    CF_R2_ACCOUNT_ID=xxx
  *    CF_R2_ACCESS_KEY_ID=xxx
  *    CF_R2_SECRET_ACCESS_KEY=xxx
- *    CF_R2_BUCKET_NAME=planomestre-templates
+ *    CF_R2_BUCKET_NAME=planomagistra-templates
  *    CF_R2_PUBLIC_URL=https://seu-dominio.r2.dev (ou custom domain)
  *
  * 4. npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner

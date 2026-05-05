@@ -153,14 +153,14 @@ export async function POST(
           });
           await db.collection("templates").doc(id).update({ arquivo_fillable_url: fillablePath });
         } catch (e) {
-          console.warn("[PlanoMestre/re-introspect] Falha ao regenerar DOCX preenchível:", e);
+          console.warn("[PlanoMagistra/re-introspect] Falha ao regenerar DOCX preenchível:", e);
         }
       })();
     }
 
     return NextResponse.json({ ok: true, schema, totalCampos: (schema as unknown[]).length });
   } catch (error) {
-    console.error("[PlanoMestre/re-introspect] Erro:", error);
+    console.error("[PlanoMagistra/re-introspect] Erro:", error);
     return NextResponse.json({ error: "Falha ao re-extrair campos do template." }, { status: 500 });
   }
 }

@@ -145,9 +145,7 @@ export default function HomePage() {
         {/* ── NAV ─────────────────────────────────────────────────── */}
         <nav className="nav-glass fixed inset-x-0 top-0 z-50 border-b border-slate-100">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <span className="text-xl font-black tracking-tight text-slate-950">
-              PLANO<span className="wordmark-accent">MESTRE</span>
-            </span>
+            <img src="/images/logo.png" alt="PlanoMagistra" className="h-20 w-auto" />
             <div className="hidden items-center gap-8 text-sm font-medium text-slate-500 md:flex">
               <a href="#como-funciona" className="transition hover:text-slate-950">Como funciona</a>
               <a href="#recursos"      className="transition hover:text-slate-950">Recursos</a>
@@ -168,7 +166,7 @@ export default function HomePage() {
         </nav>
 
         {/* ── HERO ────────────────────────────────────────────────── */}
-        <section className="grid-texture hero-glow relative overflow-hidden pt-20">
+        <section className="grid-texture hero-glow relative overflow-hidden pt-10">
           <div className="mx-auto max-w-7xl px-6 pb-20 pt-24 sm:pt-32">
             <div className="grid gap-16 lg:grid-cols-[1fr,400px] lg:items-center">
 
@@ -190,7 +188,7 @@ export default function HomePage() {
                   >
                     PLANO
                     <br />
-                    <span className="wordmark-accent">MESTRE</span>
+                    <span className="wordmark-accent">MAGISTRA</span>
                   </h1>
                 </div>
 
@@ -354,7 +352,7 @@ export default function HomePage() {
                 Seu template.<br />Nossa inteligência.
               </h2>
               <p className="mx-auto mt-5 max-w-lg text-lg text-slate-500">
-                O PlanoMestre aprende a estrutura do documento da sua escola e preenche cada campo com sugestões pedagógicas precisas.
+                O PlanoMagistra aprende a estrutura do documento da sua escola e preenche cada campo com sugestões pedagógicas precisas.
               </p>
             </div>
 
@@ -505,7 +503,7 @@ export default function HomePage() {
                   <span className="wordmark-accent">já é da sua escola.</span>
                 </h2>
                 <p className="mt-6 text-lg leading-relaxed text-slate-600">
-                  Outros sistemas pedem que você adapte seu trabalho. O PlanoMestre faz o oposto: você sobe o documento que a escola já usa, e a IA aprende a estrutura dele.
+                  Outros sistemas pedem que você adapte seu trabalho. O PlanoMagistra faz o oposto: você sobe o documento que a escola já usa, e a IA aprende a estrutura dele.
                 </p>
                 <p className="mt-4 text-lg leading-relaxed text-slate-600">
                   Resultado? Planos no formato exato que a coordenação espera, com conteúdo pedagógico alinhado à BNCC — sem horas de digitação.
@@ -587,7 +585,7 @@ export default function HomePage() {
                     badge: "Grátis no MVP",
                     price: "R$ 19,90",
                     period: "/ mês",
-                    desc: "Para professores que querem experimentar o PlanoMestre.",
+                    desc: "Para professores que querem experimentar o PlanoMagistra.",
                     features: [
                       "2 templates ativos",
                       "3 planos por mês",
@@ -717,7 +715,7 @@ export default function HomePage() {
               <span className="wordmark-accent">em 40 minutos.</span>
             </h2>
             <p className="mx-auto mt-5 max-w-lg text-lg text-slate-400">
-              Junte-se a 2.400 professores que já automatizaram a burocracia escolar com o PlanoMestre.
+              Junte-se a 2.400 professores que já automatizaram a burocracia escolar com o PlanoMagistra.
             </p>
             <div className="mt-10 flex flex-wrap justify-center gap-4">
               <Link
@@ -741,12 +739,9 @@ export default function HomePage() {
 
         {/* ── FOOTER ───────────────────────────────────────────────── */}
         <footer className="border-t border-slate-800 bg-slate-950 py-8">
-          <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 sm:flex-row">
-            <span className="text-sm font-black tracking-tight text-slate-400">
-              PLANO<span className="wordmark-accent">MESTRE</span>
-            </span>
-            <p className="text-xs text-slate-600">
-              © 2025 PlanoMestre · Para professores da educação básica brasileira
+          <div className="mx-auto flex max-w-7xl items-center justify-center px-6">
+            <p className="text-xs text-slate-400">
+              © 2025 PlanoMagistra · Para professores da educação básica brasileira
             </p>
           </div>
         </footer>
