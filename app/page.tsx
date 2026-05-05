@@ -145,7 +145,7 @@ export default function HomePage() {
         {/* ── NAV ─────────────────────────────────────────────────── */}
         <nav className="nav-glass fixed inset-x-0 top-0 z-50 border-b border-slate-100">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <img src="/images/logo.png" alt="PlanoMagistra" className="h-8 w-auto" />
+            <img src="/images/logo.png" alt="PlanoMagistra" className="h-10 w-auto" />
             <div className="hidden items-center gap-8 text-sm font-medium text-slate-500 md:flex">
               <a href="#como-funciona" className="transition hover:text-slate-950">Como funciona</a>
               <a href="#recursos"      className="transition hover:text-slate-950">Recursos</a>
@@ -739,9 +739,8 @@ export default function HomePage() {
 
         {/* ── FOOTER ───────────────────────────────────────────────── */}
         <footer className="border-t border-slate-800 bg-slate-950 py-8">
-          <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 sm:flex-row">
-            <img src="/images/logo.png" alt="PlanoMagistra" className="h-6 w-auto opacity-70" />
-            <p className="text-xs text-slate-600">
+          <div className="mx-auto flex max-w-7xl items-center justify-center px-6">
+            <p className="text-xs text-slate-400">
               © 2025 PlanoMagistra · Para professores da educação básica brasileira
             </p>
           </div>
