@@ -30,7 +30,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       <aside className="w-56 shrink-0 border-r border-slate-200 bg-white px-4 py-6">
         <div className="mb-8">
           <span className="text-xs font-semibold uppercase tracking-widest text-violet-600">
-            PlanoMestre
+            PlanoMagistra
           </span>
           <p className="mt-0.5 text-sm font-bold text-slate-950">Backoffice Admin</p>
         </div>

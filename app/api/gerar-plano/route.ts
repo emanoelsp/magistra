@@ -30,7 +30,7 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       lastError = err;
       if (!isRetryableError(err) || attempt === MAX_RETRIES) throw err;
       const delay = RETRY_DELAY_MS * attempt;
-      console.log(`[PlanoMestre] Retry ${attempt}/${MAX_RETRIES} em ${delay}ms (503/429)...`);
+      console.log(`[PlanoMagistra] Retry ${attempt}/${MAX_RETRIES} em ${delay}ms (503/429)...`);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GOOGLE_GEMINI_API_KEY não configurada." }, { status: 500 });
     }
 
-    console.log("[PlanoMestre] 4. Gerando sugestões da IA...", { templateId, useLegacyFormat, camposIa: iaFields.length });
+    console.log("[PlanoMagistra] 4. Gerando sugestões da IA...", { templateId, useLegacyFormat, camposIa: iaFields.length });
 
     const genAI = new GoogleGenerativeAI(apiKey);
 
@@ -115,7 +115,7 @@ export async function POST(request: Request) {
         const lb = rawText.lastIndexOf("}");
         parsed = fb >= 0 && lb > fb ? JSON.parse(rawText.slice(fb, lb + 1)) : {};
       }
-      console.log("[PlanoMestre] 4. Sugestões da IA geradas (legado)", { conteudo: typeof parsed === "object" ? Object.keys(parsed as object).length : 0 });
+      console.log("[PlanoMagistra] 4. Sugestões da IA geradas (legado)", { conteudo: typeof parsed === "object" ? Object.keys(parsed as object).length : 0 });
 
       return NextResponse.json({ conteudo: parsed, sugestoes: null });
     }
@@ -165,7 +165,7 @@ export async function POST(request: Request) {
         const canRetry = isRecitationError(err) || isRetryableError(err);
         if (!canRetry || attempt === MAX_RETRIES) throw err;
         const delay = RETRY_DELAY_MS * attempt;
-        console.log(`[PlanoMestre] Retry ${attempt}/${MAX_RETRIES} em ${delay}ms${isRecitationError(err) ? " (RECITATION)" : ""}...`);
+        console.log(`[PlanoMagistra] Retry ${attempt}/${MAX_RETRIES} em ${delay}ms${isRecitationError(err) ? " (RECITATION)" : ""}...`);
         await new Promise((r) => setTimeout(r, delay));
       }
     }
@@ -186,7 +186,7 @@ export async function POST(request: Request) {
       parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1)) as Record<string, IaSugestao[]>;
     }
 
-    console.log("[PlanoMestre] 4. Sugestões da IA geradas", { sugestoes: Object.keys(parsed).length });
+    console.log("[PlanoMagistra] 4. Sugestões da IA geradas", { sugestoes: Object.keys(parsed).length });
 
     return NextResponse.json({ sugestoes: parsed });
   } catch (error) {

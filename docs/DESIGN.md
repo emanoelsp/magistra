@@ -1,4 +1,4 @@
-# Design System — PlanoMestre
+# Design System — PlanoMagistra
 
 ## Princípios visuais
 

@@ -1,4 +1,4 @@
-# CLAUDE.md — PlanoMestre
+# CLAUDE.md — PlanoMagistra
 
 ## O que é este projeto
 

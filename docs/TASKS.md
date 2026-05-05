@@ -1,4 +1,4 @@
-# Tasks — PlanoMestre
+# Tasks — PlanoMagistra
 
 ## Concluído
 

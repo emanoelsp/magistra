@@ -38,7 +38,7 @@ export async function POST(
 
     return NextResponse.json({ ok: true, arquivo_fillable_url: fillableUrl });
   } catch (error) {
-    console.error("[PlanoMestre/api/templates/[id]/upload-fillable] Erro:", error);
+    console.error("[PlanoMagistra/api/templates/[id]/upload-fillable] Erro:", error);
     return NextResponse.json({ error: "Falha ao armazenar template preparado." }, { status: 500 });
   }
 }

@@ -1,4 +1,4 @@
-# Arquitetura — PlanoMestre
+# Arquitetura — PlanoMagistra
 
 ## Stack
 

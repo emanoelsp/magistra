@@ -57,6 +57,6 @@ export async function logUsage(params: LogUsageParams): Promise<void> {
       );
   } catch (err) {
     // Never throw — usage logging must not break the main request
-    console.warn("[PlanoMestre/usage-logger] Falha ao registrar uso:", err);
+    console.warn("[PlanoMagistra/usage-logger] Falha ao registrar uso:", err);
   }
 }

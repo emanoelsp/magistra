@@ -1,5 +1,5 @@
 /**
- * docx-filler — PlanoMestre
+ * docx-filler — PlanoMagistra
  *
  * Label-based injection: no span/shading requirements.
  * For each table row we scan cells left-to-right:
@@ -58,7 +58,8 @@ interface Row {
 function parseRows(xml: string): Row[] {
   return [...xml.matchAll(/<w:tr[\s>][\s\S]*?<\/w:tr>/g)].map((m) => {
     const rowXml = m[0];
-    const cells = [...rowXml.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map((c) => c[0]);
+    // Match cells with or without attributes (e.g. <w:tc> or <w:tc w:val="...">)
+    const cells = [...rowXml.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map((c) => c[0]);
     return { xml: rowXml, cells, cellTexts: cells.map(extractText) };
   });
 }
@@ -108,29 +109,38 @@ function matchField(
 // ── Cell content writer ──────────────────────────────────────────────────────
 
 /**
- * Replaces the first paragraph of a cell with a single run containing `content`,
- * preserving paragraph (pPr) and character (rPr) formatting. Extra paragraphs removed.
+ * Replaces only the text content inside the first <w:t> element with `content`,
+ * preserving all paragraph (pPr), run (rPr), and cell (tcPr) formatting intact.
+ * If no <w:t> exists, creates a minimal run inside the first paragraph.
  */
 function setCellContent(cellXml: string, content: string): string {
-  const paraRe = /<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g;
-  const paras = [...cellXml.matchAll(paraRe)];
-  if (paras.length === 0) return cellXml;
+  // Try to find and replace just the first <w:t> content, preserving everything else
+  const wtMatch = cellXml.match(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/);
+  if (wtMatch) {
+    // Replace only the text inside the first <w:t>, keeping all formatting
+    const idx = cellXml.indexOf(wtMatch[0]);
+    const preserveSpace = wtMatch[0].includes('xml:space="preserve"') 
+      ? '<w:t xml:space="preserve">' 
+      : '<w:t>';
+    const newWt = `${preserveSpace}${content}</w:t>`;
+    return cellXml.slice(0, idx) + newWt + cellXml.slice(idx + wtMatch[0].length);
+  }
 
-  const firstPara = paras[0][0];
+  // No <w:t> found - find first paragraph and add a run with the content
+  const paraMatch = cellXml.match(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/);
+  if (!paraMatch) return cellXml;
+
+  const firstPara = paraMatch[0];
   const openTag = firstPara.match(/^(<w:p(?:\s[^>]*)?>)/)?.[1] ?? "<w:p>";
   const pPr = firstPara.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] ?? "";
+  
+  // Extract run properties from any existing run, or use empty
   const firstRun = firstPara.match(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/)?.[0] ?? "";
   const rPr = firstRun.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
 
   const newPara = `${openTag}${pPr}<w:r>${rPr}<w:t xml:space="preserve">${content}</w:t></w:r></w:p>`;
-
-  let result = cellXml;
-  for (let i = paras.length - 1; i >= 0; i--) {
-    const { index, 0: match } = paras[i];
-    result =
-      result.slice(0, index!) + (i === 0 ? newPara : "") + result.slice(index! + match.length);
-  }
-  return result;
+  
+  return cellXml.replace(firstPara, newPara);
 }
 
 // ── Main: inject placeholders ────────────────────────────────────────────────
@@ -144,6 +154,9 @@ function setCellContent(cellXml: string, content: string): string {
  *                   (skip if cell[i+1] ALSO matches another label — both are labels, not a pair)
  *
  * Returns the buffer unchanged if {{}} is already present (idempotent).
+ * 
+ * IMPORTANT: This function preserves all document formatting by only modifying
+ * the text content inside <w:t> elements, keeping all styling intact.
  */
 export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSchema[]): Buffer {
   if (schema.length === 0) return docxBuffer;
@@ -155,6 +168,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   let xml = zip.files[xmlPath].asText();
   if (xml.includes("{{")) return docxBuffer; // already prepared
 
+  // Only strip change tracking, preserve all other formatting
   xml = stripChangeTracking(xml);
 
   const rows = parseRows(xml);
@@ -232,6 +246,9 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 /**
  * Fills all {{key}} placeholders in a prepared DOCX using docxtemplater.
  * Multi-line values: \n → <w:br/> via linebreaks: true.
+ * 
+ * The document formatting is preserved as docxtemplater only replaces
+ * the placeholder text while keeping all surrounding XML structure intact.
  */
 export function fillDocx(
   docxBuffer: Buffer,
@@ -245,6 +262,13 @@ export function fillDocx(
     linebreaks: true,
     delimiters: { start: "{{", end: "}}" },
     nullGetter: () => "",
+    // Preserve document structure by not parsing as XML
+    parser: (tag: string) => ({
+      get: (scope: Record<string, unknown>) => {
+        const value = scope[tag];
+        return typeof value === "string" ? value : "";
+      },
+    }),
   });
 
   const data: Record<string, string> = {};

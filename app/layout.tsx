@@ -12,7 +12,7 @@ const sora = Sora({
 });
 
 export const metadata: Metadata = {
-  title: "PlanoMestre — Assistente Pedagógico com IA",
+  title: "PlanoMagistra — Seu plano de aula pronto em minutos",
   description:
     "Reduza 70% do tempo com burocracia escolar. Suba o template da sua escola, a IA extrai a estrutura e sugere conteúdos campo a campo — BNCC, SAEB e CTBC.",
 };

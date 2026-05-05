@@ -1,4 +1,4 @@
-# Arquitetura de IA — PlanoMestre
+# Arquitetura de IA — PlanoMagistra
 
 ## Modelo
 

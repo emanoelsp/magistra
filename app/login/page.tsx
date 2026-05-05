@@ -82,7 +82,7 @@ export default function LoginPage() {
           {mode === "login" ? "Entrar" : "Criar conta"}
         </h1>
         <p className="mt-4 text-sm leading-7 text-slate-600">
-          Use seu e-mail e uma senha para {mode === "login" ? "acessar" : "criar"} sua conta no PlanoMestre.
+          Use seu e-mail e uma senha para {mode === "login" ? "acessar" : "criar"} sua conta no PlanoMagistra.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4 text-left">

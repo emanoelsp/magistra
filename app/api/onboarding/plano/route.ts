@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, plano });
   } catch (error) {
-    console.error("[PlanoMestre/api/onboarding/plano] Erro:", error);
+    console.error("[PlanoMagistra/api/onboarding/plano] Erro:", error);
     return NextResponse.json({ error: "Falha ao ativar o plano." }, { status: 500 });
   }
 }

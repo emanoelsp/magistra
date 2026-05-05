@@ -36,7 +36,7 @@ export async function POST(request: Request) {
         const fillablePath = `templates/${templateId}/fillable.${ext}`;
         fillableUrl = await uploadFile({ path: fillablePath, buffer: fillableBuffer, contentType: mimeType });
       } catch (docxErr) {
-        console.warn("[PlanoMestre/upload-arquivo] Falha ao gerar DOCX preenchível:", docxErr);
+        console.warn("[PlanoMagistra/upload-arquivo] Falha ao gerar DOCX preenchível:", docxErr);
       }
     }
 
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, arquivo_url: originalUrl, arquivo_fillable_url: fillableUrl });
   } catch (error) {
-    console.error("[PlanoMestre/api/templates/upload-arquivo] Erro:", error);
+    console.error("[PlanoMagistra/api/templates/upload-arquivo] Erro:", error);
     return NextResponse.json({ error: "Falha ao armazenar arquivo do template." }, { status: 500 });
   }
 }
