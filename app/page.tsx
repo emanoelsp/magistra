@@ -145,7 +145,7 @@ export default function HomePage() {
         {/* ── NAV ─────────────────────────────────────────────────── */}
         <nav className="nav-glass fixed inset-x-0 top-0 z-50 border-b border-slate-100">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <img src="/images/logo.png" alt="PlanoMagistra" className="h-10 w-auto" />
+            <img src="/images/logo.png" alt="PlanoMagistra" className="h-14 w-auto" />
             <div className="hidden items-center gap-8 text-sm font-medium text-slate-500 md:flex">
               <a href="#como-funciona" className="transition hover:text-slate-950">Como funciona</a>
               <a href="#recursos"      className="transition hover:text-slate-950">Recursos</a>
