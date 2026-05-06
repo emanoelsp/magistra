@@ -81,6 +81,7 @@ export interface PlanoRecord {
   conteudo_gerado: Record<string, unknown>;
   data_geracao: string;
   status: PlanoStatus;
+  schema_campos?: TemplateFieldSchema[];
 }
 
 export interface CreatePlanoInput {
@@ -89,6 +90,7 @@ export interface CreatePlanoInput {
   conteudo_gerado: Record<string, unknown>;
   status: PlanoStatus;
   data_geracao?: string;
+  schema_campos?: TemplateFieldSchema[];
 }
 
 export interface UpdatePlanoInput {

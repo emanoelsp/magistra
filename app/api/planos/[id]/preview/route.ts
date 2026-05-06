@@ -55,9 +55,13 @@ export async function GET(
     const templateSnap = await db.collection("templates").doc(planoData.template_id).get();
     const template = templateSnap.exists ? (templateSnap.data() as TemplateRecord) : null;
     const templateNome = template?.nome ?? "Plano";
-    const schema: TemplateFieldSchema[] = Array.isArray(template?.schema_campos)
-      ? template.schema_campos
-      : [];
+    // Prefer schema snapshot saved at plan creation; fall back to current template schema
+    const schema: TemplateFieldSchema[] =
+      Array.isArray(planoData.schema_campos) && planoData.schema_campos.length > 0
+        ? planoData.schema_campos
+        : Array.isArray(template?.schema_campos)
+          ? template.schema_campos
+          : [];
 
     const arquivoUrl = template?.arquivo_url ?? "";
     const ext = arquivoUrl.split(".").pop()?.toLowerCase() ?? "";

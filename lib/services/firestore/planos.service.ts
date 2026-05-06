@@ -62,6 +62,7 @@ function mapPlanoRecord(id: string, data: Record<string, unknown>): PlanoRecord 
         : {},
     data_geracao: toIsoString(data.data_geracao),
     status: typeof data.status === "string" ? (data.status as PlanoRecord["status"]) : "rascunho",
+    ...(Array.isArray(data.schema_campos) ? { schema_campos: data.schema_campos } : {}),
   };
 }
 
@@ -73,6 +74,7 @@ export const planosService = {
       conteudo_gerado: input.conteudo_gerado,
       status: input.status,
       data_geracao: serializeDateForWrite(input.data_geracao),
+      ...(Array.isArray(input.schema_campos) ? { schema_campos: input.schema_campos } : {}),
     });
 
     return planoRef.id;

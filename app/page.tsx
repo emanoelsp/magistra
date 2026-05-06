@@ -144,8 +144,8 @@ export default function HomePage() {
 
         {/* ── NAV ─────────────────────────────────────────────────── */}
         <nav className="nav-glass fixed inset-x-0 top-0 z-50 border-b border-slate-100">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <img src="/images/logo.png" alt="PlanoMagistra" className="h-20 w-auto" />
+          <div className="mx-auto flex max-w-7xl items-center justify-between px-6">
+            <img src="/images/logo.png" alt="PlanoMagistra" className="max-h-28 w-auto" />
             <div className="hidden items-center gap-8 text-sm font-medium text-slate-500 md:flex">
               <a href="#como-funciona" className="transition hover:text-slate-950">Como funciona</a>
               <a href="#recursos"      className="transition hover:text-slate-950">Recursos</a>
@@ -712,7 +712,7 @@ export default function HomePage() {
             </div>
             <h2 className="text-4xl font-black tracking-tight text-white sm:text-5xl">
               Seu próximo plano<br />
-              <span className="wordmark-accent">em 40 minutos.</span>
+              <span className="wordmark-accent">em menos de 5 minutos.</span>
             </h2>
             <p className="mx-auto mt-5 max-w-lg text-lg text-slate-400">
               Junte-se a 2.400 professores que já automatizaram a burocracia escolar com o PlanoMagistra.

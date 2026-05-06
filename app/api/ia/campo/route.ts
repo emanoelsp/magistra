@@ -51,15 +51,19 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   throw lastError;
 }
 
-async function generateWithGemini(systemInstruction: string, prompt: string): Promise<string> {
+function makeGeminiModel(systemInstruction: string) {
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
+  return genAI.getGenerativeModel({
     model: MODEL_NAME,
     generationConfig: { temperature: 0.35, topP: 0.8, topK: 40, responseMimeType: "application/json" },
     systemInstruction,
   });
+}
+
+async function generateWithGemini(systemInstruction: string, prompt: string): Promise<string> {
+  const model = makeGeminiModel(systemInstruction);
   const response = await withRetry(() => model.generateContent(prompt));
   return response.response.text();
 }
@@ -109,9 +113,20 @@ export async function POST(request: Request) {
       fieldGroup?: string;
       metadata?: Record<string, string>;
       extraContext?: string;
+      bypassCache?: boolean;
+      stream?: boolean;
     };
 
-    const { templateId, fieldKey, fieldLabel, fieldGroup, metadata = {}, extraContext } = body;
+    const {
+      templateId,
+      fieldKey,
+      fieldLabel,
+      fieldGroup,
+      metadata = {},
+      extraContext,
+      bypassCache = false,
+      stream = false,
+    } = body;
 
     if (!templateId || !fieldKey || !fieldLabel) {
       return NextResponse.json(
@@ -166,31 +181,80 @@ export async function POST(request: Request) {
       keyLower.includes("bibliograf") ||
       keyLower.includes("livro");
 
+    // ── Instrução específica por tipo/grupo de campo ─────────────────────────
     const instrucaoEspecifica = is2profField
-      ? "Este campo é sobre o 2° professor / professor de apoio para educação inclusiva (NEE). " +
-        "Sugira: estratégias de coensino (co-teaching), adaptações curriculares para alunos com " +
-        "necessidades educacionais especiais, ações do AEE (Atendimento Educacional Especializado), " +
-        "e recursos de tecnologia assistiva quando aplicável. Não invente laudos ou diagnósticos."
+      ? `O campo "${fieldLabel}" refere-se ao 2° professor / professor de apoio para educação inclusiva (NEE/AEE). ` +
+        "label = estratégia ou ação específica (ex: 'Coensino paralelo para aluno com TEA — professor regente e de apoio atuam juntos na mesma atividade'); " +
+        "descricao = como implementar na prática com a turma descrita no contexto; " +
+        "fonte = 'AEE', 'Política de Educação Especial' ou 'Coensino'. " +
+        "Sugira: estratégias de coensino, adaptações curriculares, ações do AEE, tecnologia assistiva. Não invente laudos ou diagnósticos."
+
       : isBibliografiaField
-        ? "Este campo é de Referências Bibliográficas. Sugira de 3 a 5 livros didáticos ou obras " +
-          "pedagógicas reais e relevantes para a disciplina e nível de ensino fornecidos no contexto. " +
-          "Para cada sugestão: 'label' deve ser o título do livro, 'descricao' deve conter autor(es), " +
-          "editora e ano aproximado de publicação (ex: 'Maria Silva, Editora Moderna, 2021'), " +
-          "'fonte' deve ser 'Indicação bibliográfica'. " +
-          "Sugira apenas livros que você conhece com certeza que existem — não invente títulos ou autores."
-        : "Se for habilidades/competências BNCC, inclua o código real e uma descrição breve em suas próprias palavras. " +
-          "Se for conteúdos, sugira tópicos relevantes para a turma e disciplina. " +
-          "Se for objetivos, sugira objetivos pedagógicos claros e mensuráveis.";
+        ? `O campo "${fieldLabel}" é de Referências Bibliográficas. ` +
+          "Sugira 3 a 5 livros didáticos ou obras acadêmicas REAIS, relevantes para a disciplina e nível informados. " +
+          "label = referência completa no padrão ABNT NBR 6023 para livro: SOBRENOME, Nome. Título: subtítulo. Ed. Cidade: Editora, Ano. " +
+          "Exemplo: SILBERSCHATZ, Abraham; KORTH, Henry F.; SUDARSHAN, S. Sistema de Banco de Dados. 7. ed. Rio de Janeiro: GEN LTC, 2020. " +
+          "descricao = frase curta sobre por que o livro é relevante para esta disciplina e turma; " +
+          "fonte = 'Referência ABNT'. " +
+          "REGRAS: apenas livros que você conhece com certeza que existem; não invente títulos, autores ou editoras; prefira edições a partir de 2015."
 
+      : fieldGroup === "objetivos"
+        ? `O campo "${fieldLabel}" é de OBJETIVOS DE APRENDIZAGEM. ` +
+          "Gere objetivos pedagógicos específicos e mensuráveis para a turma e disciplina descritas. " +
+          "label = objetivo completo iniciando com verbo de ação no infinitivo (Identificar, Analisar, Resolver, Produzir, Comparar, Aplicar, Criar, Explicar); máx. 1 frase; " +
+          "descricao = como este objetivo se conecta às habilidades BNCC e ao cotidiano do aluno; " +
+          "fonte = 'BNCC [código]' ou 'Objetivo pedagógico'."
+
+      : fieldGroup === "competencias"
+        ? `O campo "${fieldLabel}" é de COMPETÊNCIAS. ` +
+          "Sugira competências gerais da BNCC ou competências específicas do componente curricular, sempre parafraseadas. " +
+          "label = texto da competência parafraseado de forma objetiva e aplicada à disciplina (nunca cópia literal); " +
+          "descricao = como essa competência se manifesta nas atividades e no cotidiano dos alunos desta turma; " +
+          "fonte = 'Competência Geral BNCC N°X' ou 'Competência Específica [componente curricular]'."
+
+      : fieldGroup === "habilidades"
+        ? `O campo "${fieldLabel}" é de HABILIDADES BNCC. ` +
+          "Use EXCLUSIVAMENTE os códigos listados em habilidadesBNCC (se disponíveis). " +
+          "label = 'CÓDIGO — descrição parafraseada em linguagem simples e direta' (ex: 'EF09MA06 — Resolver situações-problema envolvendo conjuntos numéricos'); " +
+          "descricao = como desenvolver esta habilidade com a turma, incluindo conexão com SAEB quando pertinente; " +
+          "fonte = 'BNCC [código]'."
+
+      : fieldGroup === "conteudos"
+        ? `O campo "${fieldLabel}" é de CONTEÚDOS PROGRAMÁTICOS. ` +
+          "Sugira tópicos específicos do componente curricular adequados ao ano/série informados, do mais básico ao mais complexo. " +
+          "label = nome do tópico de conteúdo (conciso, ex: 'Equações do 2° grau — discriminante e fórmula de Bhaskara'); " +
+          "descricao = o que será trabalhado, como se conecta ao cotidiano e à vida do aluno, e link com CTBC quando aplicável; " +
+          "fonte = 'Currículo [componente]' ou 'CTBC'."
+
+      : fieldGroup === "avaliacao"
+        ? `O campo "${fieldLabel}" é de AVALIAÇÃO. ` +
+          "Sugira instrumentos e critérios avaliativos variados, equilibrando avaliação formativa e somativa. " +
+          "label = instrumento ou critério específico (ex: 'Resolução de problema em dupla com registro do raciocínio'); " +
+          "descricao = como aplicar o instrumento, o que observar e o que evidencia a aprendizagem; " +
+          "fonte = 'Avaliação formativa', 'Avaliação somativa' ou 'SAEB [descritor]'."
+
+      : `O campo a ser preenchido no plano de aula é: "${fieldLabel}" ` +
+        `(categoria: ${fieldGroup ?? "outros"}). ` +
+        "Gere sugestões específicas, contextualizadas com a turma e a disciplina fornecidas. " +
+        "label = conteúdo pronto para inserção neste campo (conciso e direto); " +
+        "descricao = justificativa pedagógica — por que essa sugestão é adequada ao contexto; " +
+        "fonte = referência curricular ou pedagógica pertinente (BNCC, SAEB, CTBC ou outra).";
+
+    // ── System instruction — persona + contrato de saída ─────────────────────
     const systemInstruction =
-      "Você é um especialista em currículo da educação básica brasileira (BNCC, SAEB, CTBC). " +
-      "Gere de 3 a 5 sugestões pedagógicas para o campo solicitado. " +
-      "Cada sugestão deve ser específica para o contexto da turma e disciplina fornecidos. " +
-      "NUNCA copie trechos literais de documentos oficiais — parafraseie sempre. " +
-      "NUNCA invente códigos BNCC — use somente códigos reais que você conhece com certeza. " +
-      'Retorne SOMENTE um JSON válido no formato: { "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string }] }';
+      "Você é um assistente pedagógico especializado em educação básica brasileira (BNCC, SAEB, CTBC). " +
+      "Sua única tarefa é gerar 3 a 5 sugestões de preenchimento para o campo específico indicado no prompt. " +
+      "CONTRATO DE SAÍDA — cada sugestão deve ter: " +
+      "  id: string única simples ('s1', 's2', ...); " +
+      "  label: texto curto e pronto para inserção direta no campo — o professor clica e insere; " +
+      "  descricao: justificativa pedagógica em 1-2 frases — POR QUE esta sugestão serve para este campo e contexto; " +
+      "  fonte: referência curricular específica (ex: 'BNCC EF09MA06', 'Competência Geral 2', 'SAEB', 'CTBC', 'Avaliação formativa'). " +
+      "REGRAS INVIOLÁVEIS: " +
+      "(1) NUNCA copie trechos literais de documentos oficiais — parafraseie sempre com suas próprias palavras. " +
+      "(2) NUNCA invente ou complete códigos BNCC, SAEB ou CTBC — use SOMENTE os que você conhece com certeza. " +
+      "(3) Cada sugestão deve ser específica para o campo, disciplina, ano/série e escola descritos. " +
+      'Responda SOMENTE com JSON válido: { "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string }] }';
 
-    // RAG: busca habilidades BNCC reais — não aplicável para campos de bibliografia
     const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${contexto}`.trim();
     const etapaRaw = metadata["etapa"] ?? metadata["ano"] ?? "";
     const etapa = etapaRaw.toLowerCase().includes("médio") || etapaRaw.toLowerCase().includes("medio")
@@ -206,26 +270,29 @@ export async function POST(request: Request) {
       : null;
 
     const prompt = JSON.stringify({
-      templateNome: template.nome,
-      campo: { key: fieldKey, label: fieldLabel, group: fieldGroup ?? "outros" },
-      contexto,
-      ...(bnccContexto ? { habilidadesBNCC: bnccContexto } : {}),
-      ...(extraContext?.trim() ? { contextoExtra: extraContext.trim() } : {}),
-      instrucao:
-        `Gere 3 a 5 sugestões para este campo. ${instrucaoEspecifica} ` +
+      campo_sendo_editado: fieldLabel,
+      categoria_do_campo: fieldGroup ?? "outros",
+      template_da_escola: template.nome,
+      contexto_turma: contexto,
+      ...(bnccContexto ? { habilidades_bncc_disponiveis: bnccContexto } : {}),
+      ...(extraContext?.trim() ? { contexto_extra_do_professor: extraContext.trim() } : {}),
+      instrucao: instrucaoEspecifica +
         (bnccContexto
-          ? "Use APENAS os códigos BNCC fornecidos em habilidadesBNCC — nunca invente códigos. "
+          ? " USE APENAS os códigos de habilidades_bncc_disponiveis — nunca invente outros."
           : "") +
-        (extraContext?.trim() ? `Leve em conta este contexto extra do professor: "${extraContext.trim()}". ` : "") +
-        "Retorne SOMENTE o JSON { sugestoes: [...] }.",
+        (extraContext?.trim()
+          ? ` Considere também o contexto extra informado pelo professor: "${extraContext.trim()}".`
+          : "") +
+        " Retorne SOMENTE o JSON { sugestoes: [...] }.",
     });
 
-    // Cache lookup — pula cache quando há extraContext (refinamento pontual do professor)
+    // Cache key — null when extraContext is present (one-off refinement, don't cache)
     const cacheKey = extraContext?.trim()
       ? null
       : buildCacheKey(fieldKey, templateId, metadata);
 
-    if (cacheKey) {
+    // Cache lookup — skip when bypassCache to force new generation
+    if (cacheKey && !bypassCache) {
       const cached = await getCachedSuggestions(cacheKey);
       if (cached) {
         console.log(`[PlanoMagistra/ia/campo] Cache hit: ${cacheKey.slice(0, 8)}… (${fieldKey})`);
@@ -233,6 +300,70 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── Streaming path ────────────────────────────────────────────────────────
+    if (stream) {
+      const model = makeGeminiModel(systemInstruction);
+
+      // Start stream — if this throws (quota, auth), return a proper error response
+      let streamResult: Awaited<ReturnType<typeof model.generateContentStream>>;
+      try {
+        streamResult = await model.generateContentStream(prompt);
+      } catch (err) {
+        if (isQuotaError(err)) {
+          console.warn("[PlanoMagistra/ia/campo] Gemini quota, Groq fallback no stream...");
+          try {
+            const rawText = await generateWithGroq(systemInstruction, prompt);
+            const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
+            const sugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+            if (cacheKey && sugestoes.length > 0) {
+              void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId });
+            }
+            return NextResponse.json({ sugestoes });
+          } catch {
+            return NextResponse.json({ error: "Cota da IA esgotada. Tente novamente mais tarde." }, { status: 429 });
+          }
+        }
+        return NextResponse.json({ error: "Falha ao iniciar geração." }, { status: 502 });
+      }
+
+      const encoder = new TextEncoder();
+      let accumulated = "";
+
+      const readable = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            for await (const chunk of streamResult.stream) {
+              const text = chunk.text();
+              accumulated += text;
+              controller.enqueue(encoder.encode(text));
+            }
+            // Save to cache after full generation (updates cache even on bypassCache)
+            try {
+              const parsed = JSON.parse(accumulated) as { sugestoes: IaSugestao[] };
+              const sugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+              if (cacheKey && sugestoes.length > 0) {
+                void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId });
+              }
+            } catch { /* ignore parse errors during cache save */ }
+          } catch (err) {
+            const msg = (err as Error)?.message ?? "Erro durante streaming.";
+            controller.enqueue(encoder.encode(JSON.stringify({ _streamError: msg })));
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(readable, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache, no-store",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+
+    // ── Batch path (existing) ─────────────────────────────────────────────────
     let rawText: string;
     try {
       rawText = await generateSuggestions(systemInstruction, prompt);
@@ -270,7 +401,6 @@ export async function POST(request: Request) {
 
     const sugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
 
-    // Salva no cache de forma assíncrona (não bloqueia a resposta)
     if (cacheKey && sugestoes.length > 0) {
       void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId });
     }
