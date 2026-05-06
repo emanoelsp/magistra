@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   Download,
   Loader2,
+  MessageSquarePlus,
   Save,
   Sparkles,
   WandSparkles,
@@ -118,7 +120,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   };
 
   const fetchSuggestionsForField = useCallback(
-    async (field: TemplateFieldSchema, meta: Record<string, string>) => {
+    async (field: TemplateFieldSchema, meta: Record<string, string>, extraContext?: string) => {
       if (loadingField) return;
       setSuggestError(null);
       setLoadingField(field.key);
@@ -132,6 +134,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             fieldLabel: field.label,
             fieldGroup: field.group,
             metadata: meta,
+            ...(extraContext?.trim() ? { extraContext: extraContext.trim() } : {}),
           }),
         });
         if (!res.ok) {
@@ -163,19 +166,24 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metadataComplete]);
 
-  function insertSuggestion(suggestion: IaSugestao) {
+  function insertSuggestion(suggestion: IaSugestao, mode: "label" | "full" = "label") {
     if (!activeFieldKey) return;
     const field = schema.find((f) => f.key === activeFieldKey);
     const current = values[activeFieldKey] ?? "";
+    const text =
+      mode === "full" && suggestion.descricao
+        ? `${suggestion.label}: ${suggestion.descricao}`
+        : suggestion.label;
     if (field?.role === "ia_sugerida") {
       const isEmpty = !current || current === "<p></p>";
-      setFieldValue(
-        activeFieldKey,
-        isEmpty ? `<p>${suggestion.label}</p>` : `${current}<p>${suggestion.label}</p>`,
-      );
+      const html =
+        mode === "full" && suggestion.descricao
+          ? `<p><strong>${suggestion.label}</strong></p><p>${suggestion.descricao}</p>`
+          : `<p>${suggestion.label}</p>`;
+      setFieldValue(activeFieldKey, isEmpty ? html : `${current}${html}`);
     } else {
       const separator = current.trim() ? "\n" : "";
-      setFieldValue(activeFieldKey, current + separator + suggestion.label);
+      setFieldValue(activeFieldKey, current + separator + text);
     }
   }
 
@@ -410,8 +418,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             metadata={metadata}
             metadataComplete={metadataComplete}
             onInsert={insertSuggestion}
-            onGenerate={() => {
-              if (activeField) void fetchSuggestionsForField(activeField, metadata);
+            onGenerate={(extraContext) => {
+              if (activeField) void fetchSuggestionsForField(activeField, metadata, extraContext);
             }}
           />
         </div>
@@ -569,8 +577,8 @@ interface AISuggestionsPanelProps {
   error: string | null;
   metadata: Record<string, string>;
   metadataComplete: boolean;
-  onInsert: (s: IaSugestao) => void;
-  onGenerate: () => void;
+  onInsert: (s: IaSugestao, mode: "label" | "full") => void;
+  onGenerate: (extraContext?: string) => void;
 }
 
 function AISuggestionsPanel({
@@ -584,6 +592,14 @@ function AISuggestionsPanel({
   onGenerate,
 }: AISuggestionsPanelProps) {
   const metaEntries = Object.entries(metadata).slice(0, 4);
+  const [showContext, setShowContext] = useState(false);
+  const [extraContext, setExtraContext] = useState("");
+
+  // Reset context input when active field changes
+  useEffect(() => {
+    setShowContext(false);
+    setExtraContext("");
+  }, [activeField?.key]);
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -651,7 +667,7 @@ function AISuggestionsPanel({
           {activeField && (
             <button
               type="button"
-              onClick={onGenerate}
+              onClick={() => onGenerate(extraContext || undefined)}
               className="mt-2 text-xs font-medium text-rose-600 underline hover:text-rose-800"
             >
               Tentar novamente
@@ -671,7 +687,7 @@ function AISuggestionsPanel({
               key={s.id}
               className="rounded-xl border border-slate-200 bg-white p-3 transition hover:border-violet-300 hover:shadow-sm"
             >
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col gap-2">
                 <div className="flex-1">
                   <p className="text-sm font-medium text-slate-900">{s.label}</p>
                   {s.descricao && (
@@ -683,13 +699,24 @@ function AISuggestionsPanel({
                     </span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onInsert(s)}
-                  className="shrink-0 rounded-lg bg-violet-100 px-2 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
-                >
-                  Inserir
-                </button>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onInsert(s, "label")}
+                    className="flex-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
+                  >
+                    Título
+                  </button>
+                  {s.descricao && (
+                    <button
+                      type="button"
+                      onClick={() => onInsert(s, "full")}
+                      className="flex-1 rounded-lg bg-violet-100 px-2 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
+                    >
+                      Completo
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -704,7 +731,7 @@ function AISuggestionsPanel({
           </p>
           <button
             type="button"
-            onClick={onGenerate}
+            onClick={() => onGenerate(extraContext || undefined)}
             disabled={!metadataComplete}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-300 bg-white px-4 py-2.5 text-sm font-medium text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -718,13 +745,58 @@ function AISuggestionsPanel({
       {!isLoading && suggestions.length > 0 && activeField && (
         <button
           type="button"
-          onClick={onGenerate}
+          onClick={() => onGenerate(extraContext || undefined)}
           disabled={!metadataComplete}
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs font-medium text-violet-600 transition hover:border-violet-400 hover:bg-violet-50 disabled:opacity-50"
         >
           <WandSparkles className="h-3.5 w-3.5" />
           Gerar novas sugestões
         </button>
+      )}
+
+      {/* Extra context toggle — visible when field is active and not loading */}
+      {activeField && !isLoading && (
+        <div className="rounded-xl border border-slate-200 bg-white">
+          <button
+            type="button"
+            onClick={() => setShowContext((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium text-slate-600 transition hover:text-slate-900"
+          >
+            <span className="flex items-center gap-1.5">
+              <MessageSquarePlus className="h-3.5 w-3.5 text-violet-500" />
+              Adicionar contexto extra
+            </span>
+            <ChevronDown
+              className={`h-3.5 w-3.5 text-slate-400 transition-transform ${showContext ? "rotate-180" : ""}`}
+            />
+          </button>
+          {showContext && (
+            <div className="border-t border-slate-100 px-3 pb-3 pt-2">
+              <p className="mb-2 text-xs text-slate-500">
+                Descreva o que melhorar nas sugestões ou adicione detalhes específicos da turma.
+              </p>
+              <textarea
+                rows={3}
+                value={extraContext}
+                onChange={(e) => setExtraContext(e.target.value)}
+                placeholder="Ex.: Foque em alunos do 9° ano com dificuldades de leitura e turma de reforço noturno."
+                className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  onGenerate(extraContext || undefined);
+                  setShowContext(false);
+                }}
+                disabled={!extraContext.trim() || !metadataComplete}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <WandSparkles className="h-3.5 w-3.5" />
+                Regenerar com contexto
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Tip */}

@@ -7,11 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ingest:bncc": "tsx --env-file=.env.local scripts/ingest-bncc.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@hookform/resolvers": "^4.1.0",
+    "@pinecone-database/pinecone": "^7.2.0",
     "@tiptap/extension-placeholder": "^3.22.5",
     "@tiptap/extension-underline": "^3.22.5",
     "@tiptap/pm": "^3.22.5",
@@ -22,6 +24,7 @@
     "firebase": "^12.1.0",
     "firebase-admin": "^13.4.0",
     "lucide-react": "^0.542.0",
+    "mammoth": "^1.12.0",
     "next": "^15.5.2",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
@@ -37,8 +40,10 @@
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "autoprefixer": "^10.4.21",
+    "dotenv": "^17.4.2",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.3"
   }
 }

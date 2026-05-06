@@ -8,6 +8,7 @@ import PizZip from "pizzip";
 import { getAdminDb } from "../../../../lib/firebase/admin";
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
@@ -21,7 +22,8 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       lastError = err;
       const status = (err as { status?: number })?.status;
       const msg = (err as Error)?.message ?? "";
-      const isRetryable = status === 503 || status === 429 || msg.includes("503") || msg.includes("high demand");
+      const isQuotaExhausted = status === 429 && (msg.includes("free_tier") || msg.includes("limit: 0") || msg.includes("PerDay"));
+      const isRetryable = !isQuotaExhausted && (status === 503 || status === 429 || msg.includes("503") || msg.includes("high demand"));
       if (!isRetryable || attempt === MAX_RETRIES) throw err;
       const delay = RETRY_DELAY_MS * attempt;
       console.log(`[PlanoMagistra] Retry ${attempt}/${MAX_RETRIES} em ${delay}ms (modelo sob demanda)...`);
@@ -31,12 +33,17 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   throw lastError;
 }
 
+function isQuotaError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  const msg = (err as Error)?.message ?? "";
+  return status === 429 && (msg.includes("free_tier") || msg.includes("limit: 0") || msg.includes("PerDay"));
+}
+
 function extractDocxText(buffer: Buffer): string {
   const zip = new PizZip(buffer);
   const xmlFile = zip.files["word/document.xml"];
   if (!xmlFile) return "";
   const xml = xmlFile.asText();
-  // Strip all XML tags, collapse whitespace, preserve paragraph breaks
   return xml
     .replace(/<\/w:p>/g, "\n")
     .replace(/<[^>]+>/g, " ")
@@ -57,13 +64,93 @@ async function extractFileText(file: File): Promise<string> {
   return data.text;
 }
 
+const SYSTEM_INSTRUCTION =
+  "Você analisa modelos de planos pedagógicos em PDF e devolve um schema JSON de campos.\n" +
+  "- Campos de identificação (professor, curso, turma, componente curricular, número de aulas etc.) " +
+  'devem ter role = "manual" (professor preenche).\n' +
+  "- Campos pedagógicos (objetivos, competências, habilidades BNCC, SAEB, CTBC, conteúdos, avaliação) " +
+  'devem ter role = "ia_sugerida".\n' +
+  "- Agrupe campos em groups: dados_turma, objetivos, competencias, habilidades, conteudos, avaliacao, outros.\n" +
+  "- Retorne SOMENTE um array JSON de objetos no formato TemplateFieldSchema, sem texto extra.";
+
+async function generateWithGemini(promptStr: string): Promise<string> {
+  const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: MODEL_NAME,
+    generationConfig: { temperature: 0.1, topP: 0.6, topK: 40, responseMimeType: "application/json" },
+    systemInstruction: SYSTEM_INSTRUCTION,
+  });
+  const result = await withRetry(() => model.generateContent(promptStr));
+  return result.response.text();
+}
+
+async function generateWithGroq(promptStr: string): Promise<string> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: SYSTEM_INSTRUCTION },
+        { role: "user", content: promptStr },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Groq error ${res.status}: ${body}`);
+  }
+  const data = (await res.json()) as { choices: { message: { content: string } }[] };
+  return data.choices[0].message.content;
+}
+
+async function generateSchema(promptStr: string): Promise<string> {
+  try {
+    return await generateWithGemini(promptStr);
+  } catch (err) {
+    if (isQuotaError(err)) {
+      console.warn("[PlanoMagistra] Gemini quota esgotada, usando Groq como fallback...");
+      return await generateWithGroq(promptStr);
+    }
+    throw err;
+  }
+}
+
+function parseSchema(raw: string): unknown {
+  let schema: unknown;
+  try {
+    schema = JSON.parse(raw);
+  } catch {
+    const firstBracket = raw.indexOf("[");
+    const lastBracket = raw.lastIndexOf("]");
+    if (firstBracket === -1 || lastBracket === -1 || lastBracket <= firstBracket) {
+      throw new Error("invalid_schema");
+    }
+    schema = JSON.parse(raw.slice(firstBracket, lastBracket + 1));
+  }
+  if (typeof schema === "object" && schema !== null && !Array.isArray(schema) && "campos" in schema) {
+    schema = (schema as { campos: unknown }).campos;
+  }
+  return schema;
+}
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     const templateId = (formData.get("templateId") as string | null) ?? null;
     const file = formData.get("file") as File | null;
 
-    console.log("[PlanoMagistra] 2. Extraindo campos do template...", { templateId, arquivo: (file as File & { name?: string })?.name, modelo: MODEL_NAME });
+    console.log("[PlanoMagistra] 2. Extraindo campos do template...", {
+      templateId,
+      arquivo: (file as File & { name?: string })?.name,
+      modelo: MODEL_NAME,
+    });
 
     if (!templateId || !file) {
       return NextResponse.json({ error: "templateId e arquivo PDF são obrigatórios." }, { status: 400 });
@@ -71,118 +158,23 @@ export async function POST(request: Request) {
 
     const pdfText = await extractFileText(file);
 
-    const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "GOOGLE_GEMINI_API_KEY não configurada." }, { status: 500 });
-    }
-
-    const genAI = new GoogleGenerativeAI(apiKey);
-
-    const model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
-      generationConfig: {
-        temperature: 0.1,
-        topP: 0.6,
-        topK: 40,
-        responseMimeType: "application/json",
-      },
-      systemInstruction:
-        "Você analisa modelos de planos pedagógicos em PDF e devolve um schema JSON de campos.\n" +
-        "- Campos de identificação (professor, curso, turma, componente curricular, número de aulas etc.) " +
-        "devem ter role = \"manual\" (professor preenche).\n" +
-        "- Campos pedagógicos (objetivos, competências, habilidades BNCC, SAEB, CTBC, conteúdos, avaliação) " +
-        "devem ter role = \"ia_sugerida\".\n" +
-        "- Agrupe campos em groups: dados_turma, objetivos, competencias, habilidades, conteudos, avaliacao, outros.\n" +
-        "- Retorne SOMENTE um array JSON de objetos no formato TemplateFieldSchema, sem texto extra.",
-    });
-
     const fewShotExample = {
       descricao: "Exemplo de schema para um planejamento anual EMIEP.",
       campos: [
-        {
-          key: "professor",
-          label: "Professor(a)",
-          type: "text",
-          required: true,
-          role: "manual",
-          group: "dados_turma",
-        },
-        {
-          key: "curso",
-          label: "Curso",
-          type: "text",
-          required: true,
-          role: "manual",
-          group: "dados_turma",
-        },
-        {
-          key: "numero_aulas",
-          label: "Número de aulas",
-          type: "number",
-          required: true,
-          role: "manual",
-          group: "dados_turma",
-        },
-        {
-          key: "turma",
-          label: "Turma",
-          type: "text",
-          required: true,
-          role: "manual",
-          group: "dados_turma",
-        },
-        {
-          key: "componente_curricular",
-          label: "Componente curricular",
-          type: "text",
-          required: true,
-          role: "manual",
-          group: "dados_turma",
-        },
-        {
-          key: "objetivos_gerais",
-          label: "Objetivos gerais",
-          type: "textarea",
-          required: true,
-          role: "ia_sugerida",
-          group: "objetivos",
-        },
-        {
-          key: "competencias",
-          label: "Competências",
-          type: "textarea",
-          required: true,
-          role: "ia_sugerida",
-          group: "competencias",
-        },
-        {
-          key: "habilidades",
-          label: "Habilidades (BNCC)",
-          type: "textarea",
-          required: true,
-          role: "ia_sugerida",
-          group: "habilidades",
-        },
-        {
-          key: "referencias_saeb",
-          label: "Referências SAEB",
-          type: "textarea",
-          required: false,
-          role: "ia_sugerida",
-          group: "avaliacao",
-        },
-        {
-          key: "conteudos_unidade_1",
-          label: "Conteúdos – Unidade 1",
-          type: "textarea",
-          required: true,
-          role: "ia_sugerida",
-          group: "conteudos",
-        },
+        { key: "professor", label: "Professor(a)", type: "text", required: true, role: "manual", group: "dados_turma" },
+        { key: "curso", label: "Curso", type: "text", required: true, role: "manual", group: "dados_turma" },
+        { key: "numero_aulas", label: "Número de aulas", type: "number", required: true, role: "manual", group: "dados_turma" },
+        { key: "turma", label: "Turma", type: "text", required: true, role: "manual", group: "dados_turma" },
+        { key: "componente_curricular", label: "Componente curricular", type: "text", required: true, role: "manual", group: "dados_turma" },
+        { key: "objetivos_gerais", label: "Objetivos gerais", type: "textarea", required: true, role: "ia_sugerida", group: "objetivos" },
+        { key: "competencias", label: "Competências", type: "textarea", required: true, role: "ia_sugerida", group: "competencias" },
+        { key: "habilidades", label: "Habilidades (BNCC)", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+        { key: "referencias_saeb", label: "Referências SAEB", type: "textarea", required: false, role: "ia_sugerida", group: "avaliacao" },
+        { key: "conteudos_unidade_1", label: "Conteúdos – Unidade 1", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
       ],
     };
 
-    const prompt = {
+    const promptStr = JSON.stringify({
       instrucao:
         "Analise o texto do PDF e extraia TODOS os campos que aparecem no documento. " +
         "Devolva um array JSON onde cada campo do PDF vira um objeto no schema. " +
@@ -192,39 +184,26 @@ export async function POST(request: Request) {
         "Retorne SOMENTE o array JSON, sem texto extra.",
       fewShotExample,
       pdfText,
-    };
+    });
 
-    const result = await withRetry(() => model.generateContent(JSON.stringify(prompt)));
-
-    const raw = result.response.text();
+    const raw = await generateSchema(promptStr);
 
     let schema: unknown;
     try {
-      schema = JSON.parse(raw);
+      schema = parseSchema(raw);
     } catch {
-      const firstBracket = raw.indexOf("[");
-      const lastBracket = raw.lastIndexOf("]");
-      if (firstBracket === -1 || lastBracket === -1 || lastBracket <= firstBracket) {
-        return NextResponse.json({ error: "Resposta inválida do modelo ao gerar schema." }, { status: 502 });
-      }
-      schema = JSON.parse(raw.slice(firstBracket, lastBracket + 1));
+      return NextResponse.json({ error: "Resposta inválida do modelo ao gerar schema." }, { status: 502 });
     }
 
-    if (typeof schema === "object" && schema !== null && !Array.isArray(schema) && "campos" in schema) {
-      schema = (schema as { campos: unknown }).campos;
-    }
     if (!Array.isArray(schema)) {
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
 
     const db = getAdminDb();
-    await db.collection("templates").doc(templateId).update({
-      schema_campos: schema,
-    });
+    await db.collection("templates").doc(templateId).update({ schema_campos: schema });
 
     console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: (schema as unknown[]).length });
 
-    // Async: regenerate the fillable DOCX now that schema is known
     void (async () => {
       try {
         const { downloadFile, uploadFile } = await import("../../../../lib/storage/blob");
@@ -256,7 +235,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, schema });
   } catch (error) {
     console.error("Erro na rota /api/templates/introspect:", error);
+    const msg = (error as Error)?.message ?? "";
+    const status = (error as { status?: number })?.status;
+    if (status === 429 || msg.includes("429") || msg.includes("free_tier") || msg.includes("GROQ_API_KEY")) {
+      return NextResponse.json({ error: "Cota da IA esgotada. Tente novamente mais tarde." }, { status: 429 });
+    }
     return NextResponse.json({ error: "Falha ao gerar schema do template." }, { status: 500 });
   }
 }
-

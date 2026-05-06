@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, CloudUpload, FileText } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, CloudUpload, FileText } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 
@@ -94,8 +94,23 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
     <div
       onDrop={onDrop}
       onDragOver={onDragOver}
-      className="flex h-full cursor-pointer flex-col gap-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8"
+      className="relative flex h-full cursor-pointer flex-col gap-4 overflow-hidden rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8"
     >
+      {isUploading && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 rounded-3xl bg-white/95 backdrop-blur-sm">
+          <div className="relative flex items-center justify-center">
+            <div className="h-14 w-14 animate-spin rounded-full border-4 border-slate-100 border-t-violet-600" />
+            <div className="absolute flex h-8 w-8 items-center justify-center rounded-full bg-violet-100">
+              <FileText className="h-4 w-4 text-violet-600" />
+            </div>
+          </div>
+          <div className="text-center">
+            <p className="text-base font-semibold text-slate-900">Processando template…</p>
+            <p className="mt-1 text-sm text-slate-500">A IA está extraindo os campos do arquivo.</p>
+            <p className="mt-0.5 text-xs text-slate-400">Isso pode levar alguns segundos.</p>
+          </div>
+        </div>
+      )}
       {/* Fidelity notice — always visible */}
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
         <div className="flex items-start gap-3">
@@ -161,21 +176,24 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
 
           <label className="block text-sm">
             <span className="font-medium text-slate-700">Tipo de plano</span>
-            <select
-              value={tipoPlano}
-              onChange={(event) => setTipoPlano(event.target.value)}
-              className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-slate-950"
-            >
-              <option value="">Selecione um tipo</option>
-              <option value="plano_anual">Plano anual</option>
-              <option value="plano_semestral">Plano semestral</option>
-              <option value="plano_quinzenal">Plano quinzenal</option>
-              <option value="plano_de_aula">Plano de aula</option>
-              <option value="sequencia_didatica">Sequência didática</option>
-              <option value="situacao_de_aprendizagem">Situação de aprendizagem</option>
-              <option value="projeto_de_extensao">Projeto de extensão</option>
-              <option value="caso_de_uso">Caso de uso</option>
-            </select>
+            <div className="relative mt-2">
+              <select
+                value={tipoPlano}
+                onChange={(event) => setTipoPlano(event.target.value)}
+                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-3 py-2 pr-9 text-sm text-slate-950 outline-none transition focus:border-slate-950"
+              >
+                <option value="">Selecione um tipo</option>
+                <option value="plano_anual">Plano anual</option>
+                <option value="plano_semestral">Plano semestral</option>
+                <option value="plano_quinzenal">Plano quinzenal</option>
+                <option value="plano_de_aula">Plano de aula</option>
+                <option value="sequencia_didatica">Sequência didática</option>
+                <option value="situacao_de_aprendizagem">Situação de aprendizagem</option>
+                <option value="projeto_de_extensao">Projeto de extensão</option>
+                <option value="caso_de_uso">Caso de uso</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
           </label>
         </div>
 
@@ -211,9 +229,7 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
         </label>
       </div>
 
-      {isUploading ? (
-        <p className="text-xs text-slate-600">Processando template — isso pode levar alguns segundos…</p>
-      ) : (
+      {!isUploading && (
         <p className="text-xs text-slate-500">
           Formatos aceitos: <strong>.docx</strong> (recomendado) e .pdf
         </p>

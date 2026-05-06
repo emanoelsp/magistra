@@ -22,9 +22,8 @@ export function Sidebar() {
 
   return (
     <aside className="hidden w-52 flex-shrink-0 flex-col overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:flex">
-      <div className="mb-6 px-2">
-        <img src="/images/logo.png" alt="PlanoMagistra" className="h-12 w-auto" />
-        <p className="mt-0.5 text-xs text-slate-400">Dashboard</p>
+      <div className="mb-6 flex justify-center">
+        <img src="/images/logo.png" alt="PlanoMagistra" className="max-h-16 max-w-full" />
       </div>
 
       <nav className="flex-1 space-y-1 text-sm">

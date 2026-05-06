@@ -178,7 +178,7 @@ async function overlayValuesOnPdf(
     const startY = labelItem.y - 13;
     const maxChars = Math.max(20, Math.floor((pageWidth - startX - 40) / 5.5));
 
-    const lines = wrapLines(value, maxChars).slice(0, 8);
+    const lines = wrapLines(safePdfText(value), maxChars).slice(0, 8);
 
     for (let i = 0; i < lines.length; i++) {
       const lineY = startY - i * 12;
@@ -196,6 +196,16 @@ async function overlayValuesOnPdf(
   return pdfDoc.save();
 }
 
+// pdf-lib StandardFonts use WinAnsi — normalize to composed form and strip anything outside Latin-1
+function safePdfText(text: string): string {
+  return text
+    .normalize("NFC")
+    .replace(/[^\x00-\xFF]/g, (ch) => {
+      const base = ch.normalize("NFD").charAt(0);
+      return base.charCodeAt(0) <= 0xff ? base : "?";
+    });
+}
+
 function buildFallbackPdf(
   templateNome: string,
   schema: TemplateFieldSchema[],
@@ -210,16 +220,16 @@ function buildFallbackPdf(
     const margin = 50;
     let y = height - margin;
 
-    page.drawText(templateNome, { x: margin, y, size: 14, font: bold, color: rgb(0.05, 0.05, 0.05) });
+    page.drawText(safePdfText(templateNome), { x: margin, y, size: 14, font: bold, color: rgb(0.05, 0.05, 0.05) });
     y -= 24;
-    page.drawText(`Gerado em ${new Date().toLocaleDateString("pt-BR")}`, {
+    page.drawText(safePdfText(`Gerado em ${new Date().toLocaleDateString("pt-BR")}`), {
       x: margin, y, size: 9, font, color: rgb(0.4, 0.4, 0.4),
     });
     y -= 24;
 
     for (const field of schema) {
-      const value = values[field.key]?.trim() || "—";
-      const labelTxt = `${field.label}:`;
+      const value = safePdfText(values[field.key]?.trim() || "—");
+      const labelTxt = safePdfText(`${field.label}:`);
       const lines = wrapLines(value, 90);
       const blockH = 14 + lines.length * 13 + 10;
 
@@ -231,7 +241,7 @@ function buildFallbackPdf(
       page.drawText(labelTxt, { x: margin, y, size: 9, font: bold, color: rgb(0.1, 0.1, 0.1) });
       y -= 13;
       for (const line of lines) {
-        page.drawText(line, { x: margin + 4, y, size: 9, font, color: rgb(0.2, 0.2, 0.2) });
+        page.drawText(safePdfText(line), { x: margin + 4, y, size: 9, font, color: rgb(0.2, 0.2, 0.2) });
         y -= 12;
       }
       y -= 6;
@@ -242,11 +252,13 @@ function buildFallbackPdf(
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
+    const { searchParams } = new URL(request.url);
+    const forcePdf = searchParams.get("format") === "pdf";
 
     if (!id) {
       return NextResponse.json({ error: "ID do plano é obrigatório." }, { status: 400 });
@@ -274,7 +286,7 @@ export async function GET(
     const ext = arquivoUrl.split(".").pop()?.toLowerCase() ?? "pdf";
     const isDocx = ext === "docx" || ext === "doc";
 
-    if (isDocx && arquivoUrl) {
+    if (isDocx && arquivoUrl && !forcePdf) {
       try {
         const fillableUrl = template?.arquivo_fillable_url ?? "";
         let docxBuffer: Buffer;

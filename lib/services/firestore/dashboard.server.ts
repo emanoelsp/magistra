@@ -226,3 +226,55 @@ export async function getUserPlanosComNome(
     escola_nome: templateNames[p.template_id]?.escola_nome ?? null,
   }));
 }
+
+export interface PlanoDetalhes extends PlanoComNome {
+  schema_campos: TemplateFieldSchema[];
+  tipo_plano: string | null;
+}
+
+export async function getPlanoDetalhes(
+  planoId: string,
+  userId: string,
+): Promise<PlanoDetalhes | null> {
+  const adminDb = getAdminDb();
+  const planoSnap = await adminDb.collection("planos").doc(planoId).get();
+  if (!planoSnap.exists) return null;
+
+  const d = planoSnap.data()!;
+  if (d.user_id !== userId) return null;
+
+  const templateId = typeof d.template_id === "string" ? d.template_id : "";
+  const tSnap = templateId ? await adminDb.collection("templates").doc(templateId).get() : null;
+  const td = tSnap?.data();
+
+  const rawSchema = td?.schema_campos;
+  const schema_campos: TemplateFieldSchema[] = Array.isArray(rawSchema)
+    ? rawSchema.map((item: unknown) => {
+        const obj = item as Record<string, unknown>;
+        return {
+          key: typeof obj.key === "string" ? obj.key : "",
+          label: typeof obj.label === "string" ? obj.label : "",
+          type: (typeof obj.type === "string" ? obj.type : "text") as TemplateFieldSchema["type"],
+          required: typeof obj.required === "boolean" ? obj.required : false,
+          role: typeof obj.role === "string" ? (obj.role as TemplateFieldSchema["role"]) : undefined,
+          group: typeof obj.group === "string" ? (obj.group as TemplateFieldSchema["group"]) : undefined,
+        };
+      })
+    : [];
+
+  return {
+    id: planoSnap.id,
+    user_id: d.user_id as string,
+    template_id: templateId,
+    conteudo_gerado:
+      typeof d.conteudo_gerado === "object" && d.conteudo_gerado !== null
+        ? (d.conteudo_gerado as Record<string, unknown>)
+        : {},
+    data_geracao: toIsoString(d.data_geracao),
+    status: (typeof d.status === "string" ? d.status : "rascunho") as PlanoStatus,
+    template_nome: typeof td?.nome === "string" ? td.nome : "Template removido",
+    escola_nome: typeof td?.escola_nome === "string" ? td.escola_nome : null,
+    tipo_plano: typeof td?.tipo_plano === "string" ? td.tipo_plano : null,
+    schema_campos,
+  };
+}
