@@ -227,6 +227,42 @@ export async function getUserPlanosComNome(
   }));
 }
 
+export interface RecentTemplate {
+  id: string;
+  nome: string;
+  escola_nome: string | null;
+  tipo_plano: string | null;
+  campo_count: number;
+  data_criacao: string;
+}
+
+export async function getRecentTemplates(
+  userId: string,
+  limit = 4,
+): Promise<RecentTemplate[]> {
+  const adminDb = getAdminDb();
+  const snapshot = await adminDb
+    .collection("templates")
+    .where("user_id", "==", userId)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => {
+      const d = doc.data();
+      const schema = Array.isArray(d.schema_campos) ? d.schema_campos : [];
+      return {
+        id: doc.id,
+        nome: typeof d.nome === "string" ? d.nome : "Template sem nome",
+        escola_nome: typeof d.escola_nome === "string" && d.escola_nome ? d.escola_nome : null,
+        tipo_plano: typeof d.tipo_plano === "string" && d.tipo_plano ? d.tipo_plano : null,
+        campo_count: schema.length,
+        data_criacao: toIsoString(d.data_criacao),
+      };
+    })
+    .sort((a, b) => b.data_criacao.localeCompare(a.data_criacao))
+    .slice(0, limit);
+}
+
 export interface PlanoDetalhes extends PlanoComNome {
   schema_campos: TemplateFieldSchema[];
   tipo_plano: string | null;

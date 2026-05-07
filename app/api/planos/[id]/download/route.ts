@@ -274,9 +274,14 @@ export async function GET(
     const planoData = planoSnap.data() as PlanoRecord;
     const conteudo = normalizeConteudo(planoData.conteudo_gerado ?? {});
 
+    // Use plan title as filename if set, otherwise fall back to template name
+    const planoTituloRaw = planoData.conteudo_gerado?._plano_titulo;
+    const planoTitulo = typeof planoTituloRaw === "string" ? planoTituloRaw.trim() : "";
+
     const templateSnap = await db.collection("templates").doc(planoData.template_id).get();
     const template = templateSnap.exists ? (templateSnap.data() as TemplateRecord) : null;
     const templateNome = template?.nome ?? "Plano";
+    const fileBaseName = planoTitulo || templateNome;
     // Prefer schema snapshot saved at plan creation; fall back to current template schema
     const schema: TemplateFieldSchema[] =
       Array.isArray(planoData.schema_campos) && planoData.schema_campos.length > 0
@@ -318,7 +323,7 @@ export async function GET(
         const filledBuffer = fillDocx(docxBuffer, schema, safeConteudo);
         const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         const filledBlob = new Blob([new Uint8Array(filledBuffer)], { type: mimeType });
-        const docxFilename = sanitizeFilename(templateNome, ext);
+        const docxFilename = sanitizeFilename(fileBaseName, ext);
 
         return new NextResponse(filledBlob, {
           headers: {
@@ -341,14 +346,14 @@ export async function GET(
         pdfBytes = await overlayValuesOnPdf(originalBuffer, schema, conteudo);
       } catch (storageErr) {
         console.warn("[PlanoMagistra/download] Storage indisponível, usando PDF gerado:", storageErr);
-        pdfBytes = await buildFallbackPdf(templateNome, schema, conteudo);
+        pdfBytes = await buildFallbackPdf(fileBaseName, schema, conteudo);
       }
     } else {
-      pdfBytes = await buildFallbackPdf(templateNome, schema, conteudo);
+      pdfBytes = await buildFallbackPdf(fileBaseName, schema, conteudo);
     }
 
     const pdfBuffer = Buffer.from(pdfBytes);
-    const pdfFilename = sanitizeFilename(templateNome, "pdf");
+    const pdfFilename = sanitizeFilename(fileBaseName, "pdf");
     return new NextResponse(pdfBuffer, {
       headers: {
         "Content-Type": "application/pdf",

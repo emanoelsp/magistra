@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { BookCopy, Clock3, Download, FileText, FolderKanban, Plus, Rocket, Sparkles } from "lucide-react";
+import { BookCopy, Clock3, Download, Edit2, FileText, FolderKanban, Plus, Rocket, Sparkles } from "lucide-react";
 
 import { StatCard } from "../../components/dashboard/stat-card";
 import { requireCurrentUserProfile } from "../../lib/auth/session";
-import { getDashboardStats, getUserPlanosComNome } from "../../lib/services/firestore/dashboard.server";
+import { getDashboardStats, getRecentTemplates, getUserPlanosComNome } from "../../lib/services/firestore/dashboard.server";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +22,10 @@ function formatDate(iso: string) {
 
 export default async function DashboardPage() {
   const user = await requireCurrentUserProfile();
-  const [stats, planos] = await Promise.all([
+  const [stats, planos, templates] = await Promise.all([
     getDashboardStats(user),
     getUserPlanosComNome(user.uid, 5),
+    getRecentTemplates(user.uid, 4),
   ]);
 
   const cards = [
@@ -87,91 +88,156 @@ export default async function DashboardPage() {
         ))}
       </section>
 
-      {/* Planos recentes */}
-      <section className="rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
-        <div className="mb-6 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Recentes</p>
-            <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">Seus planos</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/dashboard/historico"
-              className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-            >
-              Ver todos
-            </Link>
-            <Link
-              href="/dashboard/gerar"
-              className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Novo plano
-            </Link>
-          </div>
-        </div>
+      {/* Recentes: templates + planos lado a lado */}
+      <section className="grid gap-6 xl:grid-cols-2">
 
-        {planos.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center">
-            <FileText className="mx-auto h-10 w-10 text-slate-300" />
-            <p className="mt-3 text-sm font-medium text-slate-600">Nenhum plano gerado ainda.</p>
-            <Link
-              href="/dashboard/gerar"
-              className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-            >
-              Gerar primeiro plano
-            </Link>
+        {/* Templates recentes */}
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Recentes</p>
+              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">Seus templates</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/dashboard/templates"
+                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                Ver todos
+              </Link>
+            </div>
           </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {planos.map((plano) => {
-              const status = STATUS_CONFIG[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
-              const temConteudo = Object.keys(plano.conteudo_gerado ?? {}).length > 0;
-              return (
+
+          {templates.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+              <FolderKanban className="mx-auto h-8 w-8 text-slate-300" />
+              <p className="mt-3 text-sm font-medium text-slate-600">Nenhum template cadastrado.</p>
+              <Link
+                href="/dashboard/templates"
+                className="mt-3 inline-flex items-center gap-1.5 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
+              >
+                <Plus className="h-3 w-3" />
+                Adicionar template
+              </Link>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {templates.map((t) => (
                 <div
-                  key={plano.id}
-                  className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"
+                  key={t.id}
+                  className="flex items-center justify-between gap-3 py-3"
                 >
-                  <div className="flex items-start gap-3">
-                    <span className="mt-0.5 rounded-xl bg-violet-50 p-2 text-violet-600">
-                      <FileText className="h-4 w-4" />
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="mt-0.5 shrink-0 rounded-xl bg-amber-50 p-2 text-amber-600">
+                      <FolderKanban className="h-4 w-4" />
                     </span>
-                    <div>
-                      <p className="font-medium text-slate-900">{plano.template_nome}</p>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        {plano.escola_nome ? `${plano.escola_nome} · ` : ""}
-                        {formatDate(plano.data_geracao)}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-900">{t.nome}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">
+                        {t.escola_nome ? `${t.escola_nome} · ` : ""}
+                        {t.campo_count} campos · {formatDate(t.data_criacao)}
                       </p>
-                      <span className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
-                        {status.label}
-                      </span>
                     </div>
                   </div>
-
-                  <div className="flex shrink-0 items-center gap-2">
-                    {plano.status === "gerado" && temConteudo && (
-                      <a
-                        href={`/api/planos/${plano.id}/download`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        Baixar
-                      </a>
-                    )}
-                    <Link
-                      href={`/dashboard/historico/${plano.id}`}
-                      className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-                    >
-                      Ver detalhes
-                    </Link>
-                  </div>
+                  <Link
+                    href={`/dashboard/templates/${t.id}/editar`}
+                    className="shrink-0 rounded-xl border border-slate-300 p-1.5 text-slate-500 transition hover:border-slate-950 hover:text-slate-950"
+                    title="Editar"
+                  >
+                    <Edit2 className="h-3.5 w-3.5" />
+                  </Link>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Planos recentes */}
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Recentes</p>
+              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">Seus planos</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/dashboard/historico"
+                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                Ver todos
+              </Link>
+              <Link
+                href="/dashboard/gerar"
+                className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Novo plano
+              </Link>
+            </div>
           </div>
-        )}
+
+          {planos.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+              <FileText className="mx-auto h-8 w-8 text-slate-300" />
+              <p className="mt-3 text-sm font-medium text-slate-600">Nenhum plano gerado ainda.</p>
+              <Link
+                href="/dashboard/gerar"
+                className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
+              >
+                Gerar primeiro plano
+              </Link>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {planos.map((plano) => {
+                const status = STATUS_CONFIG[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
+                const temConteudo = Object.keys(plano.conteudo_gerado ?? {}).length > 0;
+                return (
+                  <div
+                    key={plano.id}
+                    className="flex items-center justify-between gap-3 py-3"
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="mt-0.5 shrink-0 rounded-xl bg-violet-50 p-2 text-violet-600">
+                        <FileText className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-900">{plano.template_nome}</p>
+                        <p className="mt-0.5 truncate text-xs text-slate-500">
+                          {plano.escola_nome ? `${plano.escola_nome} · ` : ""}
+                          {formatDate(plano.data_geracao)}
+                        </p>
+                        <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${status.cls}`}>
+                          {status.label}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {plano.status === "gerado" && temConteudo && (
+                        <a
+                          href={`/api/planos/${plano.id}/download`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-xl border border-slate-300 p-1.5 text-slate-500 transition hover:border-slate-950 hover:text-slate-950"
+                          title="Baixar"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </a>
+                      )}
+                      <Link
+                        href={`/dashboard/historico/${plano.id}`}
+                        className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+                      >
+                        Detalhes
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
       </section>
 
       {/* Quick actions */}

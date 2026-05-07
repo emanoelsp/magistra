@@ -14,7 +14,11 @@ import {
   ArrowLeft,
   CheckCircle2,
   Download,
+  Eye,
+  EyeOff,
+  FileText,
   Loader2,
+  Pin,
   Save,
   Send,
   Sparkles,
@@ -203,6 +207,43 @@ function DocView({ html, values, activeFieldKey, onFieldFocus, onFieldChange }: 
   );
 }
 
+// ─── PreviewDocView ───────────────────────────────────────────────────────────
+// Read-only view — fills editable cells with current values, no editing UI.
+
+interface PreviewDocViewProps {
+  html: string;
+  values: Record<string, string>;
+}
+
+function PreviewDocView({ html, values }: PreviewDocViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.innerHTML = html;
+    container.querySelectorAll<HTMLElement>("[data-field-key]").forEach((cell) => {
+      const key = cell.dataset.fieldKey!;
+      const role = cell.dataset.fieldRole ?? "";
+      const value = values[key] ?? "";
+      if (role === "ia_sugerida") {
+        cell.innerHTML = value || "";
+      } else {
+        cell.textContent = value;
+      }
+      cell.contentEditable = "false";
+      cell.style.cssText = "cursor:default;";
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html, values]);
+
+  return (
+    <div className="doc-page">
+      <div ref={containerRef} className="doc-view doc-view-preview" />
+    </div>
+  );
+}
+
 // ─── PlanEditor ───────────────────────────────────────────────────────────────
 
 export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function PlanEditor(
@@ -243,11 +284,19 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [planoId, setPlanoId] = useState<string | null>(null);
   const [autoSuggestedOnce, setAutoSuggestedOnce] = useState(false);
+  const [generalContext, setGeneralContext] = useState("");
 
   // Document HTML state
   const [docHtml, setDocHtml] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(false);
   const docContainerRef = useRef<HTMLDivElement>(null);
+  const docScrolledRef = useRef(false);
+
+  // Preview mode: read-only view of filled doc
+  const [previewMode, setPreviewMode] = useState(false);
+
+  const hasDocx =
+    (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
 
   const activeField = schema.find((f) => f.key === activeFieldKey) ?? null;
   const activeSuggestions = activeFieldKey ? (suggestions[activeFieldKey] ?? []) : [];
@@ -270,6 +319,34 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       .finally(() => setDocLoading(false));
   }, [template.id, template.arquivo_url]);
 
+  // In wizard mode: auto-scroll to the first IA field so the user lands on Conteúdos,
+  // not on Dados fixos. Works for both the DOCX doc view and the form fallback.
+  useEffect(() => {
+    if (!wizardMode) return;
+
+    if (docHtml) {
+      // DOCX view: scroll the doc container to the first IA cell
+      if (docScrolledRef.current) return;
+      docScrolledRef.current = true;
+      const timer = setTimeout(() => {
+        const firstIaCell = docContainerRef.current?.querySelector<HTMLElement>(
+          '[data-field-role="ia_sugerida"]',
+        );
+        firstIaCell?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 300);
+      return () => clearTimeout(timer);
+    } else if (!docLoading) {
+      // Form fallback: scroll to the ia-section anchor
+      const timer = setTimeout(() => {
+        document
+          .getElementById("ia-section-first")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wizardMode, docHtml, docLoading]);
+
   const setFieldValue = (key: string, value: string) =>
     setValues((prev) => ({ ...prev, [key]: value }));
 
@@ -279,6 +356,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       setSuggestError(null);
       setLoadingField(field.key);
       setStreamingCharCount(0);
+      const combinedContext = [generalContext.trim(), extraContext?.trim()].filter(Boolean).join("\n\n");
       try {
         const res = await fetch("/api/ia/campo", {
           method: "POST",
@@ -289,7 +367,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             fieldLabel: field.label,
             fieldGroup: field.group,
             metadata: meta,
-            ...(extraContext?.trim() ? { extraContext: extraContext.trim() } : {}),
+            ...(combinedContext ? { extraContext: combinedContext } : {}),
             stream: true,
             ...(bypassCache ? { bypassCache: true } : {}),
           }),
@@ -346,7 +424,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         setStreamingCharCount(0);
       }
     },
-    [template.id, loadingField],
+    [template.id, loadingField, generalContext],
   );
 
   useEffect(() => {
@@ -432,14 +510,17 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     });
   }
 
-  function handleFinalizar() {
+  function handleExport(format: "pdf" | "docx") {
     setSaveStatus("saving");
     startTransition(() => {
       void savePlano("gerado")
         .then((id) => {
           setSaveStatus("saved");
-          window.open(`/api/planos/${id}/download?format=pdf`, "_blank");
-          setTimeout(() => router.push("/dashboard/historico"), 1000);
+          const url =
+            format === "pdf"
+              ? `/api/planos/${id}/download?format=pdf`
+              : `/api/planos/${id}/download`;
+          window.open(url, "_blank");
         })
         .catch(() => { setSaveStatus("error"); setTimeout(() => setSaveStatus("idle"), 3000); });
     });
@@ -490,14 +571,44 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
               {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               Salvar rascunho
             </button>
+            {docHtml && (
+              <button
+                type="button"
+                onClick={() => setPreviewMode((v) => !v)}
+                className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                {previewMode ? (
+                  <>
+                    <EyeOff className="h-3.5 w-3.5" />
+                    Editar
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-3.5 w-3.5" />
+                    Visualizar
+                  </>
+                )}
+              </button>
+            )}
+            {hasDocx && (
+              <button
+                type="button"
+                onClick={() => handleExport("docx")}
+                disabled={isSaving}
+                className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950 disabled:opacity-50"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Exportar DOCX
+              </button>
+            )}
             <button
               type="button"
-              onClick={handleFinalizar}
+              onClick={() => handleExport("pdf")}
               disabled={isSaving}
               className="flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-500 disabled:opacity-50"
             >
               <Download className="h-3.5 w-3.5" />
-              Finalizar e baixar PDF
+              Exportar PDF
             </button>
           </div>
         </header>
@@ -601,22 +712,34 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 .doc-view td[data-field-key]:focus-within::after {
                   opacity:1;
                 }
+
+                /* ── Preview mode — clean read-only view ── */
+                .doc-view-preview td[data-field-key] {
+                  background:#fff !important;
+                  border-left:none !important;
+                  cursor:default;
+                }
+                .doc-view-preview td[data-field-key]::after { display:none; }
               `}</style>
               <div ref={docContainerRef}>
-                <DocView
-                  html={docHtml}
-                  values={values}
-                  activeFieldKey={activeFieldKey}
-                  onFieldFocus={(key, label, role) => {
-                    setActiveFieldKey(key);
-                    setActiveFieldMeta({ label, role });
-                    const field = schema.find((f) => f.key === key);
-                    if (field && !suggestions[key] && !loadingField && metadataComplete) {
-                      void fetchSuggestionsForField(field, metadata);
-                    }
-                  }}
-                  onFieldChange={setFieldValue}
-                />
+                {previewMode ? (
+                  <PreviewDocView html={docHtml} values={values} />
+                ) : (
+                  <DocView
+                    html={docHtml}
+                    values={values}
+                    activeFieldKey={activeFieldKey}
+                    onFieldFocus={(key, label, role) => {
+                      setActiveFieldKey(key);
+                      setActiveFieldMeta({ label, role });
+                      const field = schema.find((f) => f.key === key);
+                      if (field && !suggestions[key] && !loadingField && metadataComplete) {
+                        void fetchSuggestionsForField(field, metadata);
+                      }
+                    }}
+                    onFieldChange={setFieldValue}
+                  />
+                )}
               </div>
             </div>
           ) : (
@@ -643,21 +766,58 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
           )}
         </div>
 
-        {/* ── Right: AI chatbot panel ── */}
-        <AIChatPanel
-          activeField={activeField}
-          activeFieldMeta={activeFieldMeta}
-          suggestions={activeSuggestions}
-          isLoading={loadingField === activeFieldKey}
-          streamingCharCount={loadingField === activeFieldKey ? streamingCharCount : 0}
-          error={suggestError}
-          metadata={metadata}
-          metadataComplete={metadataComplete}
-          onInsert={insertSuggestion}
-          onGenerate={(extraContext, bypass) => {
-            if (activeField) void fetchSuggestionsForField(activeField, metadata, extraContext, bypass);
-          }}
-        />
+        {/* ── Right: AI chatbot panel (hidden in preview mode) ── */}
+        {!previewMode && (
+          <AIChatPanel
+            activeField={activeField}
+            activeFieldMeta={activeFieldMeta}
+            suggestions={activeSuggestions}
+            isLoading={loadingField === activeFieldKey}
+            streamingCharCount={loadingField === activeFieldKey ? streamingCharCount : 0}
+            error={suggestError}
+            metadata={metadata}
+            metadataComplete={metadataComplete}
+            generalContext={generalContext}
+            onGeneralContextChange={setGeneralContext}
+            onInsert={insertSuggestion}
+            onGenerate={(extraContext, bypass) => {
+              if (activeField) void fetchSuggestionsForField(activeField, metadata, extraContext, bypass);
+            }}
+          />
+        )}
+        {previewMode && (
+          <div className="flex w-64 shrink-0 flex-col items-center justify-center gap-4 border-l border-slate-100 bg-slate-50 p-6 text-center">
+            <Eye className="h-8 w-8 text-slate-300" />
+            <div>
+              <p className="text-sm font-semibold text-slate-700">Modo visualização</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Veja o documento preenchido. Clique em "Editar" para continuar modificando os campos.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 w-full">
+              {hasDocx && (
+                <button
+                  type="button"
+                  onClick={() => handleExport("docx")}
+                  disabled={isSaving}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 disabled:opacity-50"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Exportar DOCX
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleExport("pdf")}
+                disabled={isSaving}
+                className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-500 disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Exportar PDF
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -716,8 +876,8 @@ function FormView({
         </section>
       )}
 
-      {Object.entries(groupedIA).map(([group, fields]) => (
-        <section key={group}>
+      {Object.entries(groupedIA).map(([group, fields], idx) => (
+        <section key={group} id={idx === 0 ? "ia-section-first" : undefined}>
           <div className="mb-4 flex items-center gap-2">
             <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">
               {GROUP_LABELS[group] ?? group}
@@ -780,6 +940,8 @@ interface AIChatPanelProps {
   error: string | null;
   metadata: Record<string, string>;
   metadataComplete: boolean;
+  generalContext: string;
+  onGeneralContextChange: (v: string) => void;
   onInsert: (s: IaSugestao, mode: "label" | "full") => void;
   onGenerate: (extraContext?: string, bypassCache?: boolean) => void;
 }
@@ -793,10 +955,13 @@ function AIChatPanel({
   error,
   metadata,
   metadataComplete,
+  generalContext,
+  onGeneralContextChange,
   onInsert,
   onGenerate,
 }: AIChatPanelProps) {
   const [contextInput, setContextInput] = useState("");
+  const [showGeneralCtx, setShowGeneralCtx] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const metaEntries = Object.entries(metadata).slice(0, 5);
   const fieldLabel = activeField?.label ?? activeFieldMeta?.label;
@@ -843,6 +1008,56 @@ function AIChatPanel({
                 <span>{v}</span>
               </p>
             ))}
+            {/* General context — editable inline, persists for all fields */}
+            <div className="mt-2 border-t border-violet-100 pt-2">
+              {generalContext.trim() && !showGeneralCtx ? (
+                <div>
+                  <p className="mb-0.5 flex items-center gap-1 text-xs font-semibold text-violet-700">
+                    <Pin className="h-3 w-3" />
+                    Contexto geral:
+                  </p>
+                  <p className="text-xs text-slate-700 whitespace-pre-wrap">{generalContext.trim()}</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowGeneralCtx(true)}
+                    className="mt-1 text-[11px] text-violet-500 underline hover:text-violet-700"
+                  >
+                    Editar
+                  </button>
+                </div>
+              ) : showGeneralCtx ? (
+                <div>
+                  <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-violet-700">
+                    <Pin className="h-3 w-3" />
+                    Contexto geral:
+                  </p>
+                  <textarea
+                    rows={3}
+                    autoFocus
+                    value={generalContext}
+                    onChange={(e) => onGeneralContextChange(e.target.value)}
+                    placeholder="Ex: turma agitada, foco em projetos práticos…"
+                    className="w-full resize-none rounded-xl border border-violet-300 bg-white px-3 py-2 text-xs outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowGeneralCtx(false)}
+                    className="mt-1 text-[11px] font-medium text-violet-600 hover:text-violet-800"
+                  >
+                    Salvar
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowGeneralCtx(true)}
+                  className="flex items-center gap-1 text-[11px] text-violet-500 hover:text-violet-700"
+                >
+                  <Pin className="h-3 w-3" />
+                  + Adicionar contexto geral
+                </button>
+              )}
+            </div>
             {!metadataComplete && (
               <p className="mt-1.5 text-xs text-amber-600">
                 Preencha ao menos dois dados fixos para ativar sugestões.
@@ -856,8 +1071,8 @@ function AIChatPanel({
           <ChatBubble>
             <p className="text-sm text-slate-700">
               Olá! Clique em qualquer campo{" "}
-              <span className="font-semibold text-violet-700">destacado em azul</span> no
-              documento para eu sugerir conteúdo específico para ele.
+              <span className="font-semibold text-blue-600">com borda azul</span> para
+              eu sugerir conteúdo específico para ele.
             </p>
           </ChatBubble>
         )}
@@ -1090,7 +1305,7 @@ function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadat
   }, [active]);
 
   return (
-    <div className={`rounded-2xl border bg-white p-4 transition ${active ? "border-violet-300 shadow-sm" : "border-slate-200"}`}>
+    <div className={`rounded-2xl border p-4 transition ${active ? "border-violet-400 bg-violet-50 shadow-sm ring-1 ring-violet-100" : "border-blue-300 bg-blue-50/40"}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-slate-800">{field.label}</span>
         <button

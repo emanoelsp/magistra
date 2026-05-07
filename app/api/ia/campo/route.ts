@@ -143,6 +143,12 @@ export async function POST(request: Request) {
 
     const template = snap.data() as TemplateRecord;
 
+    // Find field-level aiInstructions from schema
+    const fieldSchema = Array.isArray(template.schema_campos)
+      ? template.schema_campos.find((f) => f.key === fieldKey)
+      : undefined;
+    const fieldAiInstructions = fieldSchema?.aiInstructions?.trim() ?? "";
+
     const metaLines = Object.entries(metadata)
       .filter(([, v]) => v.trim())
       .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`);
@@ -275,8 +281,12 @@ export async function POST(request: Request) {
       template_da_escola: template.nome,
       contexto_turma: contexto,
       ...(bnccContexto ? { habilidades_bncc_disponiveis: bnccContexto } : {}),
+      ...(fieldAiInstructions ? { instrucoes_especificas_do_campo: fieldAiInstructions } : {}),
       ...(extraContext?.trim() ? { contexto_extra_do_professor: extraContext.trim() } : {}),
       instrucao: instrucaoEspecifica +
+        (fieldAiInstructions
+          ? ` INSTRUÇÃO ESPECÍFICA DESTE CAMPO (definida pelo professor ao criar o template): "${fieldAiInstructions}". Respeite esta instrução como prioridade.`
+          : "") +
         (bnccContexto
           ? " USE APENAS os códigos de habilidades_bncc_disponiveis — nunca invente outros."
           : "") +

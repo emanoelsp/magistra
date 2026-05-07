@@ -27,6 +27,7 @@ export interface TemplateFieldSchema {
   placeholder?: string;
   helperText?: string;
   options?: string[];
+  aiInstructions?: string;
 }
 
 export interface UserProfile {

@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, FileText } from "lucide-react";
+import Link from "next/link";
 
 import { TemplateFieldEditor } from "../../../../../components/templates/template-field-editor";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
@@ -13,7 +13,7 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-export default async function EditarTemplatePage({ params }: PageProps) {
+export default async function ConfirmarTemplatePage({ params }: PageProps) {
   const user = await requireCurrentUserProfile();
   const { id } = await params;
 
@@ -47,6 +47,8 @@ export default async function EditarTemplatePage({ params }: PageProps) {
     schema_campos: Array.isArray(data.schema_campos) ? data.schema_campos : [],
     data_criacao: toIso(data.data_criacao),
     arquivo_url: typeof data.arquivo_url === "string" ? data.arquivo_url : undefined,
+    arquivo_fillable_url:
+      typeof data.arquivo_fillable_url === "string" ? data.arquivo_fillable_url : undefined,
   };
 
   return (
@@ -60,13 +62,13 @@ export default async function EditarTemplatePage({ params }: PageProps) {
           Voltar para templates
         </Link>
 
-        <div className="flex items-center gap-3">
-          <span className="rounded-2xl bg-violet-50 p-3 text-violet-600">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 rounded-2xl bg-violet-50 p-3 text-violet-600">
             <FileText className="h-5 w-5" />
           </span>
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">
-              Editor de template
+              Confirmar campos
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-950">
               {template.nome}
@@ -74,11 +76,15 @@ export default async function EditarTemplatePage({ params }: PageProps) {
             {template.escola_nome && (
               <p className="text-sm text-slate-500">{template.escola_nome}</p>
             )}
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">
+              A IA extraiu os campos abaixo do seu template. Confirme, ajuste ou adicione campos antes
+              de usar o template para gerar planos.
+            </p>
           </div>
         </div>
       </header>
 
-      <TemplateFieldEditor template={template} />
+      <TemplateFieldEditor template={template} mode="confirm" />
     </div>
   );
 }

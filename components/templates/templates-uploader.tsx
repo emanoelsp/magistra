@@ -58,7 +58,7 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
         throw new Error(introspectData?.error ?? "Falha ao extrair campos do arquivo.");
       }
 
-      router.refresh();
+      router.push(`/dashboard/templates/${templateId}/confirmar`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Não foi possível criar o template.";
       setError(message);

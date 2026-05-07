@@ -11,7 +11,6 @@ import {
   FileText,
   LoaderCircle,
   Save,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 
@@ -30,16 +29,6 @@ interface PlanGenerationWizardProps {
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(new Date(value));
 }
-
-const GROUP_LABELS: Record<string, string> = {
-  dados_turma: "Dados da Turma",
-  objetivos: "Objetivos",
-  competencias: "Competências",
-  habilidades: "Habilidades BNCC",
-  conteudos: "Conteúdos",
-  avaliacao: "Avaliação",
-  outros: "Outros",
-};
 
 function is2profField(field: TemplateFieldSchema): boolean {
   const text = `${field.key} ${field.label}`.toLowerCase();
@@ -84,12 +73,14 @@ export function PlanGenerationWizard({
 
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialId);
+  const [planoTitulo, setPlanoTitulo] = useState("");
   const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
   const [saveToTemplate, setSaveToTemplate] = useState(true);
   const [capturedEditorValues, setCapturedEditorValues] = useState<Record<string, string>>({});
   const [savedPlanoId, setSavedPlanoId] = useState<string | null>(null);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [isFinalized, setIsFinalized] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [isSavingMeta, startSavingMeta] = useTransition();
   const [isPending, startTransition] = useTransition();
 
@@ -167,47 +158,49 @@ export function PlanGenerationWizard({
 
   function handleContinueStep3() {
     const values = editorRef.current?.getCurrentValues() ?? {};
-    // Mescla os metadados para garantir que os campos manuais estejam presentes
     const merged = { ...metadataValues, ...values };
     setCapturedEditorValues(merged);
     goNext();
-  }
-
-  async function persistPlano(): Promise<string> {
-    if (!selectedTemplate) throw new Error("Nenhum template selecionado.");
-
+    // Auto-save as rascunho so we have an ID for the preview iframe
+    if (!selectedTemplate) return;
     const conteudo: Record<string, unknown> = {
       criado_por: userName,
       template_nome: selectedTemplate.nome,
+      _plano_titulo: planoTitulo.trim(),
+      ...merged,
+    };
+    setIsAutoSaving(true);
+    setSaveError(null);
+    const doSave = savedPlanoId
+      ? planosService.updatePlano(savedPlanoId, { conteudo_gerado: conteudo, status: "rascunho" }).then(() => savedPlanoId)
+      : planosService.createPlano({
+          user_id: userId,
+          template_id: selectedTemplateId,
+          status: "rascunho",
+          conteudo_gerado: conteudo,
+          schema_campos: selectedTemplate.schema_campos,
+        });
+    void doSave
+      .then((id) => { if (typeof id === "string") setSavedPlanoId(id); })
+      .catch(() => { setSaveError("Falha ao preparar pré-visualização. Tente novamente."); })
+      .finally(() => setIsAutoSaving(false));
+  }
+
+  function handleFinalize(download: boolean) {
+    if (!savedPlanoId || !selectedTemplate) return;
+    setSaveError(null);
+    const conteudo: Record<string, unknown> = {
+      criado_por: userName,
+      template_nome: selectedTemplate.nome,
+      _plano_titulo: planoTitulo.trim(),
       ...capturedEditorValues,
     };
-
-    const id = await planosService.createPlano({
-      user_id: userId,
-      template_id: selectedTemplateId,
-      status: "gerado",
-      conteudo_gerado: conteudo,
-    });
-
-    setSavedPlanoId(id);
-    return id;
-  }
-
-  function handleSave() {
-    setSaveError(null);
     startTransition(() => {
-      void persistPlano().catch((err) => {
-        setSaveError(err instanceof Error ? err.message : "Falha ao salvar.");
-      });
-    });
-  }
-
-  function handleSaveAndDownload() {
-    setSaveError(null);
-    startTransition(() => {
-      void persistPlano()
-        .then((id) => {
-          window.open(`/api/planos/${id}/download`, "_blank");
+      void planosService
+        .updatePlano(savedPlanoId, { conteudo_gerado: conteudo, status: "gerado" })
+        .then(() => {
+          setIsFinalized(true);
+          if (download) window.open(`/api/planos/${savedPlanoId}/download`, "_blank");
         })
         .catch((err) => {
           setSaveError(err instanceof Error ? err.message : "Falha ao salvar.");
@@ -363,6 +356,22 @@ export function PlanGenerationWizard({
             </span>
           </div>
 
+          {/* Título do plano — usado como nome do arquivo gerado */}
+          <div className="mb-5">
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Título do plano</span>
+              <span className="ml-1 text-xs text-rose-500">*</span>
+              <p className="mt-0.5 text-xs text-slate-400">Será o nome do arquivo ao baixar o plano gerado.</p>
+              <input
+                type="text"
+                value={planoTitulo}
+                onChange={(e) => setPlanoTitulo(e.target.value)}
+                placeholder="Ex.: Plano de Aula — Banco de Dados — Turma 101 — Mai 2026"
+                className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+              />
+            </label>
+          </div>
+
           {manualFields.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
               <p className="text-sm text-slate-500">
@@ -509,24 +518,19 @@ export function PlanGenerationWizard({
       )}
 
       {/* ── Passo 4: Revisão visual + salvar ──────────────────────────────── */}
-      {currentStep === 3 && selectedTemplate && templateRecord && (
-        <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+      {currentStep === 3 && selectedTemplate && (
+        <div className="flex flex-col gap-4">
 
-          {/* Cabeçalho do documento */}
-          <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-8 py-6">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                Pré-visualização do plano
-              </p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">
-                {selectedTemplate.nome}
-              </h2>
+          {/* Action bar — fica no topo, logo abaixo das etapas */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-slate-950">{planoTitulo || selectedTemplate.nome}</p>
               {selectedTemplate.escolaNome && (
-                <p className="mt-1 text-sm font-medium text-slate-500">{selectedTemplate.escolaNome}</p>
+                <p className="truncate text-xs text-slate-400">{selectedTemplate.escolaNome}</p>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              {savedPlanoId ? (
+            <div className="flex shrink-0 items-center gap-2">
+              {isFinalized ? (
                 <>
                   <span className="flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-700">
                     <Check className="h-3.5 w-3.5" />
@@ -534,7 +538,7 @@ export function PlanGenerationWizard({
                   </span>
                   <button
                     type="button"
-                    onClick={() => window.open(`/api/planos/${savedPlanoId}/download`, "_blank")}
+                    onClick={() => savedPlanoId && window.open(`/api/planos/${savedPlanoId}/download`, "_blank")}
                     className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -553,7 +557,7 @@ export function PlanGenerationWizard({
                   <button
                     type="button"
                     onClick={goBack}
-                    disabled={isPending}
+                    disabled={isPending || isAutoSaving}
                     className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 disabled:opacity-50"
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
@@ -561,28 +565,20 @@ export function PlanGenerationWizard({
                   </button>
                   <button
                     type="button"
-                    onClick={handleSave}
-                    disabled={isPending}
+                    onClick={() => handleFinalize(false)}
+                    disabled={isPending || isAutoSaving || !savedPlanoId}
                     className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 disabled:opacity-50"
                   >
-                    {isPending ? (
-                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Save className="h-3.5 w-3.5" />
-                    )}
+                    {isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                     Salvar
                   </button>
                   <button
                     type="button"
-                    onClick={handleSaveAndDownload}
-                    disabled={isPending}
+                    onClick={() => handleFinalize(true)}
+                    disabled={isPending || isAutoSaving || !savedPlanoId}
                     className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
                   >
-                    {isPending ? (
-                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Download className="h-3.5 w-3.5" />
-                    )}
+                    {isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                     Salvar e baixar PDF
                   </button>
                 </>
@@ -591,148 +587,25 @@ export function PlanGenerationWizard({
           </div>
 
           {saveError && (
-            <div className="mx-8 mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
               <p className="text-sm text-rose-700">{saveError}</p>
             </div>
           )}
 
-          {/* Corpo do documento — replica a estrutura do template */}
-          <div className="divide-y divide-slate-100 px-8 py-6">
-            {(() => {
-              // Agrupa campos do schema e mostra valores preenchidos
-              const groups: Record<string, TemplateFieldSchema[]> = {};
-              for (const f of templateRecord.schema_campos) {
-                const g = f.group ?? (f.role === "manual" ? "dados_turma" : "outros");
-                if (!groups[g]) groups[g] = [];
-                groups[g].push(f);
-              }
-
-              return Object.entries(groups).map(([group, fields]) => (
-                <section key={group} className="py-5 first:pt-0 last:pb-0">
-                  {/* Seção header */}
-                  <div className="mb-3 flex items-center gap-2">
-                    <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">
-                      {GROUP_LABELS[group] ?? group}
-                    </h3>
-                    <div className="flex-1 border-t border-slate-100" />
-                    {group !== "dados_turma" && group !== "outros" && (
-                      <span className="flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-violet-600">
-                        <Sparkles className="h-2.5 w-2.5" />
-                        IA
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Campos da seção */}
-                  {group === "dados_turma" ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {fields.map((f) => {
-                        const val = capturedEditorValues[f.key]?.trim();
-                        return (
-                          <div key={f.key} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                              {f.label}
-                            </p>
-                            <p className={`mt-1 text-sm font-medium ${val ? "text-slate-950" : "text-slate-300"}`}>
-                              {val || "—"}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {fields.map((f) => {
-                        const val = capturedEditorValues[f.key]?.trim();
-                        const is2p = is2profField(f);
-                        return (
-                          <div
-                            key={f.key}
-                            className={`rounded-xl border px-4 py-3 ${
-                              is2p
-                                ? "border-violet-100 bg-violet-50"
-                                : "border-slate-100 bg-white"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                {f.label}
-                              </p>
-                              {is2p && (
-                                <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[9px] font-bold text-violet-600">
-                                  2° Professor
-                                </span>
-                              )}
-                            </div>
-                            <p
-                              className={`mt-1.5 whitespace-pre-wrap text-sm leading-relaxed ${
-                                val ? "text-slate-800" : "italic text-slate-300"
-                              }`}
-                            >
-                              {val || "Campo não preenchido"}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              ));
-            })()}
-
-            {templateRecord.schema_campos.length === 0 && (
-              <p className="py-8 text-center text-sm text-slate-400">
-                Template sem campos extraídos. O conteúdo gerado está nos dados acima.
-              </p>
-            )}
-          </div>
-
-          {/* Prévia do documento original */}
-          {selectedTemplate?.arquivo_url && (
-            <div className="border-t border-slate-100 px-8 py-5">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">
-                    Documento original do template
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Referência visual — o PDF baixado terá os campos acima sobrepostos neste layout.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowPdfPreview((v) => !v)}
-                  className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-                >
-                  {showPdfPreview ? "Ocultar" : "Ver documento"}
-                </button>
+          {/* Preview iframe — igual ao "ver detalhes do plano" */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" style={{ height: "72vh" }}>
+            {isAutoSaving || !savedPlanoId ? (
+              <div className="flex h-full items-center justify-center gap-3 text-slate-500">
+                <LoaderCircle className="h-5 w-5 animate-spin text-violet-500" />
+                <span className="text-sm">Preparando pré-visualização…</span>
               </div>
-
-              {showPdfPreview && (
-                <iframe
-                  src={`/api/templates/${selectedTemplate.id}/arquivo`}
-                  className="h-[600px] w-full rounded-2xl border border-slate-200 bg-slate-50"
-                  title="Prévia do template original"
-                />
-              )}
-            </div>
-          )}
-
-          {/* Rodapé do documento */}
-          <div className="flex items-center justify-between border-t border-slate-100 px-8 py-4">
-            <p className="text-xs text-slate-400">
-              Gerado por <span className="font-semibold text-slate-600">PlanoMagistra</span> · {userName}
-            </p>
-            {!savedPlanoId && (
-              <button
-                type="button"
-                onClick={handleSaveAndDownload}
-                disabled={isPending}
-                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
-              >
-                {isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                Salvar e baixar PDF
-              </button>
+            ) : (
+              <iframe
+                key={savedPlanoId}
+                src={`/api/planos/${savedPlanoId}/preview`}
+                className="h-full w-full"
+                title="Pré-visualização do plano"
+              />
             )}
           </div>
         </div>

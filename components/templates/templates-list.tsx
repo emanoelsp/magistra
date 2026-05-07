@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Edit2, FileText, FilePen, Plus, Trash2 } from "lucide-react";
+import { Edit2, Eye, FileText, FilePen, Plus, Trash2 } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateOption } from "../../lib/types/firestore";
@@ -118,6 +118,15 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
                     </Link>
                   );
                 })()}
+
+                <Link
+                  href={`/dashboard/templates/${template.id}/visualizar`}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+                  title="Visualizar template com campos destacados"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Visualizar
+                </Link>
 
                 <Link
                   href={`/dashboard/templates/${template.id}/editar`}

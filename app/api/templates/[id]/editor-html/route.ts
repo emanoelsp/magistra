@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
+import JSZip from "jszip";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile } from "../../../../../lib/storage/blob";
@@ -21,10 +22,93 @@ function textFromHtml(html: string): string {
   return html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
-// Finds schema field value cells in mammoth HTML and annotates them with data-field-key.
-// Handles both 2-column rows (label | value) and single-column header + value row below.
+// ─── DOCX layout extraction ───────────────────────────────────────────────────
+
+interface DocxLayout {
+  gridWidths: number[][];  // per-table column widths in twips (document order)
+  cellAligns: string[];    // per-cell paragraph alignment in document order
+}
+
+async function extractDocxLayout(buffer: Buffer): Promise<DocxLayout> {
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    const xmlContent = await zip.file("word/document.xml")?.async("string");
+    if (!xmlContent) return { gridWidths: [], cellAligns: [] };
+
+    // 1. Extract tblGrid column widths per table (in document order)
+    const gridWidths: number[][] = [];
+    const tblGridRe = /<w:tblGrid\b[^>]*>([\s\S]*?)<\/w:tblGrid>/g;
+    let gm: RegExpExecArray | null;
+    while ((gm = tblGridRe.exec(xmlContent)) !== null) {
+      const ws: number[] = [];
+      const colRe = /w:w="(\d+)"/g;
+      let cm: RegExpExecArray | null;
+      while ((cm = colRe.exec(gm[1])) !== null) ws.push(Number(cm[1]));
+      if (ws.length > 0) gridWidths.push(ws);
+    }
+
+    // 2. Extract first-paragraph alignment for each cell (in document order).
+    //    Cells inside nested tables are handled by inspecting only the content
+    //    before the first nested <w:tbl> so inner-table cells are counted separately.
+    const cellAligns: string[] = [];
+    const cellRe = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
+    let tm: RegExpExecArray | null;
+    while ((tm = cellRe.exec(xmlContent)) !== null) {
+      const inner = tm[1];
+      // Look for alignment only in the cell's own content (before any nested table)
+      const nestedAt = inner.indexOf("<w:tbl");
+      const zone = nestedAt >= 0 ? inner.slice(0, nestedAt) : inner;
+      const jc = zone.match(/<w:jc\b[^>]*w:val="([^"]+)"/);
+      cellAligns.push(jc ? jc[1] : "");
+    }
+
+    return { gridWidths, cellAligns };
+  } catch {
+    return { gridWidths: [], cellAligns: [] };
+  }
+}
+
+// ─── HTML post-processing ────────────────────────────────────────────────────
+
+/**
+ * Inject <colgroup> into each HTML <table> using DOCX grid widths (as % of table width).
+ * Tables are matched in document order.
+ */
+function injectColgroups(html: string, gridWidths: number[][]): string {
+  let tblIdx = 0;
+  return html.replace(/<table([^>]*)>/g, (match, attrs) => {
+    const grid = gridWidths[tblIdx++];
+    if (!grid || grid.length === 0) return match;
+    const total = grid.reduce((s, w) => s + w, 0);
+    if (total === 0) return match;
+    const cols = grid
+      .map((w) => `<col style="width:${((w / total) * 100).toFixed(2)}%">`)
+      .join("");
+    return `<table${attrs}><colgroup>${cols}</colgroup>`;
+  });
+}
+
+/**
+ * Add text-align inline style to each <td> based on extracted cell alignments.
+ * Cells are matched in document order (same order as mammoth output).
+ * Left alignment is the browser default — only inject for center/right/justify.
+ */
+function injectCellAlignments(html: string, cellAligns: string[]): string {
+  let cellIdx = 0;
+  return html.replace(/<td([^>]*)>/g, (match, attrs) => {
+    const raw = cellAligns[cellIdx++] ?? "";
+    if (!raw || raw === "left") return match;
+    const align = raw === "both" ? "justify" : raw;
+    if (/style="/.test(attrs)) {
+      return `<td${attrs.replace(/style="([^"]*)"/, `style="$1;text-align:${align}"`)}>`;
+    }
+    return `<td${attrs} style="text-align:${align}">`;
+  });
+}
+
+// ─── Field annotation ─────────────────────────────────────────────────────────
+
 function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
-  // Collect all <td> elements with position and text
   const tdRegex = /<td([^>]*)>([\s\S]*?)<\/td>/gi;
   const tds: {
     fullMatch: string;
@@ -46,7 +130,6 @@ function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
     });
   }
 
-  // Map: td-index → field (the cell at that index becomes the editable value cell)
   const valueMap = new Map<number, TemplateFieldSchema>();
   const usedAsLabel = new Set<number>();
 
@@ -62,7 +145,6 @@ function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
     for (let i = 0; i < tds.length; i++) {
       if (usedAsLabel.has(i)) continue;
       const td = tds[i];
-      // Label cells are short; skip long content cells (they're values)
       if (td.text.length > 90) continue;
       if (!td.text) continue;
 
@@ -77,14 +159,19 @@ function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
     if (bestIdx < 0) continue;
     usedAsLabel.add(bestIdx);
 
-    // Next td is the value cell
-    const nextIdx = bestIdx + 1;
-    if (nextIdx < tds.length && !valueMap.has(nextIdx) && !usedAsLabel.has(nextIdx)) {
-      valueMap.set(nextIdx, field);
+    // Find the value cell: first empty cell after the label (within a reasonable window).
+    // Handles "label | value" (adjacent) and "label above | value below" layouts where
+    // the adjacent cell is another header rather than an empty value cell.
+    const searchEnd = Math.min(tds.length, bestIdx + 10);
+    for (let vi = bestIdx + 1; vi < searchEnd; vi++) {
+      if (valueMap.has(vi) || usedAsLabel.has(vi)) continue;
+      if (tds[vi].text.length === 0) {
+        valueMap.set(vi, field);
+        break;
+      }
     }
   }
 
-  // Apply annotations from end to start (preserves positions)
   const replacements = [...valueMap.entries()]
     .map(([idx, field]) => ({
       index: tds[idx].index,
@@ -100,6 +187,8 @@ function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
 
   return result;
 }
+
+// ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function GET(
   _req: Request,
@@ -126,26 +215,34 @@ export async function GET(
       : [];
 
     const buf = await downloadFile(arquivoUrl);
-    const { value: rawHtml } = await mammoth.convertToHtml(
-      { buffer: buf },
-      {
-        styleMap: [
-          "b => strong",
-          "i => em",
-          "u => u",
-          "strike => s",
-          "p[style-name='Heading 1'] => h1:fresh",
-          "p[style-name='Heading 2'] => h2:fresh",
-          "p[style-name='Heading 3'] => h3:fresh",
-          "p[style-name='Title'] => h1:fresh",
-          "p[style-name='Subtitle'] => h2:fresh",
-          "p[style-name='Normal'] => p:fresh",
-        ],
-        includeDefaultStyleMap: true,
-      },
-    );
 
-    const annotated = annotateFields(rawHtml, schema);
+    // Run mammoth conversion and DOCX layout extraction in parallel
+    const [{ value: rawHtml }, layout] = await Promise.all([
+      mammoth.convertToHtml(
+        { buffer: buf },
+        {
+          styleMap: [
+            "b => strong",
+            "i => em",
+            "u => u",
+            "strike => s",
+            "p[style-name='Heading 1'] => h1:fresh",
+            "p[style-name='Heading 2'] => h2:fresh",
+            "p[style-name='Heading 3'] => h3:fresh",
+            "p[style-name='Title'] => h1:fresh",
+            "p[style-name='Subtitle'] => h2:fresh",
+            "p[style-name='Normal'] => p:fresh",
+          ],
+          includeDefaultStyleMap: true,
+        },
+      ),
+      extractDocxLayout(buf),
+    ]);
+
+    // Apply DOCX layout (column widths + cell alignments) then annotate fields
+    const withColWidths = injectColgroups(rawHtml, layout.gridWidths);
+    const withAlignments = injectCellAlignments(withColWidths, layout.cellAligns);
+    const annotated = annotateFields(withAlignments, schema);
 
     return NextResponse.json({ html: annotated });
   } catch (err) {
