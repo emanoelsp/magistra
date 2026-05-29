@@ -58,7 +58,7 @@ export async function POST(request: Request) {
     }
 
     const db = getAdminDb();
-    const snapshot = await db.collection("templates").doc(templateId).get();
+    const snapshot = await db.collection("magis_templates").doc(templateId).get();
 
     if (!snapshot.exists) {
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
@@ -86,9 +86,23 @@ export async function POST(request: Request) {
         model: MODEL_NAME,
         generationConfig: { temperature: 0.3, topP: 0.7, topK: 40, responseMimeType: "application/json" },
         systemInstruction:
-          "Você é um assistente educacional. Preencha o JSON com sugestões baseadas em BNCC, SAEB e CTBC. " +
-          "IMPORTANTE: Parafraseie sempre em suas próprias palavras. NUNCA copie trechos literais de documentos oficiais. " +
-          "Use descrições breves e originais. NUNCA invente códigos BNCC. Retorne SOMENTE um JSON válido.",
+          `<persona>
+Você é um pedagogo especialista em planejamento curricular para a educação básica brasileira, com domínio técnico em BNCC, SAEB e CTBC. Produz sugestões pedagógicas contextualizadas, objetivas e prontas para uso direto em sala de aula por professores de escolas públicas e privadas.
+</persona>
+<tarefa>
+Preencha o JSON com sugestões pedagógicas para os campos do template, contextualizadas com os dados da turma fornecidos.
+</tarefa>
+<regras>
+1. Parafraseie sempre com suas próprias palavras — NUNCA copie trechos literais de documentos oficiais.
+2. Use descrições breves e originais.
+3. NUNCA invente códigos BNCC.
+</regras>
+<raciocinio_obrigatorio>
+Antes de preencher os campos, raciocine brevemente em "_raciocinio" sobre o perfil da turma (disciplina, ano/série) e como contextualizar as sugestões pedagógicas para esta realidade escolar específica.
+</raciocinio_obrigatorio>
+<contrato_de_saida>
+Inclua "_raciocinio" (string) no JSON de saída. Retorne SOMENTE um JSON válido.
+</contrato_de_saida>`,
       });
       const payload = {
         templateNome: template.nome,
@@ -101,10 +115,14 @@ export async function POST(request: Request) {
         anoSerie: anoSerie ?? (dadosManuais as Record<string, unknown>)?.ano_serie ?? null,
         componenteCurricular: componenteCurricular ?? (dadosManuais as Record<string, unknown>)?.componente_curricular ?? null,
       };
-      const userPrompt =
-        "Preencha o JSON com sugestões pedagógicas. Use turma, anoSerie e componenteCurricular para contextualizar. " +
-        "Parafraseie em suas próprias palavras; não copie trechos literais de documentos. Use descrições originais e breves.\n\n" +
-        JSON.stringify(payload);
+      const userPrompt = [
+        `<instrucao>`,
+        `Preencha os campos com sugestões pedagógicas, contextualizando com os dados da turma. Parafraseie em suas próprias palavras; não copie trechos literais de documentos. Use descrições originais e breves.`,
+        `</instrucao>`,
+        `<dados>`,
+        JSON.stringify(payload),
+        `</dados>`,
+      ].join("\n");
       const response = await withRetry(() => model.generateContent(userPrompt));
       const rawText = response.response.text();
       let parsed: unknown;
@@ -129,10 +147,27 @@ export async function POST(request: Request) {
         responseMimeType: "application/json",
       },
       systemInstruction:
-        "Você é um assistente educacional. Para cada campo solicitado, retorne um array de sugestões " +
-        "no formato { id, label, descricao?, fonte? }. Baseie-se em BNCC, SAEB e CTBC. " +
-        "IMPORTANTE: Parafraseie sempre em suas próprias palavras. NUNCA copie trechos literais de documentos oficiais. " +
-        "Use labels e descrições breves e originais. NUNCA invente códigos BNCC. Retorne SOMENTE um JSON com as chaves dos campos e arrays de sugestões.",
+        `<persona>
+Você é um pedagogo especialista em planejamento curricular para a educação básica brasileira, com domínio técnico em BNCC, SAEB e CTBC. Produz sugestões pedagógicas contextualizadas, objetivas e prontas para uso direto em sala de aula por professores de escolas públicas e privadas.
+</persona>
+<tarefa>
+Para cada campo em <campos_para_sugerir>, gere um array de sugestões pedagógicas contextualizadas com os dados em <dados_manuais>.
+</tarefa>
+<regras>
+1. Parafraseie sempre com suas próprias palavras — NUNCA copie trechos literais de documentos oficiais.
+2. Use labels e descrições breves e originais.
+3. NUNCA invente códigos BNCC.
+</regras>
+<raciocinio_obrigatorio>
+Antes de gerar as sugestões, raciocine em "_raciocinio" seguindo estes passos:
+1. Analise os dados da turma em <dados_manuais>: disciplina, ano/série, escola.
+2. Para cada campo em <campos_para_sugerir>, identifique o tipo pedagógico (objetivo, habilidade, conteúdo, avaliação) e o nível de especificidade adequado ao ano/série.
+3. Decida como contextualizar cada sugestão com os dados reais da turma.
+</raciocinio_obrigatorio>
+<contrato_de_saida>
+Inclua "_raciocinio" (string) no JSON de saída. Para cada chave em <campos_para_sugerir>, retorne um array de objetos: { id: string único, label: string, descricao?: string, fonte?: string }.
+Retorne SOMENTE o JSON.
+</contrato_de_saida>`,
     });
 
     const payload = {
@@ -142,12 +177,19 @@ export async function POST(request: Request) {
       camposParaSugerir: iaFields.map((f) => ({ key: f.key, label: f.label, group: f.group })),
     };
 
-    const basePrompt =
-      "Gere sugestões para cada campo pedagógico. Use dadosManuais (turma, ano, disciplina) para contextualizar: " +
-      "ex.: BNCC do 5º ano de Língua Portuguesa. Para cada chave em camposParaSugerir, retorne um array " +
-      "de objetos { id: string único, label: string, descricao?: string, fonte?: string }. " +
-      "Parafraseie em suas próprias palavras; não copie trechos literais. Use descrições originais e breves. Retorne SOMENTE o JSON.\n\n" +
-      JSON.stringify(payload);
+    const basePrompt = [
+      `<instrucao>`,
+      `Gere sugestões para cada campo pedagógico. Use <dados_manuais> (turma, ano, disciplina) para contextualizar — ex.: BNCC do 5º ano de Língua Portuguesa. Parafraseie em suas próprias palavras; não copie trechos literais. Retorne SOMENTE o JSON.`,
+      `</instrucao>`,
+      `<template>${payload.templateNome}</template>`,
+      `<diretriz>${payload.diretriz}</diretriz>`,
+      `<dados_manuais>`,
+      JSON.stringify(payload.dadosManuais),
+      `</dados_manuais>`,
+      `<campos_para_sugerir>`,
+      JSON.stringify(payload.camposParaSugerir),
+      `</campos_para_sugerir>`,
+    ].join("\n");
 
     let rawText: string | undefined;
     let lastErr: unknown;
@@ -155,7 +197,7 @@ export async function POST(request: Request) {
       try {
         const retrySuffix =
           attempt > 1
-            ? "\n\n[RETRY] Use MÁXIMO 10-12 palavras por label. Resuma em uma frase curta. Zero citações literais."
+            ? "\n<reforco>Use MÁXIMO 10-12 palavras por label. Resuma em uma frase curta. Zero citações literais.</reforco>"
             : "";
         const response = await withRetry(() => model.generateContent(basePrompt + retrySuffix));
         rawText = response.response.text();

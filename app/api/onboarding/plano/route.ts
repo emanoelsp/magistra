@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { getAdminDb } from "../../../../lib/firebase/admin";
 
-const ALLOWED_PLANS = ["starter", "medio"] as const; // "medio" mantido como alias legado
+const ALLOWED_PLANS = ["free", "starter", "medio", "pro"] as const;
 
 export async function POST(request: Request) {
   try {
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
     }
 
     const db = getAdminDb();
-    await db.collection("users").doc(session.uid).set(
+    await db.collection("magis_users").doc(session.uid).set(
       {
         plano,
         onboarding_concluido: true,

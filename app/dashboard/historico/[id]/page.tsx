@@ -39,15 +39,26 @@ export default async function PlanoDetalhesPage({
             <p className="text-sm font-semibold text-slate-950">{plano.template_nome}</p>
             <p className="text-xs text-slate-400">{formatDate(plano.data_geracao)}</p>
           </div>
-          <a
-            href={`/api/planos/${plano.id}/download?format=pdf`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-          >
-            <Download className="h-4 w-4" />
-            Baixar plano
-          </a>
+          <div className="flex items-center gap-2">
+            <a
+              href={`/api/planos/${plano.id}/download`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+            >
+              <Download className="h-4 w-4" />
+              DOCX
+            </a>
+            <a
+              href={`/api/planos/${plano.id}/download?format=pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+            >
+              <Download className="h-4 w-4" />
+              PDF
+            </a>
+          </div>
         </div>
       </div>
 

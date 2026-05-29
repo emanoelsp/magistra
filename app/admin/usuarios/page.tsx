@@ -14,10 +14,10 @@ interface UserRow {
 async function getUsers(): Promise<UserRow[]> {
   const db = getAdminDb();
   const [usersSnap, templatesSnap, planosSnap, logsSnap] = await Promise.all([
-    db.collection("users").get(),
-    db.collection("templates").get(),
-    db.collection("planos").get(),
-    db.collection("usage_logs").get(),
+    db.collection("magis_users").get(),
+    db.collection("magis_templates").get(),
+    db.collection("magis_planos").get(),
+    db.collection("magis_usage_logs").get(),
   ]);
 
   const templatesByUser: Record<string, number> = {};

@@ -1,103 +1,143 @@
 import Link from "next/link";
-import { BookCopy, Clock3, Download, Edit2, FileText, FolderKanban, Plus, Rocket, Sparkles } from "lucide-react";
+import { Download, Edit2, FileText, FolderKanban, Plus, Sparkles } from "lucide-react";
 
-import { StatCard } from "../../components/dashboard/stat-card";
 import { requireCurrentUserProfile } from "../../lib/auth/session";
 import { getDashboardStats, getRecentTemplates, getUserPlanosComNome } from "../../lib/services/firestore/dashboard.server";
+import { getLimitsStatus } from "../../lib/services/limits";
 
 export const dynamic = "force-dynamic";
 
+const PLAN_LABELS: Record<string, string> = {
+  free:     "Explorador",
+  starter:  "Educador",
+  medio:    "Mestre",
+  pro:      "Regente",
+  escola:   "Escola",
+  avancado: "Regente",
+  premium:  "Regente",
+};
+
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
-  gerado:               { label: "Gerado",             cls: "bg-emerald-100 text-emerald-800" },
-  rascunho:             { label: "Rascunho",            cls: "bg-slate-100 text-slate-700" },
-  processando:          { label: "Processando",         cls: "bg-amber-100 text-amber-800" },
-  aguardando_geracao:   { label: "Aguardando geração",  cls: "bg-blue-100 text-blue-700" },
-  aguardando_aprovacao: { label: "Aguardando revisão",  cls: "bg-violet-100 text-violet-700" },
-  erro:                 { label: "Erro",                cls: "bg-rose-100 text-rose-800" },
+  gerado:               { label: "Gerado",            cls: "bg-emerald-100 text-emerald-800" },
+  rascunho:             { label: "Rascunho",           cls: "bg-slate-100 text-slate-700" },
+  processando:          { label: "Processando",        cls: "bg-amber-100 text-amber-800" },
+  aguardando_geracao:   { label: "Aguardando geração", cls: "bg-blue-100 text-blue-700" },
+  aguardando_aprovacao: { label: "Aguardando revisão", cls: "bg-violet-100 text-violet-700" },
+  erro:                 { label: "Erro",               cls: "bg-rose-100 text-rose-800" },
 };
 
 function formatDate(iso: string) {
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(iso));
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(
+    new Date(iso),
+  );
+}
+
+interface UsagePillProps {
+  used: number;
+  max: number;
+  label: string;
+  icon: React.ReactNode;
+}
+
+function UsagePill({ used, max, label, icon }: UsagePillProps) {
+  const pct = max > 0 ? Math.min(100, Math.round((used / max) * 100)) : 0;
+  const atLimit = used >= max;
+  const nearLimit = !atLimit && pct >= 67;
+
+  const pillCls = atLimit
+    ? "bg-rose-500/25 text-rose-200"
+    : nearLimit
+    ? "bg-amber-500/25 text-amber-200"
+    : "bg-white/10 text-slate-300";
+
+  const barCls = atLimit
+    ? "bg-rose-400"
+    : nearLimit
+    ? "bg-amber-400"
+    : "bg-emerald-400";
+
+  return (
+    <div className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ${pillCls}`}>
+      {icon}
+      <span>
+        {used}/{max} {label}
+      </span>
+      <div className="h-1 w-10 overflow-hidden rounded-full bg-white/20">
+        <div className={`h-full rounded-full transition-all ${barCls}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
 }
 
 export default async function DashboardPage() {
   const user = await requireCurrentUserProfile();
-  const [stats, planos, templates] = await Promise.all([
+  const [stats, planos, templates, limits] = await Promise.all([
     getDashboardStats(user),
     getUserPlanosComNome(user.uid, 5),
     getRecentTemplates(user.uid, 4),
+    getLimitsStatus(user.uid, user.plano),
   ]);
 
-  const cards = [
-    {
-      title: "Templates ativos",
-      value: String(stats.totalTemplates),
-      description: "Estruturas disponíveis para gerar planos com consistência documental.",
-      icon: FolderKanban,
-    },
-    {
-      title: "Planos gerados no mês",
-      value: String(stats.planosGeradosMes),
-      description: "Planos concluídos no ciclo atual e prontos para exportação PDF/DOCX.",
-      icon: BookCopy,
-    },
-    {
-      title: "Planos em fila",
-      value: String(stats.planosPendentes),
-      description: "Rascunhos ou execuções aguardando geração e revisão pedagógica.",
-      icon: Clock3,
-    },
-    {
-      title: "Tokens usados no mês",
-      value: String(stats.tokensUsadosMes),
-      description: `Consumo do plano ${stats.planoAtual} para operações com IA neste mês.`,
-      icon: Sparkles,
-    },
-  ];
+  const primeiroNome = (user.nome ?? user.email ?? "Professor").split(" ")[0];
+  const temTemplates = stats.totalTemplates > 0;
+  const canAddTemplate = limits.canCreateTemplate;
 
   return (
     <div className="flex flex-col gap-8">
+
       {/* Hero */}
       <section className="rounded-[2rem] bg-slate-950 px-8 py-10 text-white shadow-xl">
-        <div className="flex flex-col gap-8 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-emerald-300">Dashboard</p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight">Visão geral do PlanoMagistra</h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
-              Acompanhe capacidade operacional, volume de geração e o estado atual dos fluxos pedagógicos.
-            </p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
-            <p className="text-sm text-slate-300">Usuário autenticado</p>
-            <p className="mt-2 text-xl font-semibold">{user.nome || user.email}</p>
-            <p className="mt-1 text-sm text-slate-300">{user.escola_padrao ?? "Escola padrão ainda não definida."}</p>
-          </div>
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Olá, {primeiroNome}!
+        </h1>
+        <p className="mt-2 text-slate-300">
+          Crie planos de aula completos em minutos com o apoio da nossa assistente pedagógica Magis!
+        </p>
+
+        {/* Action buttons */}
+        <div className="mt-7 flex flex-wrap items-center gap-3">
+          <Link
+            href="/dashboard/templates"
+            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-500"
+          >
+            <Plus className="h-4 w-4" />
+            Adicionar template
+          </Link>
+
+          <Link
+            href="/dashboard/gerar"
+            className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-violet-500"
+          >
+            <Sparkles className="h-4 w-4" />
+            Gerar novo plano
+          </Link>
+        </div>
+
+        {/* Usage indicators */}
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <UsagePill
+            used={limits.currentTemplates}
+            max={limits.limits.maxTemplates}
+            label="templates"
+            icon={<FolderKanban className="h-3.5 w-3.5" />}
+          />
+          <UsagePill
+            used={limits.currentPlanosThisMonth}
+            max={limits.limits.maxPlanosPerMonth}
+            label="planos/mês"
+            icon={<FileText className="h-3.5 w-3.5" />}
+          />
+          <span className="text-xs text-slate-500">Plano {PLAN_LABELS[limits.plano] ?? limits.plano}</span>
         </div>
       </section>
 
-      {/* Stats */}
-      <section className="grid gap-5 xl:grid-cols-4">
-        {cards.map((card) => (
-          <StatCard
-            key={card.title}
-            title={card.title}
-            value={card.value}
-            description={card.description}
-            icon={card.icon}
-          />
-        ))}
-      </section>
-
-      {/* Recentes: templates + planos lado a lado */}
+      {/* Recentes: templates + planos */}
       <section className="grid gap-6 xl:grid-cols-2">
 
-        {/* Templates recentes */}
+        {/* Templates */}
         <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-5 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Recentes</p>
-              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">Seus templates</h2>
-            </div>
+            <h2 className="text-lg font-semibold tracking-tight text-slate-950">Seus templates</h2>
             <div className="flex items-center gap-2">
               <Link
                 href="/dashboard/templates"
@@ -105,60 +145,68 @@ export default async function DashboardPage() {
               >
                 Ver todos
               </Link>
+              {canAddTemplate && (
+                <Link
+                  href="/dashboard/templates"
+                  className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Novo template
+                </Link>
+              )}
             </div>
           </div>
 
           {templates.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
               <FolderKanban className="mx-auto h-8 w-8 text-slate-300" />
-              <p className="mt-3 text-sm font-medium text-slate-600">Nenhum template cadastrado.</p>
+              <p className="mt-3 text-sm font-medium text-slate-700">
+                Nenhum template ainda.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Suba o modelo de plano da sua escola para começar.
+              </p>
               <Link
                 href="/dashboard/templates"
-                className="mt-3 inline-flex items-center gap-1.5 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
               >
                 <Plus className="h-3 w-3" />
                 Adicionar template
               </Link>
             </div>
           ) : (
-            <div className="divide-y divide-slate-100">
+            <ul className="divide-y divide-slate-100">
               {templates.map((t) => (
-                <div
-                  key={t.id}
-                  className="flex items-center justify-between gap-3 py-3"
-                >
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="mt-0.5 shrink-0 rounded-xl bg-amber-50 p-2 text-amber-600">
+                <li key={t.id} className="flex items-center justify-between gap-3 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="shrink-0 rounded-xl bg-amber-50 p-2 text-amber-600">
                       <FolderKanban className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-slate-900">{t.nome}</p>
-                      <p className="mt-0.5 truncate text-xs text-slate-500">
+                      <p className="truncate text-xs text-slate-400">
                         {t.escola_nome ? `${t.escola_nome} · ` : ""}
-                        {t.campo_count} campos · {formatDate(t.data_criacao)}
+                        {formatDate(t.data_criacao)}
                       </p>
                     </div>
                   </div>
                   <Link
                     href={`/dashboard/templates/${t.id}/editar`}
-                    className="shrink-0 rounded-xl border border-slate-300 p-1.5 text-slate-500 transition hover:border-slate-950 hover:text-slate-950"
-                    title="Editar"
+                    className="shrink-0 rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                    title="Editar template"
                   >
                     <Edit2 className="h-3.5 w-3.5" />
                   </Link>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </div>
 
-        {/* Planos recentes */}
+        {/* Planos */}
         <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-5 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Recentes</p>
-              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">Seus planos</h2>
-            </div>
+            <h2 className="text-lg font-semibold tracking-tight text-slate-950">Seus planos</h2>
             <div className="flex items-center gap-2">
               <Link
                 href="/dashboard/historico"
@@ -179,35 +227,42 @@ export default async function DashboardPage() {
           {planos.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
               <FileText className="mx-auto h-8 w-8 text-slate-300" />
-              <p className="mt-3 text-sm font-medium text-slate-600">Nenhum plano gerado ainda.</p>
+              <p className="mt-3 text-sm font-medium text-slate-700">
+                Nenhum plano gerado ainda.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Gere seu primeiro plano com a Magis.
+              </p>
               <Link
                 href="/dashboard/gerar"
-                className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
               >
-                Gerar primeiro plano
+                <Plus className="h-3 w-3" />
+                Criar primeiro plano
               </Link>
             </div>
           ) : (
-            <div className="divide-y divide-slate-100">
+            <ul className="divide-y divide-slate-100">
               {planos.map((plano) => {
-                const status = STATUS_CONFIG[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
+                const status =
+                  STATUS_CONFIG[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
                 const temConteudo = Object.keys(plano.conteudo_gerado ?? {}).length > 0;
                 return (
-                  <div
-                    key={plano.id}
-                    className="flex items-center justify-between gap-3 py-3"
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="mt-0.5 shrink-0 rounded-xl bg-violet-50 p-2 text-violet-600">
+                  <li key={plano.id} className="flex items-center justify-between gap-3 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="shrink-0 rounded-xl bg-violet-50 p-2 text-violet-600">
                         <FileText className="h-4 w-4" />
                       </span>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900">{plano.template_nome}</p>
-                        <p className="mt-0.5 truncate text-xs text-slate-500">
-                          {plano.escola_nome ? `${plano.escola_nome} · ` : ""}
+                        <p className="truncate text-sm font-medium text-slate-900">
+                          {plano.template_nome}
+                        </p>
+                        <p className="truncate text-xs text-slate-400">
                           {formatDate(plano.data_geracao)}
                         </p>
-                        <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${status.cls}`}>
+                        <span
+                          className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${status.cls}`}
+                        >
                           {status.label}
                         </span>
                       </div>
@@ -218,8 +273,8 @@ export default async function DashboardPage() {
                           href={`/api/planos/${plano.id}/download`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="rounded-xl border border-slate-300 p-1.5 text-slate-500 transition hover:border-slate-950 hover:text-slate-950"
-                          title="Baixar"
+                          className="rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                          title="Baixar plano"
                         >
                           <Download className="h-3.5 w-3.5" />
                         </a>
@@ -231,57 +286,13 @@ export default async function DashboardPage() {
                         Detalhes
                       </Link>
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           )}
         </div>
 
-      </section>
-
-      {/* Quick actions */}
-      <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <article className="rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Resumo operacional</p>
-          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">Ambiente preparado</h2>
-          <p className="mt-4 text-sm leading-7 text-slate-600">
-            A assistente pedagógica está pronta para elaborar planos de aula, sequências didáticas e documentos escolares com agilidade.
-          </p>
-          <div className="mt-8 grid gap-4 md:grid-cols-2">
-            <div className="rounded-3xl bg-slate-50 p-5">
-              <p className="text-sm font-medium text-slate-500">Plano contratado</p>
-              <p className="mt-2 text-xl font-semibold text-slate-950">{stats.planoAtual}</p>
-            </div>
-            <div className="rounded-3xl bg-slate-50 p-5">
-              <p className="text-sm font-medium text-slate-500">Escola padrão</p>
-              <p className="mt-2 text-xl font-semibold text-slate-950">
-                {user.escola_padrao ?? "Defina uma escola"}
-              </p>
-            </div>
-          </div>
-        </article>
-
-        <aside className="rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
-          <div className="flex items-center gap-3">
-            <span className="rounded-2xl bg-emerald-50 p-3 text-emerald-600">
-              <Rocket className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Próxima ação</p>
-              <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Gerar novo plano</h2>
-            </div>
-          </div>
-          <p className="mt-4 text-sm leading-7 text-slate-600">
-            Lance um novo wizard para consolidar template, dados da turma, referências BNCC/SAEB e aprovação humana.
-          </p>
-          <Link
-            href="/dashboard/gerar"
-            className="mt-6 inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
-          >
-            Abrir gerador multi-step
-          </Link>
-        </aside>
       </section>
     </div>
   );

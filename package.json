@@ -20,6 +20,7 @@
     "@tiptap/react": "^3.22.5",
     "@tiptap/starter-kit": "^3.22.5",
     "@vercel/blob": "^2.3.3",
+    "docx-preview": "^0.3.7",
     "docxtemplater": "^3.68.6",
     "firebase": "^12.1.0",
     "firebase-admin": "^13.4.0",

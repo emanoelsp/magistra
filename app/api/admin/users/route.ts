@@ -19,10 +19,10 @@ export async function GET() {
 
     const db = getAdminDb();
     const [usersSnap, templatesSnap, planosSnap, logsSnap] = await Promise.all([
-      db.collection("users").orderBy("email").get(),
-      db.collection("templates").get(),
-      db.collection("planos").get(),
-      db.collection("usage_logs").get(),
+      db.collection("magis_users").orderBy("email").get(),
+      db.collection("magis_templates").get(),
+      db.collection("magis_planos").get(),
+      db.collection("magis_usage_logs").get(),
     ]);
 
     // Build aggregates per user

@@ -22,7 +22,7 @@ export async function GET(request: Request) {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     const db = getAdminDb();
-    const logsSnap = await db.collection("usage_logs").where("timestamp", ">=", since).orderBy("timestamp", "desc").get();
+    const logsSnap = await db.collection("magis_usage_logs").where("timestamp", ">=", since).orderBy("timestamp", "desc").get();
 
     const logs = logsSnap.docs.map((doc) => {
       const d = doc.data();

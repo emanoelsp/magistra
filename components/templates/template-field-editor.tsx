@@ -6,15 +6,15 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Copy,
-  Download,
   GripVertical,
+  HelpCircle,
   Loader2,
   Plus,
   RefreshCw,
   Save,
+  Sparkles,
   Trash2,
-  Upload,
+  X,
 } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
@@ -63,49 +63,234 @@ function newField(): TemplateFieldSchema {
   };
 }
 
-// ─── DocPreview ────────────────────────────────────────────────────────────────
-// Read-only view of the template document with fields highlighted.
+// ─── DocxViewer ────────────────────────────────────────────────────────────────
+// Two view modes:
+//   "office"      → Microsoft Office Online iframe (pixel-perfect, images/fonts exact)
+//   "interactive" → docx-preview (click-to-add-field works, but images may look scaled)
 
-interface DocPreviewProps {
-  html: string;
-  activeFieldKey: string | null;
+interface DocxViewerProps {
+  templateId: string;
+  arquivoUrl: string;
+  fields: TemplateFieldSchema[];
+  activeKey: string | null;
+  onClickElement?: (text: string) => void;
 }
 
-function DocPreview({ html, activeFieldKey }: DocPreviewProps) {
+function DocxViewer({ templateId, arquivoUrl, fields, activeKey, onClickElement }: DocxViewerProps) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {onClickElement && (
+        <div className="shrink-0 flex items-center justify-end border-b border-slate-100 bg-white px-3 py-2">
+          <p className="text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
+        </div>
+      )}
+      <DocxInteractive
+        templateId={templateId}
+        fields={fields}
+        activeKey={activeKey}
+        onClickElement={onClickElement}
+      />
+    </div>
+  );
+}
+
+// ─── OfficeViewer ─────────────────────────────────────────────────────────────
+// Embeds Microsoft Office Online for pixel-perfect DOCX rendering.
+
+function OfficeViewer({ arquivoUrl }: { arquivoUrl: string }) {
+  const src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(arquivoUrl)}`;
+  return (
+    <iframe
+      src={src}
+      className="flex-1 w-full border-0"
+      title="Pré-visualização do documento"
+      allowFullScreen
+    />
+  );
+}
+
+// ─── DocxInteractive ─────────────────────────────────────────────────────────
+// docx-preview renderer with highlight and click-to-add-field support.
+
+interface DocxInteractiveProps {
+  templateId: string;
+  fields: TemplateFieldSchema[];
+  activeKey: string | null;
+  onClickElement?: (text: string) => void;
+}
+
+function DocxInteractive({ templateId, fields, activeKey, onClickElement }: DocxInteractiveProps) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const bufferRef = useRef<ArrayBuffer | null>(null);
+  const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
 
+  // Phase 1: fetch file
   useEffect(() => {
-    if (!containerRef.current) return;
-    containerRef.current.innerHTML = html;
-    // Make all annotated cells non-editable
-    containerRef.current
-      .querySelectorAll<HTMLElement>("[data-field-key]")
-      .forEach((cell) => {
-        cell.contentEditable = "false";
-        cell.style.cssText =
-          "cursor:default;transition:background .12s,box-shadow .12s;border-radius:2px;";
-      });
-  }, [html]);
+    let cancelled = false;
+    fetch(`/api/templates/${templateId}/arquivo`)
+      .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
+      .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
+      .catch(() => { if (!cancelled) setPhase("error"); });
+    return () => { cancelled = true; };
+  }, [templateId]);
 
-  // Highlight active field
+  // Phase 2: render → scale to fit → show
   useEffect(() => {
+    if (phase !== "rendering" || !bufferRef.current || !containerRef.current) return;
+    let cancelled = false;
     const container = containerRef.current;
-    if (!container) return;
-    container.querySelectorAll<HTMLElement>("[data-field-key]").forEach((cell) => {
-      if (cell.dataset.fieldKey === activeFieldKey) {
-        cell.style.background = "#f5f3ff";
-        cell.style.boxShadow = "inset 0 0 0 2px #7c3aed";
-        cell.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      } else {
-        cell.style.background = "";
-        cell.style.boxShadow = "";
-      }
+    const scroller = scrollerRef.current;
+
+    import("docx-preview")
+      .then(({ renderAsync }) => {
+        if (cancelled || !bufferRef.current) return;
+        container.innerHTML = "";
+        return renderAsync(bufferRef.current, container, undefined, {
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: true,
+          ignoreFonts: false,
+          breakPages: true,
+          useBase64URL: true,
+          renderEndnotes: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderHeaders: true,
+        });
+      })
+      .then(() => {
+        if (cancelled) return;
+        const wrapper = container.querySelector(".docx-wrapper") as HTMLElement | null;
+        const page = container.querySelector("section.docx") as HTMLElement | null;
+        if (wrapper && page && scroller) {
+          const availableW = scroller.clientWidth;
+          const naturalW = page.offsetWidth;
+          if (naturalW > 0 && availableW > 0 && naturalW > availableW) {
+            const scale = availableW / naturalW;
+            const naturalH = wrapper.offsetHeight;
+            wrapper.style.transformOrigin = "top left";
+            wrapper.style.transform = `scale(${scale})`;
+            container.style.height = `${naturalH * scale}px`;
+          }
+        }
+        setPhase("done");
+      })
+      .catch(() => { if (!cancelled) setPhase("error"); });
+    return () => { cancelled = true; };
+  }, [phase]);
+
+  // Highlight the active field
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    container.querySelectorAll("[data-mhl]").forEach((el) => {
+      (el as HTMLElement).style.removeProperty("background");
+      (el as HTMLElement).style.removeProperty("outline");
+      (el as HTMLElement).style.removeProperty("border-radius");
+      el.removeAttribute("data-mhl");
     });
-  }, [activeFieldKey]);
+    if (!activeKey) return;
+    const field = fields.find((f) => f.key === activeKey);
+    if (!field) return;
+    const terms = [field.label, field.defaultValue].filter(
+      (t): t is string => typeof t === "string" && t.trim().length > 2,
+    );
+    if (!terms.length) return;
+    const candidates = Array.from(container.querySelectorAll("td, p"));
+    let bestEl: Element | null = null;
+    let bestScore = 0;
+    for (const el of candidates) {
+      const text = (el.textContent ?? "").trim();
+      if (!text) continue;
+      for (const term of terms) {
+        if (text.includes(term)) {
+          const score = term.length / Math.max(text.length, 1);
+          if (score > bestScore) { bestScore = score; bestEl = el; }
+        }
+      }
+    }
+    if (bestEl) {
+      (bestEl as HTMLElement).style.background = "rgba(139,92,246,0.15)";
+      (bestEl as HTMLElement).style.outline = "2px solid rgba(139,92,246,0.5)";
+      (bestEl as HTMLElement).style.borderRadius = "2px";
+      bestEl.setAttribute("data-mhl", "true");
+      bestEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [activeKey, fields, phase]);
+
+  // Click-to-add listeners
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current || !onClickElement) return;
+    const container = containerRef.current;
+    const els = Array.from(container.querySelectorAll("td, p")) as HTMLElement[];
+    const onEnter = (e: Event) => {
+      const el = e.currentTarget as HTMLElement;
+      if (!el.hasAttribute("data-mhl")) {
+        el.style.cursor = "pointer";
+        el.style.outline = "1.5px dashed rgba(139,92,246,0.4)";
+        el.style.borderRadius = "2px";
+      }
+    };
+    const onLeave = (e: Event) => {
+      const el = e.currentTarget as HTMLElement;
+      if (!el.hasAttribute("data-mhl")) {
+        el.style.removeProperty("cursor");
+        el.style.removeProperty("outline");
+        el.style.removeProperty("border-radius");
+      }
+    };
+    const onClick = (e: Event) => {
+      e.stopPropagation();
+      const text = (e.currentTarget as HTMLElement).textContent?.trim() ?? "";
+      if (text) onClickElement(text);
+    };
+    for (const el of els) {
+      el.addEventListener("mouseenter", onEnter);
+      el.addEventListener("mouseleave", onLeave);
+      el.addEventListener("click", onClick);
+    }
+    return () => {
+      for (const el of els) {
+        el.removeEventListener("mouseenter", onEnter);
+        el.removeEventListener("mouseleave", onLeave);
+        el.removeEventListener("click", onClick);
+      }
+    };
+  }, [phase, onClickElement]);
+
+  const busy = phase === "loading" || phase === "rendering";
 
   return (
-    <div className="doc-page">
-      <div ref={containerRef} className="doc-view" />
+    <div className="relative flex flex-1 flex-col overflow-hidden">
+      <style>{`
+        .docx-wrapper { background: #f1f5f9 !important; padding: 20px 12px !important; }
+        .docx-wrapper section.docx {
+          box-shadow: 0 2px 8px rgba(0,0,0,.10), 0 8px 32px rgba(0,0,0,.07) !important;
+          border-radius: 3px !important;
+          margin-bottom: 16px !important;
+        }
+      `}</style>
+      <div
+        ref={scrollerRef}
+        className={`flex-1 overflow-y-auto ${busy || phase === "error" ? "invisible absolute" : ""}`}
+      >
+        <div ref={containerRef} />
+      </div>
+      {busy && (
+        <div className="flex h-full items-center justify-center gap-3 text-slate-500">
+          <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
+          <span className="text-sm">{phase === "loading" ? "Carregando documento…" : "Renderizando…"}</span>
+        </div>
+      )}
+      {phase === "error" && (
+        <div className="flex h-full items-center justify-center px-8 text-center">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-slate-600">Pré-visualização indisponível.</p>
+            <p className="text-xs text-slate-400">Configure os campos na lista à direita.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -124,35 +309,22 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [saved, setSaved] = useState(false);
   const [isReExtracting, setIsReExtracting] = useState(false);
   const [reExtractMsg, setReExtractMsg] = useState<string | null>(null);
-  const [isUploadingFillable, setIsUploadingFillable] = useState(false);
-  const [uploadFillableMsg, setUploadFillableMsg] = useState<string | null>(null);
-  const [showKeys, setShowKeys] = useState(false);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
+  const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
 
-  // Doc preview state
-  const [docHtml, setDocHtml] = useState<string | null>(null);
-  const [docLoading, setDocLoading] = useState(false);
-
-  const fillableInputRef = useRef<HTMLInputElement>(null);
   const fieldListRef = useRef<HTMLDivElement>(null);
+  const panelScrollRef = useRef<HTMLDivElement>(null);
+
+  function preserveScroll(fn: () => void) {
+    const el = panelScrollRef.current;
+    const top = el?.scrollTop ?? 0;
+    fn();
+    requestAnimationFrame(() => { if (el) el.scrollTop = top; });
+  }
 
   const isDocx = (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
-  const showDocPreview = isDocx;
-
-  // Fetch annotated HTML when template has a DOCX file
-  useEffect(() => {
-    if (!showDocPreview) return;
-    setDocLoading(true);
-    fetch(`/api/templates/${template.id}/editor-html`)
-      .then((r) => r.json())
-      .then((data: { html?: string | null }) => {
-        if (data.html) setDocHtml(data.html);
-      })
-      .catch(() => {/* ignore, preview is optional */})
-      .finally(() => setDocLoading(false));
-  }, [template.id, showDocPreview]);
 
   // Scroll to field card when activeFieldKey changes
   useEffect(() => {
@@ -161,36 +333,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeFieldKey]);
 
-  function copyKey(key: string) {
-    void navigator.clipboard.writeText(`{{${key}}}`).then(() => {
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(null), 1500);
-    });
-  }
-
-  async function handleUploadFillable(file: File) {
-    setIsUploadingFillable(true);
-    setError(null);
-    setUploadFillableMsg(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(`/api/templates/${template.id}/upload-fillable`, {
-        method: "POST",
-        body: form,
-      });
-      const data = (await res.json().catch(() => null)) as {
-        ok?: boolean;
-        error?: string;
-      } | null;
-      if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Falha ao enviar template.");
-      setUploadFillableMsg("Template preparado enviado com sucesso.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao enviar template.");
-    } finally {
-      setIsUploadingFillable(false);
-    }
-  }
 
   async function handleReExtract() {
     setIsReExtracting(true);
@@ -217,6 +359,69 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   function addField() {
     const f = newField();
+    setFields((prev) => [...prev, f]);
+    setExpandedField(f.key);
+    setActiveFieldKey(f.key);
+  }
+
+  function handleAddFromDoc(rawText: string) {
+    let label = rawText.trim();
+    let defaultValue: string | undefined;
+
+    // Split "Label: Value" inline pattern
+    const colonIdx = label.indexOf(":");
+    if (colonIdx > 0 && colonIdx < label.length - 1) {
+      const before = label.slice(0, colonIdx).trim();
+      const after = label.slice(colonIdx + 1).trim();
+      if (before.length > 0 && before.length <= 80) {
+        label = before;
+        if (after.length > 0 && after.length < 300) defaultValue = after;
+      }
+    }
+
+    // Strip trailing colons
+    label = label.replace(/:+$/, "").trim();
+    if (!label || label.length > 80) return;
+
+    const toKey = (s: string) =>
+      s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+    const key = toKey(label) || `campo_${Date.now()}`;
+
+    // If field already exists, just expand it
+    const existing = fields.find((f) => f.key === key || f.label.toLowerCase() === label.toLowerCase());
+    if (existing) {
+      setExpandedField(existing.key);
+      setActiveFieldKey(existing.key);
+      return;
+    }
+
+    // Smart role/group detection
+    const lower = toKey(label);
+    let role: TemplateFieldSchema["role"] = "manual";
+    let group: TemplateFieldSchema["group"] = "dados_turma";
+    if (/habilidade|bncc|saeb|ctbc|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(lower)) {
+      role = "ia_sugerida";
+      if (/habilidade|bncc|saeb|ctbc/.test(lower)) group = "habilidades";
+      else if (/competencia/.test(lower)) group = "competencias";
+      else if (/objetivo/.test(lower)) group = "objetivos";
+      else if (/avaliacao/.test(lower)) group = "avaliacao";
+      else group = "conteudos";
+    }
+
+    const f: TemplateFieldSchema = {
+      key,
+      label,
+      type: "text",
+      required: true,
+      role,
+      group,
+      placeholder: "",
+      helperText: "",
+      aiInstructions: "",
+      ...(defaultValue !== undefined ? { defaultValue } : {}),
+    };
+
     setFields((prev) => [...prev, f]);
     setExpandedField(f.key);
     setActiveFieldKey(f.key);
@@ -267,7 +472,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         })
         .then(() => {
           if (mode === "confirm") {
-            router.push("/dashboard/templates");
+            setShowConfirmSuccess(true);
+            setTimeout(() => {
+              setShowConfirmSuccess(false);
+              router.push("/dashboard/templates");
+            }, 3000);
           } else {
             setSaved(true);
             setTimeout(() => setSaved(false), 2500);
@@ -293,96 +502,111 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         />
       </div>
 
-      {/* DOCX workflow panel */}
-      {isDocx && fields.length > 0 && mode === "edit" && (
-        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-violet-900">Marcadores de campo (DOCX)</p>
-              <p className="mt-0.5 text-xs leading-5 text-violet-700">
-                Coloque{" "}
-                <code className="rounded bg-violet-100 px-1 font-mono">{"{{chave}}"}</code>{" "}
-                no Word onde cada campo deve aparecer e suba o arquivo abaixo.
-              </p>
+      {/* Help modal */}
+      {showHelp && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm"
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <h2 className="text-base font-bold text-slate-950">Guia do editor de template</h2>
+                <p className="mt-0.5 text-xs text-slate-400">Entenda cada tipo de campo e como configurá-los</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHelp(false)}
+                className="rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowKeys((v) => !v)}
-              className="flex shrink-0 items-center gap-1 rounded-xl border border-violet-300 bg-white px-2.5 py-1.5 text-xs font-medium text-violet-700 transition hover:border-violet-500"
-            >
-              {showKeys ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-              {showKeys ? "Ocultar" : "Ver chaves"}
-            </button>
-          </div>
 
-          {showKeys && (
-            <div className="mb-3 grid gap-1.5 sm:grid-cols-2">
-              {fields.map((f) => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => copyKey(f.key)}
-                  className="flex items-center justify-between gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2 text-left transition hover:border-violet-400"
-                >
-                  <div className="min-w-0">
-                    <code className="block truncate font-mono text-xs font-semibold text-violet-700">
-                      {`{{${f.key}}}`}
-                    </code>
-                    <span className="truncate text-[10px] text-slate-500">{f.label}</span>
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto">
+              <div className="space-y-2 p-6">
+
+                {/* Fixo */}
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                  <div className="mb-3 flex items-center gap-2.5">
+                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">Fixo</span>
+                    <h3 className="text-sm font-bold text-slate-950">Campo fixo</h3>
                   </div>
-                  <span className="shrink-0 text-[10px] font-medium text-slate-400">
-                    {copiedKey === f.key ? "✓" : <Copy className="h-3 w-3" />}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+                  <p className="text-sm leading-relaxed text-slate-600">
+                    Preenchido manualmente pelo professor — a Magis <strong className="text-slate-800">não</strong> sugere conteúdo. Ideal para escola, turma, professor e período.
+                  </p>
+                  <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+                    <p className="text-xs font-semibold text-amber-800">Como adicionar valor padrão</p>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-700">
+                      Expanda o campo (clique na seta) e preencha <em>Valor padrão</em>. Ele aparece pré-preenchido em todos os planos gerados com este template.
+                    </p>
+                  </div>
+                </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={`/api/templates/${template.id}/arquivo?fillable=1`}
-              download
-              className="flex items-center gap-1.5 rounded-xl border border-violet-300 bg-white px-3 py-2 text-xs font-medium text-violet-700 transition hover:border-violet-500"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Baixar DOCX preparado
-            </a>
-            <button
-              type="button"
-              onClick={() => fillableInputRef.current?.click()}
-              disabled={isUploadingFillable}
-              className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-violet-500 disabled:opacity-60"
-            >
-              {isUploadingFillable ? (
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-              ) : (
-                <Upload className="h-3.5 w-3.5" />
-              )}
-              {isUploadingFillable ? "Enviando…" : "Upload DOCX preparado"}
-            </button>
-            <input
-              ref={fillableInputRef}
-              type="file"
-              accept=".docx,.doc"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void handleUploadFillable(f);
-                e.target.value = "";
-              }}
-            />
+                {/* IA */}
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                  <div className="mb-3 flex items-center gap-2.5">
+                    <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">IA</span>
+                    <h3 className="text-sm font-bold text-slate-950">Campo sugerido pela Magis</h3>
+                  </div>
+                  <p className="text-sm leading-relaxed text-slate-600">
+                    Quando o professor foca neste campo no editor, a Magis gera sugestões automáticas alinhadas à BNCC, SAEB e CTBC com um clique.
+                  </p>
+                  <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3">
+                    <p className="text-xs font-semibold text-violet-800">Como adicionar contexto para a IA</p>
+                    <p className="mt-1 text-xs leading-relaxed text-violet-700">
+                      Expanda o campo e preencha <em>Contexto para a IA</em>. Exemplos:
+                    </p>
+                    <ul className="mt-1.5 space-y-0.5 text-xs text-violet-700">
+                      <li>· <em>"Sugira habilidades do 6º ao 9º ano"</em></li>
+                      <li>· <em>"Foque em competências socioemocionais"</em></li>
+                      <li>· <em>"Priorize descritores do SAEB para Matemática"</em></li>
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Variáveis */}
+                {isDocx && fields.length > 0 && (
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                    <h3 className="mb-1 text-sm font-bold text-slate-950">Variáveis do documento</h3>
+                    <p className="mb-4 text-xs leading-relaxed text-slate-500">
+                      Insira <code className="rounded bg-slate-200 px-1 font-mono">{"{{chave}}"}</code> no seu arquivo Word exatamente onde cada campo deve aparecer ao gerar o plano.
+                    </p>
+                    <div className="grid gap-1.5 sm:grid-cols-2">
+                      {fields.map((f) => (
+                        <button
+                          key={f.key}
+                          type="button"
+                          onClick={() => {
+                            setExpandedField(f.key);
+                            setActiveFieldKey(f.key);
+                            setShowHelp(false);
+                          }}
+                          className="flex flex-col rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left transition hover:border-violet-300 hover:bg-violet-50"
+                          title="Clique para destacar no documento"
+                        >
+                          <span className="truncate text-[10px] text-slate-400">{f.label}</span>
+                          <code className="truncate font-mono text-[11px] font-semibold text-violet-600">{`{{${f.key}}}`}</code>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
           </div>
-          {uploadFillableMsg && (
-            <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
-              {uploadFillableMsg}
-            </p>
-          )}
         </div>
       )}
 
       {/* Fields list */}
       <div>
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-slate-900">
               Campos detectados ({fields.length})
@@ -393,14 +617,24 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                 : "Metadados fixos e campos que a IA sugere."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={addField}
-            className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Adicionar
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowHelp(true)}
+              className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+              title="Ajuda"
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={addField}
+              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar
+            </button>
+          </div>
         </div>
 
         {fields.length === 0 ? (
@@ -510,127 +744,102 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
                   {/* Expanded field config */}
                   {isExpanded && (
-                    <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <label className="block">
-                          <span className="text-xs font-medium text-slate-600">Nome do campo *</span>
-                          <input
-                            type="text"
-                            value={field.label}
-                            onChange={(e) => updateField(index, { label: e.target.value })}
-                            placeholder="Ex.: Habilidades BNCC"
-                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-violet-400"
-                          />
-                        </label>
+                    <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
 
-                        <label className="block">
-                          <span className="text-xs font-medium text-slate-600">Papel</span>
-                          <select
-                            value={field.role ?? "manual"}
-                            onChange={(e) =>
-                              updateField(index, {
-                                role: e.target.value as TemplateFieldSchema["role"],
-                                group:
-                                  e.target.value === "manual"
-                                    ? "dados_turma"
-                                    : field.group ?? "outros",
-                              })
-                            }
-                            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-violet-400"
-                          >
-                            {FIELD_ROLES.map((r) => (
-                              <option key={r.value} value={r.value ?? ""}>
-                                {r.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className="block">
-                          <span className="text-xs font-medium text-slate-600">Grupo</span>
-                          <select
-                            value={field.group ?? "outros"}
-                            onChange={(e) =>
-                              updateField(index, {
-                                group: e.target.value as TemplateFieldSchema["group"],
-                              })
-                            }
-                            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-violet-400"
-                          >
-                            {FIELD_GROUPS.map((g) => (
-                              <option key={g.value} value={g.value ?? ""}>
-                                {g.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className="block">
-                          <span className="text-xs font-medium text-slate-600">Tipo</span>
-                          <select
-                            value={field.type}
-                            onChange={(e) =>
-                              updateField(index, {
-                                type: e.target.value as TemplateFieldSchema["type"],
-                              })
-                            }
-                            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-violet-400"
-                          >
-                            {FIELD_TYPES.map((t) => (
-                              <option key={t} value={t}>
-                                {t}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className="block">
-                          <span className="text-xs font-medium text-slate-600">Placeholder</span>
-                          <input
-                            type="text"
-                            value={field.placeholder ?? ""}
-                            onChange={(e) => updateField(index, { placeholder: e.target.value })}
-                            placeholder="Texto de exemplo no campo"
-                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-violet-400"
-                          />
-                        </label>
-
-                        <div className="flex items-center gap-4 pt-5">
-                          <label className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={field.required}
-                              onChange={(e) => updateField(index, { required: e.target.checked })}
-                              className="h-4 w-4 rounded border-slate-300 text-violet-600"
-                            />
-                            <span className="text-xs font-medium text-slate-700">Obrigatório</span>
-                          </label>
+                      {/* Row 1: nome do campo + variável — chips read-only */}
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-slate-400">Campo:</span>
+                          <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                            {field.label || <em className="text-slate-400">sem nome</em>}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-slate-400">Variável:</span>
+                          <code className="rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-1 font-mono text-[11px] text-violet-600">{`{{${field.key}}}`}</code>
                         </div>
                       </div>
 
-                      {/* AI instructions — only for ia_sugerida fields */}
-                      {field.role === "ia_sugerida" && (
-                        <div className="mt-3">
-                          <label className="block">
-                            <span className="text-xs font-medium text-violet-700">
-                              Instruções para a IA
+
+                      {/* Row 3: papel — segmented toggle */}
+                      <div>
+                        <span className="text-xs font-medium text-slate-600">Papel</span>
+                        <div className="mt-1.5 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              preserveScroll(() => updateField(index, { role: "manual", group: field.group ?? "dados_turma" }))
+                            }
+                            className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                              field.role !== "ia_sugerida"
+                                ? "border-amber-400 bg-amber-50 text-amber-800"
+                                : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                            }`}
+                          >
+                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${
+                              field.role !== "ia_sugerida" ? "border-amber-500 bg-amber-500" : "border-slate-300"
+                            }`}>
+                              {field.role !== "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
                             </span>
-                            <p className="mb-1 text-[10px] text-slate-400">
-                              Contexto específico deste campo. A IA usará essas instruções ao gerar
-                              sugestões (ex.: "Foco em tecnologia assistiva", "Usar metodologia de
-                              projetos", "Alunos com dificuldades de leitura").
-                            </p>
-                            <textarea
-                              value={field.aiInstructions ?? ""}
-                              onChange={(e) =>
-                                updateField(index, { aiInstructions: e.target.value })
-                              }
-                              rows={2}
-                              placeholder="Ex.: Priorizar habilidades de pensamento computacional para alunos do 6° ano com foco em atividades desplugadas."
-                              className="mt-1 w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-violet-400 focus:bg-white"
-                            />
-                          </label>
+                            Fixo / Manual
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              preserveScroll(() => updateField(index, { role: "ia_sugerida", group: field.group ?? "outros" }))
+                            }
+                            className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                              field.role === "ia_sugerida"
+                                ? "border-violet-400 bg-violet-50 text-violet-800"
+                                : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                            }`}
+                          >
+                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${
+                              field.role === "ia_sugerida" ? "border-violet-500 bg-violet-500" : "border-slate-300"
+                            }`}>
+                              {field.role === "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                            </span>
+                            Sugestão / Magis
+                          </button>
                         </div>
+                      </div>
+
+                      {/* Contexto para a Magis — only for ia_sugerida fields */}
+                      {field.role === "ia_sugerida" && (
+                        <label className="block">
+                          <span className="text-xs font-semibold text-violet-700">Contexto para a Magis</span>
+                          <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
+                            Dê instruções específicas para a Magis ao sugerir conteúdo neste campo. Ex.: <em>"Foco em 6º ano"</em>, <em>"Priorizar SAEB"</em>.
+                          </p>
+                          <textarea
+                            value={field.aiInstructions ?? ""}
+                            onChange={(e) =>
+                              updateField(index, { aiInstructions: e.target.value })
+                            }
+                            rows={2}
+                            placeholder="Ex.: Priorizar habilidades do 6º ano, foco em interpretação de texto…"
+                            className="mt-0.5 w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-violet-400 focus:bg-white"
+                          />
+                        </label>
+                      )}
+
+                      {/* Valor padrão — only for manual/fixed fields */}
+                      {field.role !== "ia_sugerida" && (
+                        <label className="block">
+                          <span className="text-xs font-semibold text-amber-700">Valor padrão</span>
+                          <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
+                            Aparece pré-preenchido em todos os planos gerados com este template.
+                          </p>
+                          <textarea
+                            value={field.defaultValue ?? ""}
+                            onChange={(e) =>
+                              preserveScroll(() => updateField(index, { defaultValue: e.target.value || undefined }))
+                            }
+                            rows={2}
+                            placeholder="Ex.: Escola Estadual, 9º Ano B, 2º Bimestre…"
+                            className="mt-0.5 w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-amber-400 focus:bg-white"
+                          />
+                        </label>
                       )}
                     </div>
                   )}
@@ -684,91 +893,92 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     </div>
   );
 
-  const docStyles = `
-    .doc-page {
-      background:#fff;
-      box-shadow:0 1px 4px rgba(0,0,0,.08),0 6px 28px rgba(0,0,0,.07);
-      border-radius:2px;
-      padding:40px 48px 56px;
-      max-width:820px;
-      margin:0 auto;
-      font-family:"Calibri","Liberation Sans",Arial,sans-serif;
-      font-size:12px;
-      color:#111;
-      line-height:1.5;
-    }
-    .doc-view table{width:100%;border-collapse:collapse;margin:4px 0;}
-    .doc-view td,.doc-view th{border:1px solid #555;padding:4px 8px;vertical-align:top;font-size:12px;min-width:24px;}
-    .doc-view th{font-weight:700;background:#f0f0f0;}
-    .doc-view p{margin:2px 0;line-height:1.5;}
-    .doc-view h1{font-size:15px;font-weight:700;text-align:center;margin:10px 0 6px;}
-    .doc-view h2{font-size:13px;font-weight:700;text-align:center;margin:8px 0 4px;}
-    .doc-view h3{font-size:12px;font-weight:700;margin:6px 0 3px;}
-    .doc-view img{max-width:100%;height:auto;display:block;margin:0 auto 8px;}
-    .doc-view td[data-field-key]{
-      background:#faf5ff !important;
-      border-left:3px solid #8b5cf6 !important;
-      cursor:default;
-      position:relative;
-      min-height:2em;
-      transition:background .12s,box-shadow .12s;
-    }
-    .doc-view td[data-field-key]::after{
-      content:attr(data-field-label);
-      position:absolute;
-      top:2px;right:3px;
-      background:#7c3aed;color:#fff;
-      font-size:8px;font-weight:700;
-      padding:1px 5px;border-radius:2px;
-      white-space:nowrap;pointer-events:none;
-      line-height:1.5;opacity:1;
-      text-transform:uppercase;letter-spacing:.04em;
-      max-width:160px;overflow:hidden;text-overflow:ellipsis;
-    }
-  `;
+  const confirmSuccessModal = showConfirmSuccess && (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
+      <div
+        className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-white p-8 shadow-2xl"
+        style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
+      >
+        <style>{`
+          @keyframes magis-pop {
+            from { opacity: 0; transform: scale(0.7) translateY(24px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+          }
+          @keyframes magis-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+          }
+        `}</style>
 
-  // DOCX templates: always use split-view (doc preview left, field list right)
+        {/* Magis avatar */}
+        <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
+          <Sparkles className="h-7 w-7 text-white" />
+          <span
+            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
+            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5 text-white" />
+          </span>
+        </div>
+
+        {/* Magis bubble */}
+        <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
+          <div className="mb-1.5 flex items-center justify-center gap-1.5">
+            <Sparkles className="h-3 w-3 text-violet-500" />
+            <span className="text-xs font-bold text-violet-700">Magis</span>
+          </div>
+          <p className="text-sm font-medium leading-relaxed text-slate-800">
+            Seu template foi configurado com sucesso! 🎉
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Redirecionando para Meus Templates…
+          </p>
+        </div>
+
+        {/* Progress bar */}
+        <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
+          <div
+            className="h-full rounded-full bg-violet-500"
+            style={{ animation: "magis-progress 3s linear forwards" }}
+          />
+        </div>
+        <style>{`
+          @keyframes magis-progress {
+            from { width: 100%; }
+            to   { width: 0%; }
+          }
+        `}</style>
+      </div>
+    </div>
+  );
+
+  // DOCX templates: split-view (doc preview left, field list right)
   if (isDocx) {
     return (
-      <div className="flex gap-6" style={{ minHeight: "calc(100vh - 280px)" }}>
-        {/* Left: document preview */}
-        <div className="hidden w-[55%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 xl:block">
-          {docLoading ? (
-            <div className="flex h-full items-center justify-center gap-3 text-slate-500">
-              <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
-              <span className="text-sm">Carregando documento…</span>
-            </div>
-          ) : docHtml ? (
-            <div className="h-full overflow-y-auto p-6">
-              <style>{docStyles}</style>
-              <DocPreview html={docHtml} activeFieldKey={activeFieldKey} />
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center text-center">
-              <div className="space-y-2 px-8">
-                <p className="text-sm font-medium text-slate-600">
-                  Pré-visualização do documento será exibida aqui.
-                </p>
-                <p className="text-xs text-slate-400">
-                  Configure os campos na lista à direita.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
+      <>
+        {confirmSuccessModal}
+        <div className="flex gap-6" style={{ minHeight: "calc(100vh - 280px)" }}>
+          {/* Left: document preview */}
+          <div className="hidden w-[65%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 xl:flex xl:flex-col">
+            <DocxViewer templateId={template.id} arquivoUrl={template.arquivo_url ?? ""} fields={fields} activeKey={expandedField} onClickElement={handleAddFromDoc} />
+          </div>
 
-        {/* Right: field list */}
-        <div className="flex-1 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-6">
-          {fieldListPanel}
+          {/* Right: field list */}
+          <div ref={panelScrollRef} className="flex-1 min-w-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none]">
+            {fieldListPanel}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   // Non-DOCX: single column
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-      {fieldListPanel}
-    </div>
+    <>
+      {confirmSuccessModal}
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        {fieldListPanel}
+      </div>
+    </>
   );
 }

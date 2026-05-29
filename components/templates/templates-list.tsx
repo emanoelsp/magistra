@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Edit2, Eye, FileText, FilePen, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Edit2, Eye, FileText, FilePen, Plus, Trash2 } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateOption } from "../../lib/types/firestore";
+
+const PAGE_SIZE = 3;
 
 const TIPO_LABELS: Record<string, string> = {
   plano_anual: "Plano anual",
@@ -28,6 +30,10 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+
+  const totalPages = Math.ceil(templates.length / PAGE_SIZE);
+  const visibleTemplates = templates.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   async function handleDelete(templateId: string) {
     setError(null);
@@ -49,7 +55,7 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
       )}
 
       <ul className="mt-4 space-y-3">
-        {templates.map((template) => (
+        {visibleTemplates.map((template) => (
           <li
             key={template.id}
             className="rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-slate-300"
@@ -150,6 +156,32 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
           </li>
         ))}
       </ul>
+
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Anterior
+          </button>
+          <span className="text-xs text-slate-400">
+            {page + 1} / {totalPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            disabled={page === totalPages - 1}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Próximo
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </>
   );
 }

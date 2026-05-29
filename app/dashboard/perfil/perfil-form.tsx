@@ -1,0 +1,301 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Check, ChevronDown, Eye, EyeOff, Loader2, Lock } from "lucide-react";
+
+interface PerfilFormProps {
+  nome: string;
+  email: string;
+  escolaPadrao: string | null;
+}
+
+// ─── Dados pessoais ───────────────────────────────────────────────────────────
+
+function DadosPessoaisSection({
+  nome,
+  email,
+  escolaPadrao,
+}: PerfilFormProps) {
+  const router = useRouter();
+  const [values, setValues] = useState({
+    nome: nome ?? "",
+    escola_padrao: escolaPadrao ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const dirty =
+    values.nome.trim() !== (nome ?? "") ||
+    values.escola_padrao.trim() !== (escolaPadrao ?? "");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!dirty) return;
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+
+    try {
+      const res = await fetch("/api/user/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome: values.nome.trim(),
+          escola_padrao: values.escola_padrao.trim(),
+        }),
+      });
+
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Erro ao salvar");
+
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Nome
+        </label>
+        <input
+          type="text"
+          value={values.nome}
+          onChange={(e) => setValues((v) => ({ ...v, nome: e.target.value }))}
+          placeholder="Seu nome completo"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+          E-mail
+        </label>
+        <input
+          type="email"
+          value={email}
+          disabled
+          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400 outline-none"
+        />
+        <p className="mt-1 text-xs text-slate-400">O e-mail não pode ser alterado.</p>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Escola padrão
+        </label>
+        <input
+          type="text"
+          value={values.escola_padrao}
+          onChange={(e) => setValues((v) => ({ ...v, escola_padrao: e.target.value }))}
+          placeholder="Nome da sua escola"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
+        />
+        <p className="mt-1 text-xs text-slate-400">
+          Preenchida automaticamente nos planos que você gerar.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          type="submit"
+          disabled={saving || !dirty}
+          className="rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {saving ? (
+            <span className="flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Salvando…
+            </span>
+          ) : (
+            "Salvar alterações"
+          )}
+        </button>
+
+        {saved && (
+          <span className="flex items-center gap-1.5 text-sm font-medium text-emerald-600">
+            <Check className="h-4 w-4" />
+            Salvo!
+          </span>
+        )}
+
+        {error && <span className="text-sm text-rose-600">{error}</span>}
+      </div>
+    </form>
+  );
+}
+
+// ─── Alterar senha ────────────────────────────────────────────────────────────
+
+function AlterarSenhaSection() {
+  const [open, setOpen] = useState(false);
+  const [values, setValues] = useState({ password: "", confirm: "" });
+  const [showPwd, setShowPwd] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function reset() {
+    setValues({ password: "", confirm: "" });
+    setError(null);
+    setSaved(false);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+
+    if (values.password.length < 6) {
+      setError("A senha deve ter no mínimo 6 caracteres.");
+      return;
+    }
+    if (values.password !== values.confirm) {
+      setError("As senhas não coincidem.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: values.password, confirm: values.confirm }),
+      });
+
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Erro ao alterar senha");
+
+      setSaved(true);
+      setValues({ password: "", confirm: "" });
+      setTimeout(() => {
+        setSaved(false);
+        setOpen(false);
+      }, 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível alterar a senha.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-slate-100 pt-5">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((o) => !o);
+          if (open) reset();
+        }}
+        className="flex w-full items-center justify-between gap-2 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <Lock className="h-4 w-4 text-slate-400" />
+          Alterar senha
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open && (
+        <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Nova senha
+            </label>
+            <div className="relative">
+              <input
+                type={showPwd ? "text" : "password"}
+                value={values.password}
+                onChange={(e) => setValues((v) => ({ ...v, password: e.target.value }))}
+                placeholder="Mínimo 6 caracteres"
+                autoComplete="new-password"
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 pr-11 text-sm outline-none transition focus:border-slate-950"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd((s) => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                tabIndex={-1}
+              >
+                {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Confirmar nova senha
+            </label>
+            <div className="relative">
+              <input
+                type={showConfirm ? "text" : "password"}
+                value={values.confirm}
+                onChange={(e) => setValues((v) => ({ ...v, confirm: e.target.value }))}
+                placeholder="Repita a nova senha"
+                autoComplete="new-password"
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 pr-11 text-sm outline-none transition focus:border-slate-950"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirm((s) => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                tabIndex={-1}
+              >
+                {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="submit"
+              disabled={saving || !values.password || !values.confirm}
+              className="rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {saving ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Alterando…
+                </span>
+              ) : (
+                "Alterar senha"
+              )}
+            </button>
+
+            {saved && (
+              <span className="flex items-center gap-1.5 text-sm font-medium text-emerald-600">
+                <Check className="h-4 w-4" />
+                Senha alterada!
+              </span>
+            )}
+
+            {error && <span className="text-sm text-rose-600">{error}</span>}
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+
+export function PerfilForm(props: PerfilFormProps) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 className="mb-5 text-lg font-semibold tracking-tight text-slate-950">Dados pessoais</h2>
+      <DadosPessoaisSection {...props} />
+      <AlterarSenhaSection />
+    </div>
+  );
+}

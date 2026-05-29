@@ -673,7 +673,16 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                   position:relative;
                   min-height:2em;
                   transition:background .12s;
+                  text-align:left !important;
+                  font-weight:normal !important;
+                  font-style:normal !important;
                 }
+                /* Preserve explicit bold/italic/list from the RichTextEditor */
+                .doc-view td[data-field-key] strong,
+                .doc-view td[data-field-key] b { font-weight:700; }
+                .doc-view td[data-field-key] em,
+                .doc-view td[data-field-key] i { font-style:italic; }
+                .doc-view td[data-field-key] u { text-decoration:underline; }
                 .doc-view td[data-field-key]:hover {
                   background:#ede9fe !important;
                 }
@@ -718,7 +727,15 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                   background:#fff !important;
                   border-left:none !important;
                   cursor:default;
+                  text-align:left !important;
+                  font-weight:normal !important;
+                  font-style:normal !important;
                 }
+                .doc-view-preview td[data-field-key] strong,
+                .doc-view-preview td[data-field-key] b { font-weight:700; }
+                .doc-view-preview td[data-field-key] em,
+                .doc-view-preview td[data-field-key] i { font-style:italic; }
+                .doc-view-preview td[data-field-key] u { text-decoration:underline; }
                 .doc-view-preview td[data-field-key]::after { display:none; }
               `}</style>
               <div ref={docContainerRef}>
@@ -988,7 +1005,7 @@ function AIChatPanel({
           <Sparkles className="h-4 w-4 text-white" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-slate-900">Assistente Magistra</p>
+          <p className="text-sm font-semibold text-slate-900">Magis — Assistente Pedagógica</p>
           <p className="truncate text-xs text-slate-500">
             {fieldLabel ? `Campo: ${fieldLabel}` : "Selecione um campo"}
           </p>
@@ -998,6 +1015,17 @@ function AIChatPanel({
 
       {/* Chat area */}
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
+        {/* Magis intro — always first */}
+        {!fieldLabel && (
+          <ChatBubble>
+            <p className="text-sm text-slate-700">
+              Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica. Clique em qualquer campo{" "}
+              <span className="font-semibold text-blue-600">com borda azul</span> para
+              eu sugerir conteúdo específico para ele.
+            </p>
+          </ChatBubble>
+        )}
+
         {/* Context bubble */}
         {metaEntries.length > 0 && (
           <ChatBubble>
@@ -1060,20 +1088,9 @@ function AIChatPanel({
             </div>
             {!metadataComplete && (
               <p className="mt-1.5 text-xs text-amber-600">
-                Preencha ao menos dois dados fixos para ativar sugestões.
+                Preencha ao menos dois dados fixos para a Magis ativar sugestões.
               </p>
             )}
-          </ChatBubble>
-        )}
-
-        {/* No field selected */}
-        {!fieldLabel && (
-          <ChatBubble>
-            <p className="text-sm text-slate-700">
-              Olá! Clique em qualquer campo{" "}
-              <span className="font-semibold text-blue-600">com borda azul</span> para
-              eu sugerir conteúdo específico para ele.
-            </p>
           </ChatBubble>
         )}
 
@@ -1084,8 +1101,8 @@ function AIChatPanel({
               Campo selecionado:{" "}
               <span className="font-semibold">{fieldLabel}</span>
               {metadataComplete
-                ? ". Gerando sugestões…"
-                : ". Preencha os dados fixos para eu sugerir."}
+                ? ". A Magis está preparando sugestões para você…"
+                : ". Preencha os dados fixos para a Magis auxiliar você."}
             </p>
           </ChatBubble>
         )}
@@ -1178,7 +1195,7 @@ function AIChatPanel({
             className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-violet-200 py-2 text-xs font-medium text-violet-700 transition hover:bg-violet-50 disabled:opacity-50"
           >
             <WandSparkles className="h-3.5 w-3.5" />
-            Gerar novas sugestões
+            Pedir novas sugestões à Magis
           </button>
         )}
         <div className="flex gap-2">
@@ -1315,10 +1332,10 @@ function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadat
           className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />}
-          {hasSuggestions ? "Novas sugestões" : "Sugerir IA"}
+          {hasSuggestions ? "Nova sugestão" : "Perguntar à Magis"}
         </button>
       </div>
-      <RichTextEditor value={value} onChange={onChange} onFocus={onFocus} active={active} placeholder={metadataComplete ? 'Clique em "Sugerir IA" ou escreva aqui…' : "Preencha os dados fixos para habilitar sugestões…"} />
+      <RichTextEditor value={value} onChange={onChange} onFocus={onFocus} active={active} placeholder={metadataComplete ? 'Clique em "Perguntar à Magis" ou escreva aqui…' : "Preencha os dados fixos para habilitar a Magis…"} />
     </div>
   );
 }

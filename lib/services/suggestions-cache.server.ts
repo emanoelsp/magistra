@@ -24,7 +24,7 @@ export function buildCacheKey(
 
 export async function getCachedSuggestions(cacheKey: string): Promise<IaSugestao[] | null> {
   const db = getAdminDb();
-  const doc = await db.collection("suggestions_cache").doc(cacheKey).get();
+  const doc = await db.collection("magis_suggestions_cache").doc(cacheKey).get();
   if (!doc.exists) return null;
   const data = doc.data();
   if (!data) return null;
@@ -42,7 +42,7 @@ export async function setCachedSuggestions(
   meta: { fieldKey: string; templateId: string },
 ): Promise<void> {
   const db = getAdminDb();
-  await db.collection("suggestions_cache").doc(cacheKey).set({
+  await db.collection("magis_suggestions_cache").doc(cacheKey).set({
     sugestoes,
     field_key: meta.fieldKey,
     template_id: meta.templateId,

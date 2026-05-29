@@ -25,7 +25,7 @@ export async function logUsage(params: LogUsageParams): Promise<void> {
     const db = getAdminDb();
 
     // Fetch current cost config (fall back to defaults if not set)
-    const configSnap = await db.collection("admin_config").doc("singleton").get();
+    const configSnap = await db.collection("magis_admin_config").doc("singleton").get();
     const config = configSnap.data() ?? {};
     const inputRate = (config.gemini_input_cost_per_1m as number) ?? DEFAULT_INPUT_COST_PER_1M;
     const outputRate = (config.gemini_output_cost_per_1m as number) ?? DEFAULT_OUTPUT_COST_PER_1M;
@@ -35,7 +35,7 @@ export async function logUsage(params: LogUsageParams): Promise<void> {
       (params.tokensInput / 1_000_000) * inputRate +
       (params.tokensOutput / 1_000_000) * outputRate;
 
-    await db.collection("usage_logs").add({
+    await db.collection("magis_usage_logs").add({
       user_id: params.userId,
       action: params.action,
       model: params.model,
@@ -49,10 +49,10 @@ export async function logUsage(params: LogUsageParams): Promise<void> {
 
     // Update user's token counter
     await db
-      .collection("users")
+      .collection("magis_users")
       .doc(params.userId)
       .set(
-        { tokens_usados_mes: (await db.collection("users").doc(params.userId).get()).data()?.tokens_usados_mes + tokensTotal || tokensTotal },
+        { tokens_usados_mes: (await db.collection("magis_users").doc(params.userId).get()).data()?.tokens_usados_mes + tokensTotal || tokensTotal },
         { merge: true },
       );
   } catch (err) {

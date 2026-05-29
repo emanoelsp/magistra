@@ -8,12 +8,11 @@ export interface PlanLimits {
 }
 
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
-  free:    { maxTemplates: 0,   maxPlanosPerMonth: 0   },
-  starter: { maxTemplates: 2,   maxPlanosPerMonth: 3   },
-  pro:     { maxTemplates: 5,   maxPlanosPerMonth: 10  },
-  escola:  { maxTemplates: 999, maxPlanosPerMonth: 999 },
-  // legado — mapeado para starter
-  medio:   { maxTemplates: 2,   maxPlanosPerMonth: 3   },
+  free:    { maxTemplates: 1,   maxPlanosPerMonth: 1   },  // Explorador — R$0
+  starter: { maxTemplates: 1,   maxPlanosPerMonth: 2   },  // Educador   — R$9,90
+  medio:   { maxTemplates: 2,   maxPlanosPerMonth: 4   },  // Mestre     — R$19,90
+  pro:     { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // Regente    — R$49,90
+  escola:  { maxTemplates: 999, maxPlanosPerMonth: 999 },  // Escola     — sob consulta
 };
 
 export interface LimitsStatus {
@@ -51,8 +50,8 @@ export async function getLimitsStatus(userId: string, plano: string): Promise<Li
   const limits = PLAN_LIMITS[normalizedPlano] ?? PLAN_LIMITS.free;
 
   const [templatesSnap, planosSnap] = await Promise.all([
-    db.collection("templates").where("user_id", "==", userId).get(),
-    db.collection("planos").where("user_id", "==", userId).get(),
+    db.collection("magis_templates").where("user_id", "==", userId).get(),
+    db.collection("magis_planos").where("user_id", "==", userId).get(),
   ]);
 
   const monthStart = getMonthStart();

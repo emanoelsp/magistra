@@ -28,6 +28,7 @@ export interface TemplateFieldSchema {
   helperText?: string;
   options?: string[];
   aiInstructions?: string;
+  defaultValue?: string;
 }
 
 export interface UserProfile {
@@ -36,6 +37,7 @@ export interface UserProfile {
   email: string;
   escola_padrao: string | null;
   plano: string;
+  plano_validade: string | null;
   tokens_usados_mes: number;
 }
 
@@ -102,6 +104,7 @@ export interface UpdatePlanoInput {
 
 export interface DashboardStats {
   totalTemplates: number;
+  totalPlanos: number;
   planosGeradosMes: number;
   planosPendentes: number;
   tokensUsadosMes: number;

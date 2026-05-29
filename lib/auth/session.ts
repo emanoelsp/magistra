@@ -43,7 +43,7 @@ export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null>
     return null;
   }
 
-  const userSnapshot = await getAdminDb().collection("users").doc(session.uid).get();
+  const userSnapshot = await getAdminDb().collection("magis_users").doc(session.uid).get();
   const userData = userSnapshot.data() ?? {};
 
   return {
@@ -54,7 +54,8 @@ export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null>
       typeof userData.escola_padrao === "string" && userData.escola_padrao.length > 0
         ? userData.escola_padrao
         : null,
-    plano: typeof userData.plano === "string" && userData.plano.length > 0 ? userData.plano : "free",
+    plano: typeof userData.plano === "string" && userData.plano.length > 0 ? userData.plano : "medio",
+    plano_validade: typeof userData.plano_validade === "string" ? userData.plano_validade : null,
     tokens_usados_mes:
       typeof userData.tokens_usados_mes === "number" && Number.isFinite(userData.tokens_usados_mes)
         ? userData.tokens_usados_mes

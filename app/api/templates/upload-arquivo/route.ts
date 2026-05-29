@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     if (ext === "docx" || ext === "doc") {
       try {
         const db = getAdminDb();
-        const snap = await db.collection("templates").doc(templateId).get();
+        const snap = await db.collection("magis_templates").doc(templateId).get();
         const rawSchema = snap.data()?.schema_campos;
         const schema: TemplateFieldSchema[] = Array.isArray(rawSchema) ? rawSchema : [];
 
@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     const db = getAdminDb();
     const updateData: Record<string, string> = { arquivo_url: originalUrl };
     if (fillableUrl) updateData.arquivo_fillable_url = fillableUrl;
-    await db.collection("templates").doc(templateId).update(updateData);
+    await db.collection("magis_templates").doc(templateId).update(updateData);
 
     return NextResponse.json({ ok: true, arquivo_url: originalUrl, arquivo_fillable_url: fillableUrl });
   } catch (error) {

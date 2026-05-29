@@ -47,24 +47,26 @@ function toIsoString(value: unknown): string {
   return toDate(value)?.toISOString() ?? new Date().toISOString();
 }
 
+const PLAN_LABELS: Record<string, string> = {
+  free:     "Explorador",
+  starter:  "Educador",
+  medio:    "Mestre",
+  pro:      "Regente",
+  escola:   "Escola",
+  avancado: "Regente",
+  premium:  "Regente",
+};
+
 function formatPlanLabel(plan: string): string {
-  const normalizedPlan = plan.trim();
-
-  if (!normalizedPlan) {
-    return "Free";
-  }
-
-  return normalizedPlan
-    .split(/[\s_-]+/)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
-    .join(" ");
+  const key = plan?.trim().toLowerCase() || "free";
+  return PLAN_LABELS[key] ?? key;
 }
 
 export async function getDashboardStats(user: UserProfile): Promise<DashboardStats> {
   const adminDb = getAdminDb();
   const [templatesSnapshot, planosSnapshot] = await Promise.all([
-    adminDb.collection("templates").where("user_id", "==", user.uid).get(),
-    adminDb.collection("planos").where("user_id", "==", user.uid).get(),
+    adminDb.collection("magis_templates").where("user_id", "==", user.uid).get(),
+    adminDb.collection("magis_planos").where("user_id", "==", user.uid).get(),
   ]);
 
   const monthStart = new Date();
@@ -90,6 +92,7 @@ export async function getDashboardStats(user: UserProfile): Promise<DashboardSta
 
   return {
     totalTemplates: templatesSnapshot.size,
+    totalPlanos: planosSnapshot.size,
     planosGeradosMes,
     planosPendentes,
     tokensUsadosMes: user.tokens_usados_mes,
@@ -99,7 +102,7 @@ export async function getDashboardStats(user: UserProfile): Promise<DashboardSta
 
 export async function getUserTemplateOptions(userId: string): Promise<TemplateOption[]> {
   const adminDb = getAdminDb();
-  const templatesSnapshot = await adminDb.collection("templates").where("user_id", "==", userId).get();
+  const templatesSnapshot = await adminDb.collection("magis_templates").where("user_id", "==", userId).get();
 
   return templatesSnapshot.docs
     .map((documentSnapshot) => {
@@ -118,6 +121,8 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
               placeholder: typeof obj.placeholder === "string" ? obj.placeholder : undefined,
               helperText: typeof obj.helperText === "string" ? obj.helperText : undefined,
               options: Array.isArray(obj.options) ? (obj.options as string[]) : undefined,
+              defaultValue: typeof obj.defaultValue === "string" ? obj.defaultValue : undefined,
+              aiInstructions: typeof obj.aiInstructions === "string" ? obj.aiInstructions : undefined,
             };
           })
         : [];
@@ -152,7 +157,7 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
 
 export async function getUserPlanos(userId: string): Promise<PlanoRecord[]> {
   const adminDb = getAdminDb();
-  const snapshot = await adminDb.collection("planos").where("user_id", "==", userId).get();
+  const snapshot = await adminDb.collection("magis_planos").where("user_id", "==", userId).get();
 
   return snapshot.docs
     .map((doc) => {
@@ -182,7 +187,7 @@ export async function getUserPlanosComNome(
   limit = 50,
 ): Promise<PlanoComNome[]> {
   const adminDb = getAdminDb();
-  const snapshot = await adminDb.collection("planos").where("user_id", "==", userId).get();
+  const snapshot = await adminDb.collection("magis_planos").where("user_id", "==", userId).get();
 
   const planos = snapshot.docs
     .map((doc) => {
@@ -209,7 +214,7 @@ export async function getUserPlanosComNome(
   await Promise.all(
     templateIds.map(async (tid) => {
       if (!tid) return;
-      const tSnap = await adminDb.collection("templates").doc(tid).get();
+      const tSnap = await adminDb.collection("magis_templates").doc(tid).get();
       if (tSnap.exists) {
         const td = tSnap.data()!;
         templateNames[tid] = {
@@ -242,7 +247,7 @@ export async function getRecentTemplates(
 ): Promise<RecentTemplate[]> {
   const adminDb = getAdminDb();
   const snapshot = await adminDb
-    .collection("templates")
+    .collection("magis_templates")
     .where("user_id", "==", userId)
     .get();
 
@@ -273,14 +278,14 @@ export async function getPlanoDetalhes(
   userId: string,
 ): Promise<PlanoDetalhes | null> {
   const adminDb = getAdminDb();
-  const planoSnap = await adminDb.collection("planos").doc(planoId).get();
+  const planoSnap = await adminDb.collection("magis_planos").doc(planoId).get();
   if (!planoSnap.exists) return null;
 
   const d = planoSnap.data()!;
   if (d.user_id !== userId) return null;
 
   const templateId = typeof d.template_id === "string" ? d.template_id : "";
-  const tSnap = templateId ? await adminDb.collection("templates").doc(templateId).get() : null;
+  const tSnap = templateId ? await adminDb.collection("magis_templates").doc(templateId).get() : null;
   const td = tSnap?.data();
 
   const rawSchema = td?.schema_campos;

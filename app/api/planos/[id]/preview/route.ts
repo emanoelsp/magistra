@@ -44,7 +44,7 @@ export async function GET(
     const { id } = await params;
 
     const db = getAdminDb();
-    const planoSnap = await db.collection("planos").doc(id).get();
+    const planoSnap = await db.collection("magis_planos").doc(id).get();
     if (!planoSnap.exists) {
       return new NextResponse("Plano não encontrado.", { status: 404 });
     }
@@ -52,7 +52,7 @@ export async function GET(
     const planoData = planoSnap.data() as PlanoRecord;
     const conteudo = normalizeConteudo(planoData.conteudo_gerado ?? {});
 
-    const templateSnap = await db.collection("templates").doc(planoData.template_id).get();
+    const templateSnap = await db.collection("magis_templates").doc(planoData.template_id).get();
     const template = templateSnap.exists ? (templateSnap.data() as TemplateRecord) : null;
     const templateNome = template?.nome ?? "Plano";
     // Prefer schema snapshot saved at plan creation; fall back to current template schema

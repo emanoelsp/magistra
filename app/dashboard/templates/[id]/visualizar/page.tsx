@@ -17,7 +17,7 @@ export default async function VisualizarTemplatePage({ params }: PageProps) {
   const user = await requireCurrentUserProfile();
   const { id } = await params;
 
-  const snap = await getAdminDb().collection("templates").doc(id).get();
+  const snap = await getAdminDb().collection("magis_templates").doc(id).get();
   if (!snap.exists) notFound();
 
   const data = snap.data() as Omit<TemplateRecord, "id">;

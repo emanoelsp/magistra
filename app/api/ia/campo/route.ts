@@ -1,7 +1,8 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import type { ResponseSchema } from "@google/generative-ai";
 
 import { getAdminDb } from "../../../../lib/firebase/admin";
 import { retrieveBnccContext } from "../../../../lib/services/bncc-rag.server";
@@ -16,6 +17,72 @@ const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+
+// ── Response schema — garante conformidade estrutural no nível do sampler ──
+const SUGESTAO_RESPONSE_SCHEMA: ResponseSchema = {
+  type: SchemaType.OBJECT,
+  required: ["raciocinio", "sugestoes"],
+  properties: {
+    raciocinio: { type: SchemaType.STRING },
+    sugestoes: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        required: ["id", "label", "descricao", "fonte"],
+        properties: {
+          id:        { type: SchemaType.STRING },
+          label:     { type: SchemaType.STRING },
+          descricao: { type: SchemaType.STRING },
+          fonte:     { type: SchemaType.STRING },
+        },
+      },
+    },
+  },
+};
+
+// ── Few-shot examples por group ────────────────────────────────────────────
+const FEW_SHOT_EXAMPLES: Record<string, string> = {
+  objetivos: `Entrada:
+<campo><nome>Objetivos de aprendizagem</nome><categoria>objetivos</categoria></campo>
+<contexto><turma>disciplina: Matemática | ano: 5º ano EF | escola: EEEF João Paulo II</turma></contexto>
+Saída:
+{"raciocinio":"Campo de objetivos para Matemática no 5º ano. Selecionei verbos de ação no infinitivo, mensuráveis, conectados às habilidades EF05MA.","sugestoes":[{"id":"s1","label":"Identificar frações equivalentes e comparar frações com denominadores diferentes usando representações visuais","descricao":"Desenvolve o pensamento proporcional, base para álgebra no EF2, alinhado a EF05MA06.","fonte":"BNCC EF05MA06"},{"id":"s2","label":"Resolver situações-problema de divisão com resto interpretando o resultado no contexto","descricao":"Consolida a divisão com significado prático, alinhado ao EF05MA07 e às matrizes SAEB do 5º ano.","fonte":"BNCC EF05MA07 | SAEB"},{"id":"s3","label":"Calcular a área de figuras planas por composição e decomposição em quadradinhos","descricao":"Introduz área de forma concreta antes da fórmula, favorecendo compreensão geométrica prevista em EF05MA18.","fonte":"BNCC EF05MA18"}]}`,
+
+  habilidades: `Entrada:
+<campo><nome>Habilidades BNCC</nome><categoria>habilidades</categoria></campo>
+<contexto><turma>disciplina: Matemática | ano: 9º ano EF | escola: CEDUP/SC</turma></contexto>
+<habilidades_bncc>
+EF09MA06: Resolver e elaborar problemas envolvendo conjuntos numéricos.
+EF09MA11: Resolver problemas usando o teorema de Pitágoras.
+EF09MA16: Determinar o conjunto de resultados de um experimento aleatório.
+</habilidades_bncc>
+Saída:
+{"raciocinio":"Tenho 3 códigos BNCC disponíveis para Matemática no 9º ano. Usarei EXCLUSIVAMENTE esses códigos no formato 'CÓDIGO — descrição parafraseada', sem inventar outros.","sugestoes":[{"id":"s1","label":"EF09MA06 — Resolver problemas com os quatro conjuntos numéricos usando diferentes estratégias de cálculo","descricao":"Integra N, Z, Q e I em situações-problema variadas, consolidando o campo numérico antes do EM.","fonte":"BNCC EF09MA06"},{"id":"s2","label":"EF09MA11 — Aplicar o teorema de Pitágoras para calcular distâncias em situações reais e geométricas","descricao":"Conecta geometria à realidade do aluno e reforça raciocínio espacial cobrado no SAEB.","fonte":"BNCC EF09MA11 | SAEB"},{"id":"s3","label":"EF09MA16 — Identificar e calcular a probabilidade de eventos em experimentos aleatórios simples","descricao":"Introduz raciocínio probabilístico com espaço amostral finito, preparando para estatística no EM.","fonte":"BNCC EF09MA16"}]}`,
+
+  avaliacao: `Entrada:
+<campo><nome>Avaliação</nome><categoria>avaliacao</categoria></campo>
+<contexto><turma>disciplina: Ciências | ano: 7º ano EF | escola: Colégio Estadual</turma></contexto>
+Saída:
+{"raciocinio":"Campo de avaliação para Ciências no 7º ano. Equilibro instrumentos formativos e somativos, variando o formato e tornando os critérios explícitos.","sugestoes":[{"id":"s1","label":"Observação do engajamento e registro no caderno de ciências durante atividade experimental","descricao":"Avalia o processo investigativo em tempo real, permitindo intervenção imediata pelo professor.","fonte":"Avaliação formativa"},{"id":"s2","label":"Produção de mapa conceitual individual conectando os termos trabalhados na unidade","descricao":"Evidencia organização do conhecimento e avalia compreensão relacional, não apenas memorização.","fonte":"Avaliação somativa"},{"id":"s3","label":"Questão de interpretação de gráfico ou tabela com dados científicos reais (modelo SAEB)","descricao":"Prepara para avaliações externas e avalia letramento científico na leitura de dados.","fonte":"SAEB | Avaliação somativa"}]}`,
+
+  conteudos: `Entrada:
+<campo><nome>Conteúdos programáticos</nome><categoria>conteudos</categoria></campo>
+<contexto><turma>disciplina: Língua Portuguesa | ano: 1º ano EM | escola: EEM Prof. José Ribeiro</turma></contexto>
+Saída:
+{"raciocinio":"Campo de conteúdos para Língua Portuguesa no 1º ano do EM. Organizo do mais básico ao mais complexo, alinhado ao currículo do EM.","sugestoes":[{"id":"s1","label":"Gêneros textuais argumentativos: artigo de opinião — estrutura, tese e argumentos","descricao":"Introduz escrita argumentativa formal do EM, diferenciando fato de opinião por marcas linguísticas.","fonte":"BNCC EM13LP04"},{"id":"s2","label":"Variedades linguísticas: norma culta, registros formais e informais em diferentes contextos","descricao":"Amplia repertório comunicativo sem desvalorizar a variedade materna do aluno, alinhado ao CTBC.","fonte":"BNCC EM13LP01 | CTBC"},{"id":"s3","label":"Leitura crítica de textos multimodais: charge, infográfico e artigo — identificação de ponto de vista","descricao":"Desenvolve letramento visual e verbal, alinhado ao perfil leitor exigido pelo ENEM e SAEB.","fonte":"BNCC EM13LP03 | SAEB"}]}`,
+
+  competencias: `Entrada:
+<campo><nome>Competências gerais</nome><categoria>competencias</categoria></campo>
+<contexto><turma>disciplina: História | ano: 8º ano EF | escola: EMEF Rui Barbosa</turma></contexto>
+Saída:
+{"raciocinio":"Campo de competências para História no 8º ano. Sugiro competências BNCC parafraseadas — nunca cópia literal — aplicadas ao contexto específico da disciplina e ano.","sugestoes":[{"id":"s1","label":"Analisar criticamente fontes históricas diversas, identificando contexto, autoria e intencionalidade","descricao":"Manifesta pensamento científico aplicado à história, desenvolvendo leitura crítica de documentos primários e secundários.","fonte":"Competência Geral BNCC Nº2"},{"id":"s2","label":"Relacionar processos históricos do século XIX às estruturas sociais brasileiras contemporâneas","descricao":"Desenvolve consciência histórica conectando passado e presente, central para o currículo do 8º ano.","fonte":"Competência Específica História EF"},{"id":"s3","label":"Argumentar sobre questões históricas usando evidências e respeitando perspectivas diferentes","descricao":"Exercita comunicação fundamentada em evidências, essencial para produção textual em história.","fonte":"Competência Geral BNCC Nº7"}]}`,
+
+  outros: `Entrada:
+<campo><nome>Metodologia</nome><categoria>outros</categoria></campo>
+<contexto><turma>disciplina: Geografia | ano: 6º ano EF | escola: EMEF Santos Dumont</turma></contexto>
+Saída:
+{"raciocinio":"Campo de metodologia (outros) para Geografia no 6º ano. Sugiro abordagens práticas e específicas para esta faixa etária e disciplina.","sugestoes":[{"id":"s1","label":"Leitura e interpretação de mapas temáticos com roteiro guiado de análise em duplas","descricao":"Desenvolve raciocínio geográfico de forma colaborativa, central para o 6º ano que inicia cartografia.","fonte":"Objetivo pedagógico"},{"id":"s2","label":"Produção de maquete do relevo local com material reciclável e apresentação oral para a turma","descricao":"Ativa aprendizagem tridimensional e comunicação, tornando o conteúdo de relevo concreto e significativo.","fonte":"Objetivo pedagógico"},{"id":"s3","label":"Estudo do meio: observação do bairro com ficha de campo e registro fotográfico","descricao":"Conecta conceitos de espaço geográfico à realidade próxima do aluno, metodologia prevista pela BNCC.","fonte":"BNCC EF06GE04"}]}`,
+};
 
 function isQuotaError(err: unknown): boolean {
   const status = (err as { status?: number })?.status;
@@ -57,7 +124,13 @@ function makeGeminiModel(systemInstruction: string) {
   const genAI = new GoogleGenerativeAI(apiKey);
   return genAI.getGenerativeModel({
     model: MODEL_NAME,
-    generationConfig: { temperature: 0.35, topP: 0.8, topK: 40, responseMimeType: "application/json" },
+    generationConfig: {
+      temperature: 0.35,
+      topP: 0.8,
+      topK: 40,
+      responseMimeType: "application/json",
+      responseSchema: SUGESTAO_RESPONSE_SCHEMA,
+    },
     systemInstruction,
   });
 }
@@ -136,7 +209,7 @@ export async function POST(request: Request) {
     }
 
     const db = getAdminDb();
-    const snap = await db.collection("templates").doc(templateId).get();
+    const snap = await db.collection("magis_templates").doc(templateId).get();
     if (!snap.exists) {
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
     }
@@ -247,19 +320,40 @@ export async function POST(request: Request) {
         "fonte = referência curricular ou pedagógica pertinente (BNCC, SAEB, CTBC ou outra).";
 
     // ── System instruction — persona + contrato de saída ─────────────────────
-    const systemInstruction =
-      "Você é um assistente pedagógico especializado em educação básica brasileira (BNCC, SAEB, CTBC). " +
-      "Sua única tarefa é gerar 3 a 5 sugestões de preenchimento para o campo específico indicado no prompt. " +
-      "CONTRATO DE SAÍDA — cada sugestão deve ter: " +
-      "  id: string única simples ('s1', 's2', ...); " +
-      "  label: texto curto e pronto para inserção direta no campo — o professor clica e insere; " +
-      "  descricao: justificativa pedagógica em 1-2 frases — POR QUE esta sugestão serve para este campo e contexto; " +
-      "  fonte: referência curricular específica (ex: 'BNCC EF09MA06', 'Competência Geral 2', 'SAEB', 'CTBC', 'Avaliação formativa'). " +
-      "REGRAS INVIOLÁVEIS: " +
-      "(1) NUNCA copie trechos literais de documentos oficiais — parafraseie sempre com suas próprias palavras. " +
-      "(2) NUNCA invente ou complete códigos BNCC, SAEB ou CTBC — use SOMENTE os que você conhece com certeza. " +
-      "(3) Cada sugestão deve ser específica para o campo, disciplina, ano/série e escola descritos. " +
-      'Responda SOMENTE com JSON válido: { "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string }] }';
+    const exampleKey = is2profField || isBibliografiaField ? "outros" : (fieldGroup ?? "outros");
+    const fewShotExample = FEW_SHOT_EXAMPLES[exampleKey] ?? FEW_SHOT_EXAMPLES["outros"]!;
+
+    const systemInstruction = `<persona>
+Você é um pedagogo sênior com 15 anos de experiência em planejamento de aulas para a educação básica brasileira. Domina a BNCC, o SAEB e o CTBC com profundidade técnica, conhece o vocabulário oficial do MEC e sabe como professores de escolas públicas e privadas aplicam esses referenciais na prática de sala de aula.
+</persona>
+<tarefa>
+Gere de 3 a 5 sugestões de preenchimento para o campo indicado em <campo>. Cada sugestão deve ser específica para a disciplina, ano/série e escola descritos em <contexto>.
+</tarefa>
+<regras>
+1. NUNCA copie trechos literais de documentos oficiais — parafraseie sempre com suas próprias palavras.
+2. NUNCA invente ou complete códigos BNCC, SAEB ou CTBC — use SOMENTE os que você conhece com certeza.
+3. Se <habilidades_bncc> estiver presente, use EXCLUSIVAMENTE os códigos listados ali — nunca invente outros.
+4. Se <instrucao_do_professor> estiver presente, respeite-a como prioridade máxima.
+</regras>
+<exemplos>
+${fewShotExample}
+</exemplos>
+<raciocinio_obrigatorio>
+Antes de gerar as sugestões, raciocine em "raciocinio" seguindo estes passos:
+1. Identifique o tipo e propósito do campo (objetivo, habilidade, conteúdo, avaliação, outro).
+2. Analise o contexto da turma (disciplina, ano/série, escola) para calibrar profundidade e linguagem.
+3. Se <habilidades_bncc> estiver presente, identifique quais códigos são mais pertinentes para este campo.
+4. Decida quais 3 a 5 sugestões seriam mais úteis e diretamente aplicáveis por este professor.
+</raciocinio_obrigatorio>
+<contrato_de_saida>
+Cada sugestão deve conter:
+- id: string única simples ('s1', 's2', ...)
+- label: texto curto e pronto para inserção direta — o professor clica e insere
+- descricao: justificativa pedagógica em 1-2 frases — POR QUE esta sugestão serve para este campo e contexto
+- fonte: referência curricular específica (ex: 'BNCC EF09MA06', 'Competência Geral 2', 'SAEB', 'CTBC', 'Avaliação formativa')
+Responda SOMENTE com JSON válido:
+{ "raciocinio": string, "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string }] }
+</contrato_de_saida>`;
 
     const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${contexto}`.trim();
     const etapaRaw = metadata["etapa"] ?? metadata["ano"] ?? "";
@@ -275,26 +369,20 @@ export async function POST(request: Request) {
       ? bnccChunks.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
       : null;
 
-    const prompt = JSON.stringify({
-      campo_sendo_editado: fieldLabel,
-      categoria_do_campo: fieldGroup ?? "outros",
-      template_da_escola: template.nome,
-      contexto_turma: contexto,
-      ...(bnccContexto ? { habilidades_bncc_disponiveis: bnccContexto } : {}),
-      ...(fieldAiInstructions ? { instrucoes_especificas_do_campo: fieldAiInstructions } : {}),
-      ...(extraContext?.trim() ? { contexto_extra_do_professor: extraContext.trim() } : {}),
-      instrucao: instrucaoEspecifica +
-        (fieldAiInstructions
-          ? ` INSTRUÇÃO ESPECÍFICA DESTE CAMPO (definida pelo professor ao criar o template): "${fieldAiInstructions}". Respeite esta instrução como prioridade.`
-          : "") +
-        (bnccContexto
-          ? " USE APENAS os códigos de habilidades_bncc_disponiveis — nunca invente outros."
-          : "") +
-        (extraContext?.trim()
-          ? ` Considere também o contexto extra informado pelo professor: "${extraContext.trim()}".`
-          : "") +
-        " Retorne SOMENTE o JSON { sugestoes: [...] }.",
-    });
+    const prompt = [
+      `<campo>`,
+      `  <nome>${fieldLabel}</nome>`,
+      `  <categoria>${fieldGroup ?? "outros"}</categoria>`,
+      `  <instrucao>${instrucaoEspecifica}</instrucao>`,
+      ...(fieldAiInstructions ? [`  <instrucao_do_professor>${fieldAiInstructions}</instrucao_do_professor>`] : []),
+      `</campo>`,
+      `<contexto>`,
+      `  <template>${template.nome}</template>`,
+      `  <turma>${contexto}</turma>`,
+      ...(extraContext?.trim() ? [`  <contexto_extra>${extraContext.trim()}</contexto_extra>`] : []),
+      `</contexto>`,
+      ...(bnccContexto ? [`<habilidades_bncc>\n${bnccContexto}\n</habilidades_bncc>`] : []),
+    ].join("\n");
 
     // Cache key — null when extraContext is present (one-off refinement, don't cache)
     const cacheKey = extraContext?.trim()

@@ -19,9 +19,9 @@ async function getCosts() {
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const [logsSnap, configSnap, usersSnap] = await Promise.all([
-    db.collection("usage_logs").where("timestamp", ">=", since).orderBy("timestamp", "desc").get(),
-    db.collection("admin_config").doc("singleton").get(),
-    db.collection("users").get(),
+    db.collection("magis_usage_logs").where("timestamp", ">=", since).orderBy("timestamp", "desc").get(),
+    db.collection("magis_admin_config").doc("singleton").get(),
+    db.collection("magis_users").get(),
   ]);
 
   const config = (configSnap.data() ?? {

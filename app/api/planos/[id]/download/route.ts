@@ -251,6 +251,103 @@ function buildFallbackPdf(
   });
 }
 
+export const maxDuration = 60; // Vercel Pro: até 60s para conversão CloudConvert
+
+// ── CloudConvert: DOCX → PDF ─────────────────────────────────────────────────
+
+interface CCTask {
+  id: string;
+  operation: string;
+  status: string;
+  message?: string;
+  result?: {
+    form?: { url: string; parameters: Record<string, string> };
+    files?: Array<{ url: string; filename: string }>;
+  };
+}
+
+interface CCJob {
+  id: string;
+  status: string;
+  tasks: CCTask[];
+}
+
+async function convertDocxToPdfCloudConvert(
+  docxBuffer: Buffer,
+  filename: string,
+): Promise<Buffer> {
+  const apiKey = process.env.CLOUDCONVERT_API_KEY;
+  if (!apiKey) throw new Error("CLOUDCONVERT_API_KEY não configurada");
+
+  // 1. Cria job: upload → convert → export
+  const createRes = await fetch("https://api.cloudconvert.com/v2/jobs", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      tasks: {
+        upload:  { operation: "import/upload" },
+        convert: { operation: "convert",    input: "upload",  input_format: "docx", output_format: "pdf", engine: "libreoffice" },
+        export:  { operation: "export/url", input: "convert" },
+      },
+    }),
+  });
+
+  if (!createRes.ok) {
+    throw new Error(`CloudConvert: erro ao criar job (HTTP ${createRes.status})`);
+  }
+
+  const { data: job } = (await createRes.json()) as { data: CCJob };
+  const uploadTask = job.tasks.find((t) => t.operation === "import/upload");
+  if (!uploadTask?.result?.form) throw new Error("CloudConvert: form de upload não disponível");
+
+  // 2. Envia DOCX via multipart para S3 (retorna 201 ou 204)
+  const { url: uploadUrl, parameters } = uploadTask.result.form;
+  const form = new FormData();
+  for (const [k, v] of Object.entries(parameters)) form.append(k, v);
+  form.append(
+    "file",
+    new Blob([new Uint8Array(docxBuffer)], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+    filename,
+  );
+
+  const uploadRes = await fetch(uploadUrl, { method: "POST", body: form });
+  if (!uploadRes.ok && uploadRes.status !== 201 && uploadRes.status !== 204) {
+    throw new Error(`CloudConvert: upload falhou (HTTP ${uploadRes.status})`);
+  }
+
+  // 3. Polling até concluir (20× a cada 2s = até 40s)
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise<void>((r) => setTimeout(r, 2000));
+
+    const statusRes = await fetch(
+      `https://api.cloudconvert.com/v2/jobs/${job.id}?include=tasks`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    const { data: current } = (await statusRes.json()) as { data: CCJob };
+
+    if (current.status === "finished") {
+      const exportTask = current.tasks.find((t) => t.operation === "export/url");
+      const pdfUrl = exportTask?.result?.files?.[0]?.url;
+      if (!pdfUrl) throw new Error("CloudConvert: URL do PDF não encontrada");
+
+      const pdfRes = await fetch(pdfUrl);
+      if (!pdfRes.ok) throw new Error(`CloudConvert: download falhou (HTTP ${pdfRes.status})`);
+
+      return Buffer.from(await pdfRes.arrayBuffer());
+    }
+
+    if (current.status === "error") {
+      const failed = current.tasks.find((t) => t.status === "error");
+      throw new Error(`CloudConvert: conversão falhou — ${failed?.message ?? "erro desconhecido"}`);
+    }
+  }
+
+  throw new Error("CloudConvert: timeout — conversão demorou mais de 40s");
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -265,7 +362,7 @@ export async function GET(
     }
 
     const db = getAdminDb();
-    const planoSnap = await db.collection("planos").doc(id).get();
+    const planoSnap = await db.collection("magis_planos").doc(id).get();
 
     if (!planoSnap.exists) {
       return NextResponse.json({ error: "Plano não encontrado." }, { status: 404 });
@@ -278,7 +375,7 @@ export async function GET(
     const planoTituloRaw = planoData.conteudo_gerado?._plano_titulo;
     const planoTitulo = typeof planoTituloRaw === "string" ? planoTituloRaw.trim() : "";
 
-    const templateSnap = await db.collection("templates").doc(planoData.template_id).get();
+    const templateSnap = await db.collection("magis_templates").doc(planoData.template_id).get();
     const template = templateSnap.exists ? (templateSnap.data() as TemplateRecord) : null;
     const templateNome = template?.nome ?? "Plano";
     const fileBaseName = planoTitulo || templateNome;
@@ -295,7 +392,8 @@ export async function GET(
     const ext = arquivoUrl.split(".").pop()?.toLowerCase() ?? "pdf";
     const isDocx = ext === "docx" || ext === "doc";
 
-    if (isDocx && arquivoUrl && !forcePdf) {
+    // Gera o DOCX preenchido (reutilizado tanto para download DOCX quanto para conversão PDF)
+    if (isDocx && arquivoUrl) {
       try {
         const fillableUrl = template?.arquivo_fillable_url ?? "";
         let docxBuffer: Buffer;
@@ -305,7 +403,6 @@ export async function GET(
           const zip = new (await import("pizzip")).default(fillableBuf);
           const xmlSample = zip.files["word/document.xml"]?.asText() ?? "";
           const isManuallyPrepared = xmlSample.includes("{{");
-
           if (isManuallyPrepared) {
             docxBuffer = fillableBuf;
           } else {
@@ -321,23 +418,39 @@ export async function GET(
           Object.entries(conteudo).map(([k, v]) => [k, escapeTemplateDelimiters(v)]),
         );
         const filledBuffer = fillDocx(docxBuffer, schema, safeConteudo);
-        const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-        const filledBlob = new Blob([new Uint8Array(filledBuffer)], { type: mimeType });
-        const docxFilename = sanitizeFilename(fileBaseName, ext);
 
-        return new NextResponse(filledBlob, {
+        if (!forcePdf) {
+          // Baixar DOCX diretamente
+          const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+          const docxFilename = sanitizeFilename(fileBaseName, ext);
+          return new NextResponse(new Blob([new Uint8Array(filledBuffer)], { type: mimeType }), {
+            headers: {
+              "Content-Type": mimeType,
+              "Content-Disposition": `attachment; filename="${docxFilename}"`,
+              "Content-Length": String(filledBuffer.length),
+            },
+          });
+        }
+
+        // Converter DOCX → PDF via CloudConvert
+        const pdfBuffer = await convertDocxToPdfCloudConvert(
+          filledBuffer,
+          sanitizeFilename(fileBaseName, "docx"),
+        );
+        const pdfFilename = sanitizeFilename(fileBaseName, "pdf");
+        return new NextResponse(new Uint8Array(pdfBuffer), {
           headers: {
-            "Content-Type": mimeType,
-            "Content-Disposition": `attachment; filename="${docxFilename}"`,
-            "Content-Length": String(filledBuffer.length),
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="${pdfFilename}"`,
+            "Content-Length": String(pdfBuffer.length),
           },
         });
-      } catch (docxErr) {
-        console.warn("[PlanoMagistra/download] Falha no DOCX, fallback para PDF:", docxErr);
+      } catch (err) {
+        console.warn("[PlanoMagistra/download] Falha no processamento DOCX/PDF, fallback:", err);
       }
     }
 
-    // PDF path: overlay values on original PDF
+    // Fallback PDF: templates nativos PDF ou quando DOCX/CloudConvert falham
     let pdfBytes: Uint8Array;
 
     if (arquivoUrl && !isDocx) {

@@ -25,10 +25,10 @@ async function getStats(): Promise<Stats> {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
   const [usersSnap, planosSnap, logsSnap, configSnap] = await Promise.all([
-    db.collection("users").get(),
-    db.collection("planos").get(),
-    db.collection("usage_logs").where("timestamp", ">=", startOfMonth).get(),
-    db.collection("admin_config").doc("singleton").get(),
+    db.collection("magis_users").get(),
+    db.collection("magis_planos").get(),
+    db.collection("magis_usage_logs").where("timestamp", ">=", startOfMonth).get(),
+    db.collection("magis_admin_config").doc("singleton").get(),
   ]);
 
   const config = (configSnap.data() ?? {

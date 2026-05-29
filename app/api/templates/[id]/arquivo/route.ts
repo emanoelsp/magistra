@@ -16,7 +16,7 @@ export async function GET(
     const wantFillable = searchParams.get("fillable") === "1";
 
     const db = getAdminDb();
-    const snap = await db.collection("templates").doc(id).get();
+    const snap = await db.collection("magis_templates").doc(id).get();
 
     if (!snap.exists) {
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });

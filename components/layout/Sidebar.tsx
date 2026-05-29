@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Clock, FileText, LayoutDashboard, Sparkles, User2, LogOut } from "lucide-react";
+import { Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2, LogOut } from "lucide-react";
 
 const links = [
   { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
   { href: "/dashboard/templates", label: "Meus templates", icon: FileText },
   { href: "/dashboard/gerar", label: "Gerar plano", icon: Sparkles },
   { href: "/dashboard/historico", label: "Histórico", icon: Clock },
+  { href: "/dashboard/suporte", label: "Suporte", icon: LifeBuoy },
   { href: "/dashboard/perfil", label: "Perfil & assinatura", icon: User2 },
 ] as const;
 
@@ -29,7 +30,9 @@ export function Sidebar() {
       <nav className="flex-1 space-y-1 text-sm">
         {links.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          const active = item.href === "/dashboard"
+            ? pathname === "/dashboard"
+            : pathname.startsWith(item.href);
 
           return (
             <Link

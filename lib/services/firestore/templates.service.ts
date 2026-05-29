@@ -20,7 +20,7 @@ import type {
   UpdateTemplateInput,
 } from "../../types/firestore";
 
-const templatesCollection = collection(firebaseDb, "templates");
+const templatesCollection = collection(firebaseDb, "magis_templates");
 
 function isTemplateFieldSchemaArray(value: unknown): value is TemplateFieldSchema[] {
   return Array.isArray(value);

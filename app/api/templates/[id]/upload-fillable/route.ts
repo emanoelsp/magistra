@@ -13,7 +13,7 @@ export async function POST(
     const { id } = await params;
 
     const db = getAdminDb();
-    const snap = await db.collection("templates").doc(id).get();
+    const snap = await db.collection("magis_templates").doc(id).get();
     if (!snap.exists) {
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
     }
@@ -34,7 +34,7 @@ export async function POST(
     const fillablePath = `templates/${id}/fillable.${ext}`;
 
     const fillableUrl = await uploadFile({ path: fillablePath, buffer, contentType });
-    await db.collection("templates").doc(id).update({ arquivo_fillable_url: fillableUrl });
+    await db.collection("magis_templates").doc(id).update({ arquivo_fillable_url: fillableUrl });
 
     return NextResponse.json({ ok: true, arquivo_fillable_url: fillableUrl });
   } catch (error) {

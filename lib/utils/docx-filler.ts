@@ -109,6 +109,22 @@ function matchField(
 // ── Cell content writer ──────────────────────────────────────────────────────
 
 /**
+ * Replaces ALL <w:t> text in a cell with `content`.
+ * Sets the first <w:t> to the new content and empties every subsequent one.
+ * Used for inline "Label: value" cells where we must erase the original value.
+ */
+function clearAndSetCellText(cellXml: string, content: string): string {
+  let first = true;
+  return cellXml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, (match) => {
+    if (first) {
+      first = false;
+      return `<w:t xml:space="preserve">${content}</w:t>`;
+    }
+    return "<w:t/>";
+  });
+}
+
+/**
  * Replaces only the text content inside the first <w:t> element with `content`,
  * preserving all paragraph (pPr), run (rPr), and cell (tcPr) formatting intact.
  * If no <w:t> exists, creates a minimal run inside the first paragraph.
@@ -174,6 +190,52 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   const rows = parseRows(xml);
   const used = new Set<string>();
 
+  // ── Pass 1: Inline "Label: value" cells ─────────────────────────────────────
+  // Handles filled templates where label and value share a single cell:
+  //   "Professor(a): Luiz Carlos Covre"  →  "Professor(a): {{professor}}"
+  // Only applies when there is actual content after the colon (skips section
+  // headers like "TEMÁTICA ABORDADA:" where nothing follows the colon in the cell).
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    let rowXml = row.xml;
+    let rowModified = false;
+
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      const cellText = row.cellTexts[ci];
+      const colonIdx = cellText.indexOf(":");
+      if (colonIdx <= 1) continue;
+
+      const potentialLabel = cellText.slice(0, colonIdx).trim();
+      if (potentialLabel.length < 2) continue;
+
+      const valueAfterColon = cellText.slice(colonIdx + 1).trim();
+      // Skip if nothing follows the colon (standalone header like "TEMÁTICA ABORDADA:")
+      // or if the value is suspiciously long (multi-paragraph content block)
+      if (!valueAfterColon || valueAfterColon.length > 300) continue;
+
+      const field = matchField(potentialLabel, schema, used);
+      if (!field) continue;
+
+      // Preserve the label prefix and inject placeholder as value
+      const labelPrefix = cellText.slice(0, colonIdx + 1); // "Professor(a):"
+      const newContent = `${labelPrefix} {{${field.key}}}`;
+      const origCell = row.cells[ci];
+      const newCell = clearAndSetCellText(origCell, newContent);
+      rowXml = replaceFirst(rowXml, origCell, newCell);
+      row.cells[ci] = newCell;
+      row.cellTexts[ci] = newContent;
+      used.add(field.key);
+      rowModified = true;
+    }
+
+    if (rowModified) {
+      xml = replaceFirst(xml, row.xml, rowXml);
+      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts };
+    }
+  }
+
+  // ── Pass 2: Structural table patterns ───────────────────────────────────────
+
   for (let ri = 0; ri < rows.length; ri++) {
     const row = rows[ri];
     if (row.cells.length === 0) continue;
@@ -234,6 +296,36 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     if (rowModified) {
       xml = replaceFirst(xml, row.xml, rowXml);
       rows[ri] = { xml: rowXml, cells, cellTexts };
+    }
+
+    // ── Fallback: all-label row → inject into next row's cells ─────────────
+    // Handles the pattern: [Label A | Label B] followed by [value A | value B]
+    // (e.g. "Experiências de ensino" | "Recursos necessários" header row).
+    if (!rowModified && ri + 1 < rows.length) {
+      const nextRow = rows[ri + 1];
+      let nextRowXml = nextRow.xml;
+      const nextCells = [...nextRow.cells];
+      const nextCellTexts = [...nextRow.cellTexts];
+      let nextModified = false;
+
+      for (let ci = 0; ci < cells.length && ci < nextCells.length; ci++) {
+        const field = matchField(cellTexts[ci], schema, used);
+        if (!field) continue;
+        // Only inject when the target cell is genuinely empty (value slot)
+        if (nextCellTexts[ci].trim().length > 10) continue;
+        const origCell = nextCells[ci];
+        const newCell = setCellContent(origCell, `{{${field.key}}}`);
+        nextRowXml = replaceFirst(nextRowXml, origCell, newCell);
+        nextCells[ci] = newCell;
+        nextCellTexts[ci] = `{{${field.key}}}`;
+        used.add(field.key);
+        nextModified = true;
+      }
+
+      if (nextModified) {
+        xml = replaceFirst(xml, nextRow.xml, nextRowXml);
+        rows[ri + 1] = { xml: nextRowXml, cells: nextCells, cellTexts: nextCellTexts };
+      }
     }
   }
 

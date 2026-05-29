@@ -22,7 +22,7 @@ export default async function NovoPlanoPage({ searchParams }: PageProps) {
 
   const [limitsStatus, templateSnap] = await Promise.all([
     getLimitsStatus(user.uid, user.plano),
-    getAdminDb().collection("templates").doc(templateId).get(),
+    getAdminDb().collection("magis_templates").doc(templateId).get(),
   ]);
 
   if (!templateSnap.exists) {

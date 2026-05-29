@@ -15,128 +15,201 @@ export function TemplatePreviewClient({
   schema,
   isDocx,
 }: TemplatePreviewClientProps) {
+  if (!isDocx) return <SchemaTable schema={schema} />;
+  return <DocxPreview templateId={templateId} schema={schema} />;
+}
+
+// ─── DocxPreview ──────────────────────────────────────────────────────────────
+
+function DocxPreview({ templateId, schema }: { templateId: string; schema: TemplateFieldSchema[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [loading, setLoading] = useState(isDocx);
-  const [html, setHtml] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // "loading" → fetching; "rendering" → renderAsync running; "done" | "error"
+  const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
+  const bufferRef = useRef<ArrayBuffer | null>(null);
 
+  // Phase 1: fetch the DOCX file
   useEffect(() => {
-    if (!isDocx) return;
-    setLoading(true);
-    fetch(`/api/templates/${templateId}/editor-html`)
-      .then((r) => r.json())
-      .then((data: { html?: string | null; reason?: string }) => {
-        if (data.html) {
-          setHtml(data.html);
-        } else {
-          setError(
-            data.reason === "not_docx"
-              ? "Visualização de documento não disponível para este formato."
-              : "Não foi possível carregar o documento.",
-          );
-        }
+    let cancelled = false;
+    fetch(`/api/templates/${templateId}/arquivo`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.arrayBuffer();
       })
-      .catch(() => setError("Erro ao carregar o documento."))
-      .finally(() => setLoading(false));
-  }, [templateId, isDocx]);
+      .then((buf) => {
+        if (cancelled) return;
+        bufferRef.current = buf;
+        setPhase("rendering"); // triggers phase 2
+      })
+      .catch(() => { if (!cancelled) setPhase("error"); });
+    return () => { cancelled = true; };
+  }, [templateId]);
 
-  // Paint HTML with read-only annotated cells
+  // Phase 2: render — runs after "rendering" state + container is mounted
   useEffect(() => {
+    if (phase !== "rendering" || !bufferRef.current) return;
     const container = containerRef.current;
-    if (!container || !html) return;
-    container.innerHTML = html;
+    if (!container) return;
 
-    container.querySelectorAll<HTMLElement>("[data-field-key]").forEach((cell) => {
-      const role = cell.dataset.fieldRole ?? "";
-      const label = cell.dataset.fieldLabel ?? cell.dataset.fieldKey ?? "";
+    let cancelled = false;
+    import("docx-preview")
+      .then(({ renderAsync }) => {
+        if (cancelled || !bufferRef.current) return;
+        container.innerHTML = "";
+        return renderAsync(bufferRef.current, container, undefined, {
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: true,
+          ignoreFonts: false,
+          breakPages: true,
+          useBase64URL: true,
+          renderEndnotes: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderHeaders: true,
+        });
+      })
+      .then(() => { if (!cancelled) setPhase("done"); })
+      .catch(() => { if (!cancelled) setPhase("error"); });
 
-      cell.contentEditable = "false";
-      cell.style.cursor = "default";
-      cell.style.position = "relative";
+    return () => { cancelled = true; };
+  }, [phase]);
 
-      // Color by role
-      if (role === "ia_sugerida") {
-        cell.style.background = "#faf5ff";
-        cell.style.borderLeft = "3px solid #8b5cf6";
-      } else {
-        // manual / fixed
-        cell.style.background = "#fffbeb";
-        cell.style.borderLeft = "3px solid #f59e0b";
-      }
+  // Phase 3: inject {{key}} chips into the value cell next to each matched label
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
 
-      // Show placeholder text (field label) when cell is empty
-      if (!cell.textContent?.trim()) {
-        cell.style.color = "#94a3b8";
-        if (role === "ia_sugerida") {
-          cell.textContent = `IA sugere: ${label}`;
-        } else {
-          cell.textContent = label;
+    container.querySelectorAll("[data-field-chip]").forEach((el) => el.remove());
+
+    const allTds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
+    const allPs  = Array.from(container.querySelectorAll("p"))  as HTMLElement[];
+    const candidates = [...allTds, ...allPs];
+
+    function makeChip(key: string, isIa: boolean) {
+      const chip = document.createElement("span");
+      chip.setAttribute("data-field-chip", key);
+      chip.style.cssText = [
+        "display:inline-block",
+        "padding:2px 8px",
+        "border-radius:6px",
+        "font-family:monospace",
+        "font-size:10px",
+        "font-weight:700",
+        "white-space:nowrap",
+        "line-height:1.7",
+        isIa
+          ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
+          : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
+      ].join(";");
+      chip.textContent = `{{${key}}}`;
+      return chip;
+    }
+
+    for (const field of schema) {
+      const terms = [field.label, field.defaultValue].filter(
+        (t): t is string => typeof t === "string" && t.trim().length > 2,
+      );
+      if (!terms.length) continue;
+
+      // 1. Find the label cell with best match score
+      let labelEl: HTMLElement | null = null;
+      let bestScore = 0;
+      for (const el of candidates) {
+        if (el.querySelector("[data-field-chip]")) continue;
+        const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        for (const term of terms) {
+          if (text.toLowerCase().includes(term.toLowerCase())) {
+            const score = term.length / Math.max(text.length, 1);
+            if (score > bestScore) { bestScore = score; labelEl = el; }
+          }
         }
       }
-    });
-  }, [html]);
+      if (!labelEl || bestScore < 0.25) continue;
 
-  if (!isDocx) {
-    return (
-      <SchemaTable schema={schema} />
-    );
-  }
+      const isIa = field.role === "ia_sugerida";
 
-  if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center gap-3 rounded-3xl border border-slate-200 bg-white text-slate-500">
-        <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
-        <span className="text-sm">Carregando documento…</span>
-      </div>
-    );
-  }
+      // 2. Find the best target cell to place the chip
+      let targetEl: HTMLElement | null = null;
 
-  if (error) {
-    return (
-      <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center">
-        <p className="text-sm text-slate-500">{error}</p>
-        <SchemaTable schema={schema} />
-      </div>
-    );
-  }
+      if (labelEl.tagName === "TD") {
+        const tr = labelEl.closest("tr");
+        if (tr) {
+          // Try the next empty sibling td in the same row
+          const tds = Array.from(tr.querySelectorAll("td")) as HTMLElement[];
+          const idx = tds.indexOf(labelEl);
+          for (let i = idx + 1; i < tds.length; i++) {
+            if (!(tds[i].textContent ?? "").trim()) {
+              targetEl = tds[i];
+              break;
+            }
+          }
+          // If no empty sibling, try the first empty td of the next row
+          if (!targetEl) {
+            const nextTr = tr.nextElementSibling as HTMLElement | null;
+            if (nextTr) {
+              const nextTds = Array.from(nextTr.querySelectorAll("td")) as HTMLElement[];
+              for (const td of nextTds) {
+                if (!(td.textContent ?? "").trim() && !td.querySelector("[data-field-chip]")) {
+                  targetEl = td;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // 3. Fallback: append inline to the label element
+      if (targetEl) {
+        targetEl.appendChild(makeChip(field.key, isIa));
+      } else {
+        labelEl.appendChild(makeChip(field.key, isIa));
+      }
+    }
+  }, [phase, schema]);
+
+  const busy = phase === "loading" || phase === "rendering";
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-100">
-      <style>{`
-        .tpl-preview-page {
-          background:#fff;
-          box-shadow:0 1px 4px rgba(0,0,0,.08),0 6px 28px rgba(0,0,0,.07);
-          border-radius:2px;
-          padding:40px 48px 56px;
-          max-width:820px;
-          margin:0 auto;
-          font-family:"Calibri","Liberation Sans",Arial,sans-serif;
-          font-size:12px;
-          color:#111;
-          line-height:1.5;
-        }
-        .tpl-preview-view table{width:100%;border-collapse:collapse;margin:4px 0;}
-        .tpl-preview-view td,.tpl-preview-view th{
-          border:1px solid #555;padding:4px 8px;
-          vertical-align:top;font-size:12px;min-width:24px;
-        }
-        .tpl-preview-view th{font-weight:700;background:#f0f0f0;}
-        .tpl-preview-view p{margin:2px 0;line-height:1.5;}
-        .tpl-preview-view h1{font-size:15px;font-weight:700;text-align:center;margin:10px 0 6px;}
-        .tpl-preview-view h2{font-size:13px;font-weight:700;text-align:center;margin:8px 0 4px;}
-        .tpl-preview-view h3{font-size:12px;font-weight:700;margin:6px 0 3px;}
-        .tpl-preview-view strong{font-weight:700;}
-        .tpl-preview-view em{font-style:italic;}
-        .tpl-preview-view u{text-decoration:underline;}
-        .tpl-preview-view img{max-width:100%;height:auto;display:block;margin:0 auto 8px;}
-        .tpl-preview-view ul,.tpl-preview-view ol{padding-left:18px;margin:2px 0;}
-        .tpl-preview-view li{margin:1px 0;}
-      `}</style>
-      <div className="overflow-y-auto p-8">
-        <div className="tpl-preview-page">
-          <div ref={containerRef} className="tpl-preview-view" />
-        </div>
+    <div className="overflow-hidden rounded-3xl border border-slate-200">
+      <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+        <p className="text-[11px] text-slate-500">
+          Pré-visualização aproximada — o arquivo gerado preserva 100% do layout original.
+        </p>
       </div>
+      <style>{`
+        .docx-wrapper { background: #f1f5f9 !important; padding: 24px 16px !important; min-height: 300px; }
+        .docx-wrapper section.docx {
+          box-shadow: 0 2px 8px rgba(0,0,0,.10), 0 8px 32px rgba(0,0,0,.07) !important;
+          border-radius: 3px !important;
+          margin-bottom: 16px !important;
+        }
+      `}</style>
+
+      {/* Container always mounted so ref is available for renderAsync */}
+      <div className={`overflow-y-auto max-h-[70vh] ${busy || phase === "error" ? "hidden" : ""}`}>
+        <div ref={containerRef} />
+      </div>
+
+      {busy && (
+        <div className="flex h-64 items-center justify-center gap-3 text-slate-500">
+          <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
+          <span className="text-sm">
+            {phase === "loading" ? "Carregando documento…" : "Renderizando…"}
+          </span>
+        </div>
+      )}
+
+      {phase === "error" && (
+        <div className="p-8 text-center">
+          <p className="text-sm text-slate-500">Não foi possível carregar o documento.</p>
+          <div className="mt-6">
+            <SchemaTable schema={schema} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

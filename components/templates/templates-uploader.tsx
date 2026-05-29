@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, ChevronDown, CloudUpload, FileText } from "lucide-react";
+import { AlertTriangle, ChevronDown, CloudUpload, FileText, Sparkles, X } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 
@@ -12,17 +12,48 @@ interface TemplatesUploaderProps {
 
 export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [escolaNome, setEscolaNome] = useState("");
   const [tipoPlano, setTipoPlano] = useState("");
-  const [selectedFileType, setSelectedFileType] = useState<"docx" | "pdf" | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
-  async function handleFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
+  const fileType = pendingFile
+    ? (pendingFile.name.split(".").pop()?.toLowerCase() === "pdf" ? "pdf" : "docx")
+    : null;
+
+  function selectFile(file: File) {
+    setPendingFile(file);
+    setError(null);
+  }
+
+  function clearFile() {
+    setPendingFile(null);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) selectFile(file);
+    e.target.value = ""; // reset so same file can be re-selected
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) selectFile(file);
+  }
+
+  async function handleUpload() {
+    if (!pendingFile) return;
 
     if (!escolaNome.trim() || !tipoPlano.trim()) {
-      setError("Informe o nome da escola e o tipo de plano antes de enviar o arquivo.");
+      setError("Preencha o nome da escola e o tipo de plano antes de enviar.");
       return;
     }
 
@@ -30,7 +61,7 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
     setIsUploading(true);
 
     try {
-      const file = files[0];
+      const file = pendingFile;
 
       const templateId = await templatesService.createTemplate({
         user_id: userId,
@@ -53,136 +84,83 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
         fetch("/api/templates/upload-arquivo", { method: "POST", body: uploadFormData }),
       ]);
 
-      const introspectData = (await introspectRes.json().catch(() => null)) as { error?: string; schema?: unknown } | null;
+      const introspectData = (await introspectRes.json().catch(() => null)) as {
+        error?: string;
+        schema?: unknown;
+      } | null;
+
       if (!introspectRes.ok) {
         throw new Error(introspectData?.error ?? "Falha ao extrair campos do arquivo.");
       }
 
       router.push(`/dashboard/templates/${templateId}/confirmar`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Não foi possível criar o template.";
-      setError(message);
+      setError(err instanceof Error ? err.message : "Não foi possível criar o template.");
     } finally {
       setIsUploading(false);
     }
   }
 
-  function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) {
-      const ext = file.name.split(".").pop()?.toLowerCase();
-      setSelectedFileType(ext === "docx" || ext === "doc" ? "docx" : "pdf");
-    }
-    void handleFiles(event.target.files);
-  }
-
-  function onDrop(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const file = event.dataTransfer.files?.[0];
-    if (file) {
-      const ext = file.name.split(".").pop()?.toLowerCase();
-      setSelectedFileType(ext === "docx" || ext === "doc" ? "docx" : "pdf");
-    }
-    void handleFiles(event.dataTransfer.files);
-  }
-
-  function onDragOver(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-  }
+  const canUpload = !!pendingFile && !!escolaNome.trim() && !!tipoPlano.trim();
 
   return (
-    <div
-      onDrop={onDrop}
-      onDragOver={onDragOver}
-      className="relative flex h-full cursor-pointer flex-col gap-4 overflow-hidden rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8"
-    >
+    <div className="relative rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6">
+
+      {/* Loading overlay */}
       {isUploading && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 rounded-3xl bg-white/95 backdrop-blur-sm">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-3xl bg-white/95 backdrop-blur-sm">
           <div className="relative flex items-center justify-center">
-            <div className="h-14 w-14 animate-spin rounded-full border-4 border-slate-100 border-t-violet-600" />
-            <div className="absolute flex h-8 w-8 items-center justify-center rounded-full bg-violet-100">
-              <FileText className="h-4 w-4 text-violet-600" />
-            </div>
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-slate-100 border-t-violet-600" />
+            <Sparkles className="absolute h-4 w-4 text-violet-600" />
           </div>
           <div className="text-center">
-            <p className="text-base font-semibold text-slate-900">Processando template…</p>
-            <p className="mt-1 text-sm text-slate-500">A IA está extraindo os campos do arquivo.</p>
-            <p className="mt-0.5 text-xs text-slate-400">Isso pode levar alguns segundos.</p>
+            <p className="text-sm font-semibold text-slate-900">Magis está lendo seu template…</p>
+            <p className="mt-0.5 text-xs text-slate-500">A Magis está mapeando os campos do seu documento.</p>
           </div>
         </div>
       )}
-      {/* Fidelity notice — always visible */}
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-        <div className="flex items-start gap-3">
-          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+
+      <div className="space-y-5">
+
+        {/* DOCX tip */}
+        <div className="flex items-center gap-2.5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
+            <FileText className="h-3.5 w-3.5" />
+          </span>
+          <p className="text-sm font-semibold text-emerald-800">
+            Use <strong>.docx</strong> para 100% de fidelidade —
+            <span className="ml-1 font-normal text-emerald-700">
+              logo, tabelas, cores e fontes preservados exatamente.
+            </span>
+          </p>
+        </div>
+
+        {/* Campos: escola + tipo */}
+        <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <p className="text-sm font-semibold text-emerald-800">
-              Use Word (.docx) para fidelidade 100% ao template original
-            </p>
-            <p className="mt-1 text-xs leading-5 text-emerald-700">
-              Com DOCX, o download preserva <strong>exatamente</strong> o layout da escola — cabeçalho com logo,
-              tabelas, colunas, rodapé, fontes e cores. O sistema detecta os campos automaticamente e
-              preenche sem alterar nada do visual.
-            </p>
-            <p className="mt-2 text-xs text-emerald-600">
-              Não tem o .docx? Abra o PDF no Word e salve como <em>.docx</em>, ou peça ao secretário da escola.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* PDF warning — shown only when PDF is selected */}
-      {selectedFileType === "pdf" && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-            <div>
-              <p className="text-sm font-semibold text-amber-800">
-                PDF selecionado — fidelidade do download pode ser aproximada
-              </p>
-              <p className="mt-1 text-xs leading-5 text-amber-700">
-                PDFs não são editáveis por natureza. O sistema fará o melhor possível para preservar o
-                layout, mas imagens, cores e a posição exata de alguns campos podem não ser reproduzidas
-                fielmente. Para resultado perfeito, converta para .docx antes de subir.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedFileType === "docx" && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-            <p className="text-sm font-medium text-emerald-800">
-              Ótimo! Arquivo Word — download fiel garantido.
-            </p>
-          </div>
-        </div>
-      )}
-
-      <div className="flex w-full flex-col gap-4">
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="block text-sm">
-            <span className="font-medium text-slate-700">Nome da escola</span>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Nome da escola
+            </label>
             <input
               type="text"
               value={escolaNome}
-              onChange={(event) => setEscolaNome(event.target.value)}
-              className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-slate-950"
-              placeholder="Ex.: Escola Municipal João XXIII"
+              onChange={(e) => { setEscolaNome(e.target.value); setError(null); }}
+              placeholder="Ex.: E. M. João XXIII"
+              className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
             />
-          </label>
+          </div>
 
-          <label className="block text-sm">
-            <span className="font-medium text-slate-700">Tipo de plano</span>
-            <div className="relative mt-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Tipo de plano
+            </label>
+            <div className="relative">
               <select
                 value={tipoPlano}
-                onChange={(event) => setTipoPlano(event.target.value)}
-                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-3 py-2 pr-9 text-sm text-slate-950 outline-none transition focus:border-slate-950"
+                onChange={(e) => { setTipoPlano(e.target.value); setError(null); }}
+                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none transition focus:border-slate-950"
               >
-                <option value="">Selecione um tipo</option>
+                <option value="">Selecione</option>
                 <option value="plano_anual">Plano anual</option>
                 <option value="plano_semestral">Plano semestral</option>
                 <option value="plano_quinzenal">Plano quinzenal</option>
@@ -190,54 +168,97 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
                 <option value="sequencia_didatica">Sequência didática</option>
                 <option value="situacao_de_aprendizagem">Situação de aprendizagem</option>
                 <option value="projeto_de_extensao">Projeto de extensão</option>
-                <option value="caso_de_uso">Caso de uso</option>
               </select>
               <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             </div>
-          </label>
+          </div>
         </div>
 
-        <label className="flex w-full cursor-pointer items-start gap-4">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white">
-            <CloudUpload className="h-5 w-5" />
-          </span>
-          <div className="flex-1">
-            <h2 className="text-lg font-semibold text-slate-950">
-              Upload do template da escola
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">
-              Suba o arquivo Word (.docx) ou PDF do template.
-              Arraste aqui ou clique para selecionar.
-            </p>
-            <div className="mt-2 flex items-center gap-3">
-              <span className="flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                <FileText className="h-3.5 w-3.5" />
-                .docx — fidelidade perfeita
-              </span>
-              <span className="text-xs text-slate-400">
-                .pdf — fidelidade aproximada
-              </span>
+        {/* Drop zone — hidden when file is already selected */}
+        {!pendingFile ? (
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed py-8 transition ${
+              dragOver
+                ? "border-violet-400 bg-violet-50"
+                : "border-slate-300 bg-white hover:border-slate-400"
+            }`}
+          >
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white">
+              <CloudUpload className="h-5 w-5" />
+            </span>
+            <div className="text-center">
+              <p className="text-sm font-semibold text-slate-800">
+                Arraste o arquivo ou clique para selecionar
+              </p>
+              <div className="mt-1.5 flex items-center justify-center gap-3">
+                <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                  .docx — recomendado
+                </span>
+                <span className="text-xs text-slate-400">.pdf — aceito</span>
+              </div>
             </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".docx,.doc,.pdf"
+              className="hidden"
+              onChange={onFileChange}
+            />
           </div>
-          <input
-            type="file"
-            accept=".docx,.doc,.pdf"
-            className="hidden"
-            onChange={onFileChange}
-            disabled={isUploading}
-          />
-        </label>
+        ) : (
+          /* Selected file card + send button */
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                <FileText className="h-4 w-4" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-sm font-medium text-slate-900">{pendingFile.name}</p>
+                <p className="text-xs text-slate-400">
+                  {(pendingFile.size / 1024).toFixed(0)} KB · {fileType?.toUpperCase()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={clearFile}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                title="Remover arquivo"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void handleUpload()}
+              disabled={!canUpload || isUploading}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 py-3 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Sparkles className="h-4 w-4" />
+              Analisar template com a Magis
+            </button>
+          </div>
+        )}
+
+        {/* PDF warning */}
+        {fileType === "pdf" && (
+          <div className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p className="text-xs leading-5 text-amber-700">
+              <strong>PDF selecionado.</strong> O layout pode ter pequenas diferenças. Para resultado
+              perfeito, abra no Word e salve como <em>.docx</em>.
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <p className="rounded-xl bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700">{error}</p>
+        )}
       </div>
-
-      {!isUploading && (
-        <p className="text-xs text-slate-500">
-          Formatos aceitos: <strong>.docx</strong> (recomendado) e .pdf
-        </p>
-      )}
-
-      {error ? (
-        <p className="text-xs text-rose-600">{error}</p>
-      ) : null}
     </div>
   );
 }

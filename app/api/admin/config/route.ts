@@ -16,7 +16,7 @@ export async function GET() {
     if (!isAdmin(session?.email)) return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
 
     const db = getAdminDb();
-    const snap = await db.collection("admin_config").doc("singleton").get();
+    const snap = await db.collection("magis_admin_config").doc("singleton").get();
     const config = snap.data() ?? {
       vercel_monthly_usd: 0,
       firebase_monthly_usd: 0,
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, number>;
     const db = getAdminDb();
 
-    await db.collection("admin_config").doc("singleton").set(
+    await db.collection("magis_admin_config").doc("singleton").set(
       { ...body, updated_at: new Date().toISOString() },
       { merge: true },
     );

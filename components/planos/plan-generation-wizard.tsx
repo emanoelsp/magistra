@@ -7,6 +7,7 @@ import {
   ArrowRight,
   BookCheck,
   Check,
+  CheckCircle2,
   Download,
   FileText,
   LoaderCircle,
@@ -19,11 +20,21 @@ import { planosService } from "../../lib/services/firestore/planos.service";
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateFieldSchema, TemplateOption, TemplateRecord } from "../../lib/types/firestore";
 
+interface RecentPlano {
+  id: string;
+  template_nome: string;
+  escola_nome: string | null;
+  status: string;
+  data_geracao: string;
+  conteudo_gerado: Record<string, unknown>;
+}
+
 interface PlanGenerationWizardProps {
   userId: string;
   userName: string;
   availableTemplates: TemplateOption[];
   preSelectedTemplateId?: string;
+  recentPlanos?: RecentPlano[];
 }
 
 function formatDate(value: string) {
@@ -53,17 +64,27 @@ function temMetadados(template: TemplateOption): boolean {
 }
 
 const STEPS = [
-  { id: 1, title: "Escolher template",   description: "Selecione o modelo base do plano." },
-  { id: 2, title: "Metadados",            description: "Confirme os dados fixos do template." },
-  { id: 3, title: "Preencher e sugerir", description: "Edite campos e receba sugestões da IA." },
-  { id: 4, title: "Revisar e salvar",    description: "Pré-visualize e salve o plano." },
+  { id: 1, title: "Escolher template",      description: "Selecione o modelo base do plano." },
+  { id: 2, title: "Metadados",              description: "Confirme os dados fixos do template." },
+  { id: 3, title: "Preencher com a Magis", description: "Preencha campos e receba sugestões da Magis." },
+  { id: 4, title: "Revisar e salvar",       description: "Pré-visualize e salve o plano." },
 ] as const;
+
+const STATUS_MAP: Record<string, { label: string; cls: string }> = {
+  gerado:               { label: "Gerado",            cls: "bg-emerald-100 text-emerald-800" },
+  rascunho:             { label: "Rascunho",           cls: "bg-slate-100 text-slate-700" },
+  processando:          { label: "Processando",        cls: "bg-amber-100 text-amber-800" },
+  aguardando_geracao:   { label: "Aguardando geração", cls: "bg-blue-100 text-blue-700" },
+  aguardando_aprovacao: { label: "Aguardando revisão", cls: "bg-violet-100 text-violet-700" },
+  erro:                 { label: "Erro",               cls: "bg-rose-100 text-rose-800" },
+};
 
 export function PlanGenerationWizard({
   userId,
   userName,
   availableTemplates,
   preSelectedTemplateId,
+  recentPlanos = [],
 }: PlanGenerationWizardProps) {
   const router = useRouter();
 
@@ -80,6 +101,7 @@ export function PlanGenerationWizard({
   const [savedPlanoId, setSavedPlanoId] = useState<string | null>(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [isFinalized, setIsFinalized] = useState(false);
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingMeta, startSavingMeta] = useTransition();
   const [isPending, startTransition] = useTransition();
@@ -108,6 +130,10 @@ export function PlanGenerationWizard({
   );
   const has2prof = schema.some(is2profField);
 
+  const allPreFilled =
+    manualFields.length > 0 &&
+    manualFields.every((f) => !!(metadataValues[f.key] ?? "").trim());
+
   // Quando template muda, pré-popula metadados com o que está salvo
   useEffect(() => {
     if (!selectedTemplate) return;
@@ -115,7 +141,7 @@ export function PlanGenerationWizard({
     const initial: Record<string, string> = {};
 
     for (const f of manualFields) {
-      initial[f.key] = saved[f.key] ?? "";
+      initial[f.key] = saved[f.key] ?? f.defaultValue ?? "";
     }
     // Escola já extraída do template → preenche campo de escola se existir
     if (selectedTemplate.escolaNome) {
@@ -186,7 +212,7 @@ export function PlanGenerationWizard({
       .finally(() => setIsAutoSaving(false));
   }
 
-  function handleFinalize(download: boolean) {
+  function handleFinalize() {
     if (!savedPlanoId || !selectedTemplate) return;
     setSaveError(null);
     const conteudo: Record<string, unknown> = {
@@ -199,18 +225,14 @@ export function PlanGenerationWizard({
       void planosService
         .updatePlano(savedPlanoId, { conteudo_gerado: conteudo, status: "gerado" })
         .then(() => {
+          setShowSaveSuccess(true);
+          setTimeout(() => setShowSaveSuccess(false), 3000);
           setIsFinalized(true);
-          if (download) window.open(`/api/planos/${savedPlanoId}/download`, "_blank");
         })
         .catch((err) => {
           setSaveError(err instanceof Error ? err.message : "Falha ao salvar.");
         });
     });
-  }
-
-  function handleGoToHistory() {
-    router.push("/dashboard/historico");
-    router.refresh();
   }
 
   // ── Initial values para o editor ───────────────────────────────────────────
@@ -228,8 +250,8 @@ export function PlanGenerationWizard({
       {/* ── Barra de progresso ─────────────────────────────────────────────── */}
       <div className="flex gap-2">
         {STEPS.map((step, index) => {
-          const isCompleted = index < currentStep;
-          const isCurrent = index === currentStep;
+          const isCompleted = index < currentStep || (index === 3 && isFinalized);
+          const isCurrent = index === currentStep && !(index === 3 && isFinalized);
           return (
             <div
               key={step.id}
@@ -345,9 +367,11 @@ export function PlanGenerationWizard({
               <div>
                 <h3 className="text-xl font-bold text-slate-950">Dados do template</h3>
                 <p className="text-sm text-slate-500">
-                  {temMetadados(selectedTemplate)
-                    ? "Metadados salvos detectados — confirme ou edite antes de continuar."
-                    : "Preencha os dados fixos do template. Serão reutilizados nos próximos planos."}
+                  {allPreFilled
+                    ? "Campos pré-preenchidos com os dados salvos — confirme ou edite e avance."
+                    : temMetadados(selectedTemplate)
+                      ? "Dados salvos detectados — confirme ou edite antes de continuar."
+                      : "Preencha os dados fixos do template. Serão reutilizados nos próximos planos."}
                 </p>
               </div>
             </div>
@@ -355,6 +379,16 @@ export function PlanGenerationWizard({
               {selectedTemplate.nome}
             </span>
           </div>
+
+          {/* Pre-fill banner */}
+          {allPreFilled && (
+            <div className="mb-5 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+              <p className="text-sm text-emerald-800">
+                <strong>Tudo pré-preenchido!</strong> Os campos foram carregados a partir dos dados salvos no template. Edite se quiser ou clique em <strong>Preencher com a Magis</strong> para continuar.
+              </p>
+            </div>
+          )}
 
           {/* Título do plano — usado como nome do arquivo gerado */}
           <div className="mb-5">
@@ -423,7 +457,7 @@ export function PlanGenerationWizard({
             <div className="mt-5 flex items-start gap-3 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3">
               <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" />
               <p className="text-sm text-violet-700">
-                <strong>2° Professor detectado</strong> — o assistente vai incluir sugestões
+                <strong>2° Professor detectado</strong> — a Magis vai incluir sugestões
                 específicas de educação inclusiva (NEE, AEE e adaptações curriculares) no próximo
                 passo.
               </p>
@@ -462,9 +496,9 @@ export function PlanGenerationWizard({
               {isSavingMeta ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
-                <ArrowRight className="h-4 w-4" />
+                <Sparkles className="h-4 w-4" />
               )}
-              {saveToTemplate ? "Salvar e continuar" : "Continuar"}
+              {saveToTemplate ? "Salvar e preencher com a Magis" : "Preencher com a Magis"}
             </button>
           </div>
         </div>
@@ -503,7 +537,7 @@ export function PlanGenerationWizard({
               Voltar
             </button>
             <p className="hidden text-xs text-slate-400 sm:block">
-              Preencha os campos e use o assistente de IA para sugestões.
+              Preencha os campos e conte com a Magis para sugestões pedagógicas.
             </p>
             <button
               type="button"
@@ -513,6 +547,50 @@ export function PlanGenerationWizard({
               Revisar plano
               <ArrowRight className="h-4 w-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de sucesso — salvo com a Magis ─────────────────────────── */}
+      {showSaveSuccess && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
+          <div
+            className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-white p-8 shadow-2xl"
+            style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
+          >
+            <style>{`
+              @keyframes magis-pop {
+                from { opacity: 0; transform: scale(0.7) translateY(24px); }
+                to   { opacity: 1; transform: scale(1) translateY(0); }
+              }
+              @keyframes magis-progress-plan {
+                from { width: 100%; }
+                to   { width: 0%; }
+              }
+            `}</style>
+            <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
+              <Sparkles className="h-7 w-7 text-white" />
+              <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
+                style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}>
+                <CheckCircle2 className="h-3.5 w-3.5 text-white" />
+              </span>
+            </div>
+            <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
+              <div className="mb-1.5 flex items-center justify-center gap-1.5">
+                <Sparkles className="h-3 w-3 text-violet-500" />
+                <span className="text-xs font-bold text-violet-700">Magis</span>
+              </div>
+              <p className="text-sm font-medium leading-relaxed text-slate-800">
+                Plano salvo com sucesso! 🎉
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Agora você pode baixar em DOCX ou PDF.
+              </p>
+            </div>
+            <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-violet-500"
+                style={{ animation: "magis-progress-plan 3s linear forwards" }} />
+            </div>
           </div>
         </div>
       )}
@@ -539,49 +617,33 @@ export function PlanGenerationWizard({
                   <button
                     type="button"
                     onClick={() => savedPlanoId && window.open(`/api/planos/${savedPlanoId}/download`, "_blank")}
+                    className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Baixar DOCX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => savedPlanoId && window.open(`/api/planos/${savedPlanoId}/download?format=pdf`, "_blank")}
                     className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
                   >
                     <Download className="h-3.5 w-3.5" />
                     Baixar PDF
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleGoToHistory}
-                    className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950"
-                  >
-                    Ver histórico
-                  </button>
                 </>
               ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={goBack}
-                    disabled={isPending || isAutoSaving}
-                    className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 disabled:opacity-50"
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5" />
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleFinalize(false)}
-                    disabled={isPending || isAutoSaving || !savedPlanoId}
-                    className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 disabled:opacity-50"
-                  >
-                    {isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    Salvar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleFinalize(true)}
-                    disabled={isPending || isAutoSaving || !savedPlanoId}
-                    className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
-                  >
-                    {isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                    Salvar e baixar PDF
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={handleFinalize}
+                  disabled={isPending || isAutoSaving || !savedPlanoId}
+                  className="flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {isPending || isAutoSaving
+                    ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    : <Save className="h-3.5 w-3.5" />
+                  }
+                  {isAutoSaving ? "Preparando…" : isPending ? "Salvando…" : "Confirmar revisão e salvar"}
+                </button>
               )}
             </div>
           </div>
@@ -609,6 +671,92 @@ export function PlanGenerationWizard({
             )}
           </div>
         </div>
+      )}
+
+      {/* ── Planos recentes — só no step 1 ──────────────────────────────────── */}
+      {currentStep === 0 && (
+        <>
+          <section className="rounded-3xl border border-slate-200 bg-white p-6">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <FileText className="h-4 w-4 text-slate-500" />
+                Planos recentes
+              </h2>
+              {recentPlanos.length > 0 && (
+                <p className="text-xs text-slate-500">
+                  {recentPlanos.length}{" "}
+                  {recentPlanos.length === 1 ? "plano recente" : "planos recentes"}
+                </p>
+              )}
+            </div>
+
+            {recentPlanos.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-600">
+                Nenhum plano gerado ainda. Use o assistente acima para criar seu primeiro plano.
+              </p>
+            ) : (
+              <ul className="mt-4 space-y-3">
+                {recentPlanos.map((plano) => {
+                  const status = STATUS_MAP[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
+                  const temConteudo = Object.keys(plano.conteudo_gerado ?? {}).length > 0;
+                  const dateLabel = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(plano.data_geracao));
+                  return (
+                    <li
+                      key={plano.id}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-slate-300"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 rounded-xl bg-white p-2 text-slate-500 shadow-sm">
+                            <FileText className="h-4 w-4" />
+                          </span>
+                          <div>
+                            <p className="font-semibold text-slate-900">{plano.template_nome}</p>
+                            <p className="mt-0.5 text-xs text-slate-600">
+                              {plano.escola_nome ?? "Escola não informada"}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">{dateLabel}</p>
+                            <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${status.cls}`}>
+                              {status.label}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {plano.status === "gerado" && temConteudo && (
+                            <a
+                              href={`/api/planos/${plano.id}/download`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Baixar
+                            </a>
+                          )}
+                          <a
+                            href={`/dashboard/historico/${plano.id}`}
+                            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+                          >
+                            Detalhes
+                          </a>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <div className="text-center">
+            <a
+              href="/dashboard/historico"
+              className="text-sm text-slate-500 underline-offset-2 hover:text-slate-950 hover:underline"
+            >
+              Ver histórico de planos gerados →
+            </a>
+          </div>
+        </>
       )}
     </div>
   );
