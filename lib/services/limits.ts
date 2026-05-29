@@ -8,11 +8,13 @@ export interface PlanLimits {
 }
 
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
-  free:    { maxTemplates: 1,   maxPlanosPerMonth: 1   },  // Explorador — R$0
-  starter: { maxTemplates: 1,   maxPlanosPerMonth: 2   },  // Educador   — R$9,90
-  medio:   { maxTemplates: 2,   maxPlanosPerMonth: 4   },  // Mestre     — R$19,90
-  pro:     { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // Regente    — R$49,90
-  escola:  { maxTemplates: 999, maxPlanosPerMonth: 999 },  // Escola     — sob consulta
+  free:     { maxTemplates: 1,   maxPlanosPerMonth: 1   },  // Explorador — R$0
+  starter:  { maxTemplates: 1,   maxPlanosPerMonth: 2   },  // Educador   — R$9,90
+  medio:    { maxTemplates: 2,   maxPlanosPerMonth: 4   },  // Mestre     — R$19,90
+  pro:      { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // Regente    — R$49,90
+  avancado: { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // alias → Regente
+  premium:  { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // alias → Regente
+  escola:   { maxTemplates: 999, maxPlanosPerMonth: 999 },  // Escola     — sob consulta
 };
 
 export interface LimitsStatus {

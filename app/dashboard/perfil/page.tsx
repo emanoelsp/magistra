@@ -3,18 +3,19 @@ import { ArrowLeft, BookCopy, CreditCard, FolderKanban, User2 } from "lucide-rea
 
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getDashboardStats } from "../../../lib/services/firestore/dashboard.server";
+import { getLimitsStatus } from "../../../lib/services/limits";
 import { PerfilForm } from "./perfil-form";
 
 export const dynamic = "force-dynamic";
 
-const PLAN_INFO: Record<string, { label: string; description: string; color: string }> = {
-  free:     { label: "Explorador", description: "1 template por mês · 1 plano por mês",    color: "bg-emerald-100 text-emerald-700" },
-  starter:  { label: "Educador",   description: "1 template ativo · 2 planos por mês",      color: "bg-blue-100 text-blue-700"     },
-  medio:    { label: "Mestre",     description: "2 templates ativos · 4 planos por mês",    color: "bg-violet-100 text-violet-700"  },
-  pro:      { label: "Regente",    description: "5 templates ativos · 10 planos por mês",   color: "bg-amber-100 text-amber-700"   },
-  escola:   { label: "Escola",     description: "Templates ilimitados · Planos ilimitados", color: "bg-slate-100 text-slate-700"   },
-  avancado: { label: "Regente",    description: "5 templates ativos · 10 planos por mês",   color: "bg-amber-100 text-amber-700"   },
-  premium:  { label: "Regente",    description: "5 templates ativos · 10 planos por mês",   color: "bg-amber-100 text-amber-700"   },
+const PLAN_INFO: Record<string, { label: string; color: string; gradient: string }> = {
+  free:     { label: "Explorador", color: "bg-emerald-100 text-emerald-700", gradient: "from-emerald-600 to-emerald-800" },
+  starter:  { label: "Educador",   color: "bg-blue-100 text-blue-700",       gradient: "from-blue-600 to-blue-800"       },
+  medio:    { label: "Mestre",     color: "bg-violet-100 text-violet-700",    gradient: "from-violet-600 to-violet-800"   },
+  pro:      { label: "Regente",    color: "bg-amber-100 text-amber-700",      gradient: "from-amber-500 to-amber-700"     },
+  avancado: { label: "Regente",    color: "bg-amber-100 text-amber-700",      gradient: "from-amber-500 to-amber-700"     },
+  premium:  { label: "Regente",    color: "bg-amber-100 text-amber-700",      gradient: "from-amber-500 to-amber-700"     },
+  escola:   { label: "Escola",     color: "bg-slate-100 text-slate-700",      gradient: "from-slate-700 to-slate-900"     },
 };
 
 function proximoMes(): string {
@@ -25,15 +26,21 @@ function proximoMes(): string {
 
 export default async function PerfilPage() {
   const user = await requireCurrentUserProfile();
-  const stats = await getDashboardStats(user);
+  const [stats, limits] = await Promise.all([
+    getDashboardStats(user),
+    getLimitsStatus(user.uid, user.plano),
+  ]);
   const renovaEm = proximoMes();
 
   const planoKey = user.plano?.toLowerCase() ?? "free";
   const plano = PLAN_INFO[planoKey] ?? {
     label: stats.planoAtual,
-    description: "Plano ativo",
     color: "bg-slate-100 text-slate-700",
+    gradient: "from-slate-700 to-slate-900",
   };
+
+  const maxTemplates = limits.limits.maxTemplates >= 999 ? "∞" : String(limits.limits.maxTemplates);
+  const maxPlanos    = limits.limits.maxPlanosPerMonth >= 999 ? "∞" : String(limits.limits.maxPlanosPerMonth);
 
   return (
     <div className="space-y-8">
@@ -73,54 +80,92 @@ export default async function PerfilPage() {
           {/* Card de métricas de uso */}
           <div className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
             <h2 className="text-lg font-semibold tracking-tight text-slate-950">Seu uso</h2>
-            <div className="mt-5 grid grid-cols-3 gap-4">
-              <div className="rounded-2xl bg-amber-50 p-5 text-center">
-                <span className="flex justify-center text-amber-500">
-                  <FolderKanban className="h-6 w-6" />
-                </span>
-                <p className="mt-3 text-3xl font-bold text-slate-950">{stats.totalTemplates}</p>
-                <p className="mt-1 text-xs font-medium text-amber-700">
-                  {stats.totalTemplates === 1 ? "template" : "templates"}
-                </p>
+
+            {/* Templates */}
+            <div className="mt-5 space-y-4">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <FolderKanban className="h-4 w-4 text-amber-500" />
+                    <span className="text-sm font-medium text-slate-700">Templates</span>
+                  </div>
+                  <span className="text-sm font-bold text-slate-950">
+                    {limits.currentTemplates}
+                    <span className="font-normal text-slate-400"> / {maxTemplates}</span>
+                  </span>
+                </div>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-amber-400 transition-all"
+                    style={{
+                      width: limits.limits.maxTemplates >= 999
+                        ? "100%"
+                        : `${Math.min(100, (limits.currentTemplates / limits.limits.maxTemplates) * 100)}%`,
+                    }}
+                  />
+                </div>
               </div>
-              <div className="rounded-2xl bg-violet-50 p-5 text-center">
-                <span className="flex justify-center text-violet-500">
-                  <BookCopy className="h-6 w-6" />
-                </span>
-                <p className="mt-3 text-3xl font-bold text-slate-950">{stats.planosGeradosMes}</p>
-                <p className="mt-1 text-xs font-medium text-violet-700">este mês</p>
+
+              {/* Planos este mês */}
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <BookCopy className="h-4 w-4 text-violet-500" />
+                    <span className="text-sm font-medium text-slate-700">Planos este mês</span>
+                  </div>
+                  <span className="text-sm font-bold text-slate-950">
+                    {limits.currentPlanosThisMonth}
+                    <span className="font-normal text-slate-400"> / {maxPlanos}</span>
+                  </span>
+                </div>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-violet-500 transition-all"
+                    style={{
+                      width: limits.limits.maxPlanosPerMonth >= 999
+                        ? "100%"
+                        : `${Math.min(100, (limits.currentPlanosThisMonth / limits.limits.maxPlanosPerMonth) * 100)}%`,
+                    }}
+                  />
+                </div>
               </div>
-              <div className="rounded-2xl bg-emerald-50 p-5 text-center">
-                <span className="flex justify-center text-emerald-500">
-                  <BookCopy className="h-6 w-6" />
-                </span>
-                <p className="mt-3 text-3xl font-bold text-slate-950">{stats.totalPlanos}</p>
-                <p className="mt-1 text-xs font-medium text-emerald-700">
-                  {stats.totalPlanos === 1 ? "plano total" : "planos total"}
-                </p>
+
+              {/* Total de planos */}
+              <div className="flex items-center justify-between rounded-2xl bg-emerald-50 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <BookCopy className="h-4 w-4 text-emerald-500" />
+                  <span className="text-sm font-medium text-slate-700">Total de planos gerados</span>
+                </div>
+                <span className="text-sm font-bold text-slate-950">{stats.totalPlanos}</span>
               </div>
             </div>
-            <p className="mt-4 text-center text-xs text-slate-400">
-              Renova em <span className="font-medium text-slate-600">{renovaEm}</span>
+
+            <p className="mt-4 text-xs text-slate-400">
+              Limite mensal renova em{" "}
+              <span className="font-medium text-slate-600">{renovaEm}</span>
             </p>
           </div>
 
-          {/* Card de assinatura — inteiramente roxo */}
-          <div className="rounded-3xl bg-gradient-to-br from-violet-600 to-violet-800 p-7 shadow-sm">
+          {/* Card de assinatura */}
+          <div className={`rounded-3xl bg-gradient-to-br ${plano.gradient} p-7 shadow-sm`}>
             <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-violet-200">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/60">
                 Assinatura ativa
               </p>
-              <CreditCard className="h-4 w-4 text-violet-300" />
+              <CreditCard className="h-4 w-4 text-white/50" />
             </div>
 
             <p className="mt-2 text-2xl font-bold text-white">{plano.label}</p>
-            <p className="mt-0.5 text-sm text-violet-200">{plano.description}</p>
+            <p className="mt-0.5 text-sm text-white/70">
+              {maxTemplates === "∞" ? "Templates ilimitados" : `Até ${maxTemplates} template${limits.limits.maxTemplates > 1 ? "s" : ""}`}
+              {" · "}
+              {maxPlanos === "∞" ? "Planos ilimitados" : `${maxPlanos} planos/mês`}
+            </p>
 
             <button
               disabled
               title="Em breve"
-              className="mt-6 w-full cursor-not-allowed rounded-2xl border border-white/20 bg-white/10 py-3 text-sm font-semibold text-white/60 backdrop-blur-sm"
+              className="mt-6 w-full cursor-not-allowed rounded-2xl border border-white/20 bg-white/10 py-3 text-sm font-semibold text-white/50 backdrop-blur-sm"
             >
               Alterar plano — em breve
             </button>
