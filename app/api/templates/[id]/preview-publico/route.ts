@@ -5,6 +5,8 @@ import { NextResponse } from "next/server";
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile } from "../../../../../lib/storage/blob";
 import { verifyPreviewToken } from "../../../../../lib/utils/preview-token";
+import { injectColoredPlaceholders } from "../../../../../lib/utils/docx-filler";
+import type { TemplateFieldSchema } from "../../../../../lib/types/firestore";
 
 export async function GET(
   request: Request,
@@ -19,6 +21,7 @@ export async function GET(
     return new NextResponse("Token inválido ou expirado.", { status: 401 });
   }
 
+  const annotated = searchParams.get("annotated") === "1";
   const fillable = searchParams.get("fillable") === "1";
 
   try {
@@ -32,16 +35,29 @@ export async function GET(
     const data = snap.data()!;
     const fillableUrl = data.arquivo_fillable_url as string | undefined;
     const arquivoUrl = data.arquivo_url as string | undefined;
-    const fileUrl = (fillable && fillableUrl) ? fillableUrl : (arquivoUrl ?? "");
+
+    // annotated and fillable modes both prefer the fillable base (placeholders already placed)
+    const fileUrl = ((annotated || fillable) && fillableUrl) ? fillableUrl : (arquivoUrl ?? "");
     if (!fileUrl) {
       return new NextResponse("Arquivo não disponível.", { status: 404 });
     }
 
     const buffer = await downloadFile(fileUrl);
 
-    return new NextResponse(new Uint8Array(buffer), {
+    let outBuffer: Buffer;
+    if (annotated) {
+      const schema = Array.isArray(data.schema_campos)
+        ? (data.schema_campos as TemplateFieldSchema[])
+        : [];
+      outBuffer = injectColoredPlaceholders(buffer, schema);
+    } else {
+      outBuffer = buffer;
+    }
+
+    const contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    return new NextResponse(new Blob([new Uint8Array(outBuffer)], { type: contentType }), {
       headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Type": contentType,
         "Content-Disposition": `inline; filename="template-${id.slice(0, 8)}.docx"`,
         "Cache-Control": "private, max-age=1800",
       },

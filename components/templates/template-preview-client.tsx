@@ -46,8 +46,7 @@ function DocxPreview({
     fetch(`/api/templates/${templateId}/preview-token`)
       .then((r) => r.json())
       .then(({ token, exp }: { token: string; exp: number }) => {
-        const fillParam = hasFillable ? "&fillable=1" : "";
-        const previewPath = `/api/templates/${templateId}/preview-publico?token=${encodeURIComponent(token)}&exp=${exp}${fillParam}`;
+        const previewPath = `/api/templates/${templateId}/preview-publico?token=${encodeURIComponent(token)}&exp=${exp}&annotated=1`;
         const previewUrl = `${window.location.origin}${previewPath}`;
         setOfficeUrl(
           `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`,
@@ -101,9 +100,7 @@ function VariablePanel({ schema, hasFillable }: { schema: TemplateFieldSchema[];
         <div>
           <p className="text-sm font-semibold text-slate-900">Variáveis do documento</p>
           <p className="mt-0.5 text-xs text-slate-500">
-            {hasFillable
-              ? "As variáveis abaixo aparecem como {{chave}} no documento acima."
-              : "Insira {{chave}} no Word exatamente onde cada campo deve aparecer."}
+            {"As variáveis aparecem coloridas no documento acima: amber = campo fixo, violeta = IA."}
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">

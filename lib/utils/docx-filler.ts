@@ -333,6 +333,96 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
+// ── Inject placeholders with color highlights ────────────────────────────────
+
+/**
+ * Same as injectPlaceholders but colorizes each {{key}} run in the DOCX XML:
+ *   • manual / fixed fields → amber  #B45309
+ *   • ia_sugerida fields    → violet #6D28D9
+ *
+ * Used for the "visualizar template" preview so field positions are visible
+ * inside the Office Online embed without needing a separate overlay layer.
+ */
+export function injectColoredPlaceholders(
+  docxBuffer: Buffer,
+  schema: TemplateFieldSchema[],
+): Buffer {
+  if (schema.length === 0) return docxBuffer;
+
+  // Ensure {{key}} placeholders are in the right cells (idempotent if already present)
+  const withPlaceholders = injectPlaceholders(docxBuffer, schema);
+
+  const colorMap: Record<string, string> = {};
+  for (const field of schema) {
+    colorMap[field.key] = field.role === "ia_sugerida" ? "6D28D9" : "B45309";
+  }
+
+  const zip = new PizZip(withPlaceholders);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return withPlaceholders;
+
+  let xml = zip.files[xmlPath].asText();
+
+  // Walk each <w:r> element (runs don't nest in DOCX)
+  xml = xml.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (runXml) => {
+    for (const field of schema) {
+      const placeholder = `{{${field.key}}}`;
+      if (!runXml.includes(placeholder)) continue;
+
+      const color = colorMap[field.key];
+
+      // Find the <w:t> that actually holds the placeholder
+      const tRegex = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
+      let tMatch: RegExpExecArray | null;
+      while ((tMatch = tRegex.exec(runXml)) !== null) {
+        if (tMatch[1].includes(placeholder)) break;
+      }
+      if (!tMatch) continue;
+
+      const tText = tMatch[1];
+
+      if (tText.trim() === placeholder) {
+        // Entire run text is the placeholder — colorize the run
+        if (runXml.includes("<w:color ")) {
+          return runXml.replace(/<w:color[^/]*\/>/g, `<w:color w:val="${color}"/>`);
+        }
+        if (runXml.includes("<w:rPr>")) {
+          return runXml.replace("<w:rPr>", `<w:rPr><w:color w:val="${color}"/>`);
+        }
+        // No rPr — insert one before the first <w:t>
+        return runXml.replace(/<w:t(?=\s|>)/, `<w:rPr><w:color w:val="${color}"/></w:rPr><w:t`);
+      }
+
+      // Mixed text e.g. "Professor(a): {{professor}}"
+      // Split into: label run (unchanged) | colored {{key}} run | optional tail run
+      const pIdx = tText.indexOf(placeholder);
+      const before = tText.slice(0, pIdx);
+      const after = tText.slice(pIdx + placeholder.length);
+      const origRPr = runXml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
+
+      // Keep original run but replace its <w:t> with the "before" text only
+      const beforeT = before
+        ? `<w:t xml:space="preserve">${before}</w:t>`
+        : `<w:t/>`;
+      let result = runXml.replace(tMatch[0], beforeT);
+
+      // Colored run for the placeholder
+      result += `<w:r><w:rPr><w:color w:val="${color}"/></w:rPr><w:t xml:space="preserve">${placeholder}</w:t></w:r>`;
+
+      // Tail run for any text after the placeholder
+      if (after) {
+        result += `<w:r>${origRPr}<w:t xml:space="preserve">${after}</w:t></w:r>`;
+      }
+
+      return result;
+    }
+    return runXml;
+  });
+
+  zip.file(xmlPath, xml);
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
 // ── Fill with docxtemplater ──────────────────────────────────────────────────
 
 /**
