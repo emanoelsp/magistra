@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { Activity, BarChart3, BookOpen, DollarSign, Inbox, Settings, Users, Zap } from "lucide-react";
+import { Activity, BarChart3, BookOpen, DollarSign, Inbox, Settings, Tag, Users, Zap } from "lucide-react";
 import { getCurrentSession as getSession, getCurrentUserProfile } from "../../lib/auth/session";
 
 function isEmailAllowed(email: string | null | undefined): boolean {
@@ -17,6 +17,7 @@ const NAV = [
   { href: "/admin/mensagens", label: "Mensagens",    icon: Inbox },
   { href: "/admin/saude",     label: "Saúde APIs",   icon: Activity },
   { href: "/admin/caixa",     label: "Caixa",        icon: BookOpen },
+  { href: "/admin/cupons",    label: "Cupons",       icon: Tag },
   { href: "/admin/config",    label: "Configuração", icon: Settings },
 ];
 

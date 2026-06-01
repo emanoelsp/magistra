@@ -19,6 +19,8 @@ export async function GET(
     return new NextResponse("Token inválido ou expirado.", { status: 401 });
   }
 
+  const fillable = searchParams.get("fillable") === "1";
+
   try {
     const db = getAdminDb();
     const snap = await db.collection("magis_templates").doc(id).get();
@@ -27,12 +29,15 @@ export async function GET(
       return new NextResponse("Template não encontrado.", { status: 404 });
     }
 
-    const arquivoUrl = snap.data()?.arquivo_url as string | undefined;
-    if (!arquivoUrl) {
+    const data = snap.data()!;
+    const fillableUrl = data.arquivo_fillable_url as string | undefined;
+    const arquivoUrl = data.arquivo_url as string | undefined;
+    const fileUrl = (fillable && fillableUrl) ? fillableUrl : (arquivoUrl ?? "");
+    if (!fileUrl) {
       return new NextResponse("Arquivo não disponível.", { status: 404 });
     }
 
-    const buffer = await downloadFile(arquivoUrl);
+    const buffer = await downloadFile(fileUrl);
 
     return new NextResponse(new Uint8Array(buffer), {
       headers: {

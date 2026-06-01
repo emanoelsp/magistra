@@ -100,6 +100,8 @@ export function PlanGenerationWizard({
   const [capturedEditorValues, setCapturedEditorValues] = useState<Record<string, string>>({});
   const [savedPlanoId, setSavedPlanoId] = useState<string | null>(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [officePreviewUrl, setOfficePreviewUrl] = useState<string | null>(null);
+  const [officePreviewLoading, setOfficePreviewLoading] = useState(false);
   const [isFinalized, setIsFinalized] = useState(false);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -107,6 +109,27 @@ export function PlanGenerationWizard({
   const [isPending, startTransition] = useTransition();
 
   const editorRef = useRef<PlanEditorHandle>(null);
+
+  // Fetch Office Online preview URL when step 4 opens with a saved plan
+  useEffect(() => {
+    if (currentStep !== 3 || !savedPlanoId || officePreviewUrl || officePreviewLoading) return;
+    const isLocalhost = typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+    if (isLocalhost) return; // Office Online can't reach localhost
+
+    setOfficePreviewLoading(true);
+    fetch(`/api/planos/${savedPlanoId}/preview-token`)
+      .then((r) => r.json())
+      .then(({ token, exp }: { token: string; exp: number }) => {
+        const previewPath = `/api/planos/${savedPlanoId}/preview-publico?token=${encodeURIComponent(token)}&exp=${exp}`;
+        const previewUrl = `${window.location.origin}${previewPath}`;
+        setOfficePreviewUrl(
+          `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`,
+        );
+      })
+      .catch(() => { /* fall back to HTML preview silently */ })
+      .finally(() => setOfficePreviewLoading(false));
+  }, [currentStep, savedPlanoId, officePreviewUrl, officePreviewLoading]);
 
   const selectedTemplate = availableTemplates.find((t) => t.id === selectedTemplateId) ?? null;
 
@@ -654,13 +677,23 @@ export function PlanGenerationWizard({
             </div>
           )}
 
-          {/* Preview iframe — igual ao "ver detalhes do plano" */}
+          {/* Preview — Office Online (produção) ou HTML (localhost/fallback) */}
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" style={{ height: "72vh" }}>
-            {isAutoSaving || !savedPlanoId ? (
+            {isAutoSaving || !savedPlanoId || officePreviewLoading ? (
               <div className="flex h-full items-center justify-center gap-3 text-slate-500">
                 <LoaderCircle className="h-5 w-5 animate-spin text-violet-500" />
-                <span className="text-sm">Preparando pré-visualização…</span>
+                <span className="text-sm">
+                  {officePreviewLoading ? "Carregando preview Word…" : "Preparando pré-visualização…"}
+                </span>
               </div>
+            ) : officePreviewUrl ? (
+              <iframe
+                key={officePreviewUrl}
+                src={officePreviewUrl}
+                className="h-full w-full border-0"
+                title="Pré-visualização do plano"
+                allowFullScreen
+              />
             ) : (
               <iframe
                 key={savedPlanoId}

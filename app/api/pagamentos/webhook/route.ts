@@ -87,6 +87,7 @@ export async function POST(request: Request) {
 
     // Plan subscription handling
     const plano = tipo;
+    const couponCode = (parts[2] ?? "").trim().toUpperCase() || null;
 
     if (sub.status === "authorized") {
       await db.collection("magis_users").doc(uid).update({ plano });
@@ -96,10 +97,19 @@ export async function POST(request: Request) {
         plano,
         status: "authorized",
         valor_brl: sub.auto_recurring?.transaction_amount ?? 0,
+        cupom: couponCode,
         created_at: now,
         updated_at: now,
       }, { merge: true });
       console.log(`[webhook/mp] Plano ${plano} ativado para uid=${uid}`);
+
+      // Increment coupon usage
+      if (couponCode) {
+        const couponSnap = await db.collection("magis_cupons").where("code", "==", couponCode).limit(1).get();
+        if (!couponSnap.empty) {
+          await couponSnap.docs[0].ref.update({ uses: FieldValue.increment(1) });
+        }
+      }
     }
 
     if (sub.status === "cancelled" || sub.status === "paused") {

@@ -261,7 +261,6 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const groupedIA = groupFields(iaFields);
 
   const [values, setValues] = useState<Record<string, string>>(() => {
-    if (initialValues) return initialValues;
     const init: Record<string, string> = {};
     for (const f of schema) init[f.key] = "";
     if (template.escola_nome) {
@@ -270,7 +269,14 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       );
       if (ef) init[ef.key] = template.escola_nome;
     }
-    return init;
+    if (!initialValues) return init;
+    // Merge initialValues but always start ia_sugerida fields empty —
+    // they must be filled by AI suggestions, not by default DOCX content.
+    const merged = { ...init, ...initialValues };
+    for (const f of schema) {
+      if (f.role === "ia_sugerida" && !initialValues[f.key]) merged[f.key] = "";
+    }
+    return merged;
   });
 
   useImperativeHandle(ref, () => ({ getCurrentValues: () => values }));

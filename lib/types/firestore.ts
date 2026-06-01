@@ -216,6 +216,21 @@ export interface MercadoPagoAssinatura {
   updated_at: string;
 }
 
+export interface CouponRecord {
+  id: string;
+  code: string;
+  type: "percent" | "fixed";
+  value: number;
+  planos: string[];
+  valid_from: string;
+  valid_until: string;
+  max_uses: number | null;
+  uses: number;
+  active: boolean;
+  created_at: string;
+  created_by: string;
+}
+
 export interface GerarPlanoWizardValues {
   templateId: string;
   nomeTurma: string;

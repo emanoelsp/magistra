@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { MercadoPagoConfig, PreApprovalPlan, PreApproval } from "mercadopago";
 import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 import { PLAN_PRICES_BRL, PLAN_LABELS } from "../../../../lib/services/limits";
+import type { CouponRecord } from "../../../../lib/types/firestore";
 
 const PLANOS_PAGOS = ["starter", "medio", "pro"];
 const AVULSO_TIPOS = ["avulso_template", "avulso_plano"] as const;
@@ -57,6 +58,7 @@ export async function POST(request: Request) {
       plano?: string;
       tipo?: string;
       periodo?: string;
+      cupom?: string;
     };
 
     const periodoRaw = body.periodo ?? "auto";
@@ -64,6 +66,7 @@ export async function POST(request: Request) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://planomagistra.com.br";
     const client = getMpClient();
     const preApproval = new PreApproval(client);
+    const couponCode = (body.cupom ?? "").trim().toUpperCase() || null;
 
     // Avulso checkout (template or plano slot add-on)
     if (body.tipo && (AVULSO_TIPOS as readonly string[]).includes(body.tipo)) {
@@ -97,6 +100,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Plano inválido para checkout." }, { status: 400 });
     }
 
+    // Resolve coupon discount (server-side re-validation)
+    let finalPrice = PLAN_PRICES_BRL[plano] ?? 0;
+    if (couponCode) {
+      const db = (await import("../../../../lib/firebase/admin")).getAdminDb();
+      const couponSnap = await db.collection("magis_cupons").where("code", "==", couponCode).limit(1).get();
+      if (!couponSnap.empty) {
+        const coupon = couponSnap.docs[0].data() as CouponRecord;
+        const now = new Date().toISOString().slice(0, 10);
+        const valid =
+          coupon.active &&
+          now >= coupon.valid_from &&
+          now <= coupon.valid_until &&
+          (coupon.max_uses === null || coupon.uses < coupon.max_uses) &&
+          coupon.planos.includes(plano);
+        if (valid) {
+          const discount =
+            coupon.type === "percent"
+              ? finalPrice * (coupon.value / 100)
+              : coupon.value;
+          finalPrice = Math.max(1, finalPrice - discount);
+        }
+      }
+    }
+
     const planId = await getOrCreatePlanId(client, plano);
 
     const sub = await preApproval.create({
@@ -104,12 +131,12 @@ export async function POST(request: Request) {
         preapproval_plan_id: planId,
         payer_email: user.email,
         reason: `PlanoMagistra - ${PLAN_LABELS[plano]}`,
-        external_reference: `${user.uid}|${plano}`,
+        external_reference: `${user.uid}|${plano}|${couponCode ?? ""}`,
         back_url: `${appUrl}/planos/sucesso?plano=${plano}`,
         auto_recurring: {
           frequency: 1,
           frequency_type: "months",
-          transaction_amount: PLAN_PRICES_BRL[plano],
+          transaction_amount: finalPrice,
           currency_id: "BRL",
           ...(repetitions ? { repetitions } : {}),
         },

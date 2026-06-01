@@ -440,7 +440,7 @@ function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
     if (bestIdx < 0) continue;
     usedAsLabel.add(bestIdx);
 
-    // Try to find an empty value cell after the label
+    // Phase A: prefer empty value cells (template uses placeholders)
     let found = false;
     const searchEnd = Math.min(tds.length, bestIdx + 10);
     for (let vi = bestIdx + 1; vi < searchEnd; vi++) {
@@ -451,23 +451,70 @@ function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
         break;
       }
     }
-    // If no value cell was found nearby, remember this label for the next pass
+
+    // Phase B: fallback — accept non-empty cells when the DOCX is already filled.
+    // DocView will clear ia_sugerida cells; manual cells show their defaultValue.
+    if (!found) {
+      for (let vi = bestIdx + 1; vi < searchEnd; vi++) {
+        if (valueMap.has(vi) || usedAsLabel.has(vi)) continue;
+        const text = tds[vi].text;
+        if (text.length > 300) continue; // skip cells that are clearly not value cells
+        // Skip if this cell itself looks like another field label
+        const mightBeLabel = schema.some((sf) => {
+          if (sf.key === field.key) return false;
+          const ln = normText(sf.label);
+          const lw = ln.split(/\s+/).filter((w) => w.length > 2);
+          return lw.length > 0 && lw.filter((w) => text.includes(w)).length / lw.length >= 0.6;
+        });
+        if (!mightBeLabel) {
+          valueMap.set(vi, field);
+          found = true;
+          break;
+        }
+      }
+    }
+
+    // If still not found, remember for second pass (row-separated layout)
     if (!found) unpaired.set(bestIdx, field);
   }
 
-  // Second pass: for unpaired labels, look for empty tds at the same column
-  // position in the next "row" of tds (handles [Label A | Label B] / [val A | val B]).
+  // Second pass: for unpaired labels, look for tds after the label block
+  // (handles [Label A | Label B] / [val A | val B] layout).
   if (unpaired.size > 0) {
     const labelIdxs = [...unpaired.keys()].sort((a, b) => a - b);
+    const lastUnpairedIdx = Math.max(...labelIdxs);
+    const pass2End = Math.min(tds.length, lastUnpairedIdx + 15);
+
     for (const labelIdx of labelIdxs) {
       const field = unpaired.get(labelIdx)!;
-      // Search for the first empty td that comes after ALL the unpaired labels
-      const lastUnpairedIdx = Math.max(...labelIdxs);
-      for (let vi = lastUnpairedIdx + 1; vi < Math.min(tds.length, lastUnpairedIdx + 15); vi++) {
+
+      // Phase A: empty cells preferred
+      let found2 = false;
+      for (let vi = lastUnpairedIdx + 1; vi < pass2End; vi++) {
         if (valueMap.has(vi) || usedAsLabel.has(vi)) continue;
         if (tds[vi].text.length === 0) {
           valueMap.set(vi, field);
+          found2 = true;
           break;
+        }
+      }
+
+      // Phase B: non-empty cells as fallback
+      if (!found2) {
+        for (let vi = lastUnpairedIdx + 1; vi < pass2End; vi++) {
+          if (valueMap.has(vi) || usedAsLabel.has(vi)) continue;
+          if (tds[vi].text.length > 300) continue;
+          const text = tds[vi].text;
+          const mightBeLabel = schema.some((sf) => {
+            if (sf.key === field.key) return false;
+            const ln = normText(sf.label);
+            const lw = ln.split(/\s+/).filter((w) => w.length > 2);
+            return lw.length > 0 && lw.filter((w) => text.includes(w)).length / lw.length >= 0.6;
+          });
+          if (!mightBeLabel) {
+            valueMap.set(vi, field);
+            break;
+          }
         }
       }
     }

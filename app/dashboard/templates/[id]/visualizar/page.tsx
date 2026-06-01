@@ -41,9 +41,12 @@ export default async function VisualizarTemplatePage({ params }: PageProps) {
     schema_campos: Array.isArray(data.schema_campos) ? data.schema_campos : [],
     data_criacao: toIso(data.data_criacao),
     arquivo_url: typeof data.arquivo_url === "string" ? data.arquivo_url : undefined,
+    arquivo_fillable_url: typeof data.arquivo_fillable_url === "string" ? data.arquivo_fillable_url : undefined,
+    fillable_status: typeof data.fillable_status === "string" ? data.fillable_status as TemplateRecord["fillable_status"] : undefined,
   };
 
   const isDocx = (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
+  const hasFillable = !!template.arquivo_fillable_url && template.fillable_status === "pronto";
 
   const manualCount = template.schema_campos.filter(
     (f) => f.role === "manual" || f.group === "dados_turma",
@@ -105,11 +108,13 @@ export default async function VisualizarTemplatePage({ params }: PageProps) {
               )}
             </span>
           </span>
-          {!isDocx && (
-            <span className="ml-auto text-xs text-slate-400">
-              Template PDF — visualização aproximada
-            </span>
-          )}
+          <span className="ml-auto text-xs text-slate-400">
+            {!isDocx
+              ? "Template PDF — visualização aproximada"
+              : hasFillable
+                ? "Preview Word com {{variáveis}} visíveis no documento"
+                : "Preview Word do arquivo original"}
+          </span>
         </div>
       </header>
 
@@ -118,6 +123,7 @@ export default async function VisualizarTemplatePage({ params }: PageProps) {
         templateId={template.id}
         schema={template.schema_campos}
         isDocx={isDocx}
+        hasFillable={hasFillable}
       />
     </div>
   );
