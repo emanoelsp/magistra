@@ -19,6 +19,11 @@ import { PlanEditor, type PlanEditorHandle } from "./plan-editor";
 import { planosService } from "../../lib/services/firestore/planos.service";
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateFieldSchema, TemplateOption, TemplateRecord } from "../../lib/types/firestore";
+import {
+  DownloadLimitDialog,
+  triggerDownload,
+  type DownloadLimitInfo,
+} from "./download-plan-button";
 
 interface RecentPlano {
   id: string;
@@ -107,6 +112,7 @@ export function PlanGenerationWizard({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingMeta, startSavingMeta] = useTransition();
   const [isPending, startTransition] = useTransition();
+  const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
 
   const editorRef = useRef<PlanEditorHandle>(null);
 
@@ -639,7 +645,12 @@ export function PlanGenerationWizard({
                   </span>
                   <button
                     type="button"
-                    onClick={() => savedPlanoId && window.open(`/api/planos/${savedPlanoId}/download`, "_blank")}
+                    onClick={() => {
+                      if (!savedPlanoId) return;
+                      void triggerDownload(`/api/planos/${savedPlanoId}/download`)
+                        .then((info) => { if (info) setDownloadLimitInfo(info); })
+                        .catch(() => { window.open(`/api/planos/${savedPlanoId}/download`, "_blank"); });
+                    }}
                     className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -647,7 +658,12 @@ export function PlanGenerationWizard({
                   </button>
                   <button
                     type="button"
-                    onClick={() => savedPlanoId && window.open(`/api/planos/${savedPlanoId}/download?format=pdf`, "_blank")}
+                    onClick={() => {
+                      if (!savedPlanoId) return;
+                      void triggerDownload(`/api/planos/${savedPlanoId}/download?format=pdf`)
+                        .then((info) => { if (info) setDownloadLimitInfo(info); })
+                        .catch(() => { window.open(`/api/planos/${savedPlanoId}/download?format=pdf`, "_blank"); });
+                    }}
                     className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -790,6 +806,13 @@ export function PlanGenerationWizard({
             </a>
           </div>
         </>
+      )}
+
+      {downloadLimitInfo && (
+        <DownloadLimitDialog
+          info={downloadLimitInfo}
+          onClose={() => setDownloadLimitInfo(null)}
+        />
       )}
     </div>
   );

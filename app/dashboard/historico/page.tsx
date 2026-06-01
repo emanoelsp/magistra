@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronLeft, ChevronRight, Clock, Download, Edit2, FileText, FolderKanban } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Clock, Edit2, FileText, FolderKanban } from "lucide-react";
 
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import {
@@ -8,6 +8,7 @@ import {
   getUserTemplateOptions,
 } from "../../../lib/services/firestore/dashboard.server";
 import { HistoricoTabs } from "./historico-tabs";
+import { DownloadPlanButton } from "../../../components/planos/download-plan-button";
 
 export const dynamic = "force-dynamic";
 
@@ -146,24 +147,18 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                     <div className="flex shrink-0 flex-wrap gap-2">
                       {plano.status === "gerado" && temConteudo && (
                         <>
-                          <a
-                            href={`/api/planos/${plano.id}/download`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-                          >
-                            <Download className="h-4 w-4" />
-                            DOCX
-                          </a>
-                          <a
-                            href={`/api/planos/${plano.id}/download?format=pdf`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500"
-                          >
-                            <Download className="h-4 w-4" />
-                            PDF
-                          </a>
+                          <DownloadPlanButton
+                            planoId={plano.id}
+                            format="docx"
+                            label="DOCX"
+                            className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950 disabled:opacity-60"
+                          />
+                          <DownloadPlanButton
+                            planoId={plano.id}
+                            format="pdf"
+                            label="PDF"
+                            className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:opacity-60"
+                          />
                         </>
                       )}
                       <Link

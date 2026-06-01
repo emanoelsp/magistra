@@ -11,7 +11,7 @@ import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 import { checkRateLimit } from "../../../../lib/services/rate-limit.server";
 import { validateSugestoes } from "../../../../lib/services/suggestion-validator";
 import { getPedagogicMemoryContext } from "../../../../lib/services/pedagogic-memory.server";
-import { retrieveBnccContext } from "../../../../lib/services/bncc-rag.server";
+import { retrieveAllCurriculumContext } from "../../../../lib/services/bncc-rag.server";
 import {
   buildCacheKey,
   getCachedSuggestions,
@@ -411,13 +411,21 @@ Responda SOMENTE com JSON válido:
       : "EF";
     const componente = metadata["componente_curricular"] ?? metadata["componente"] ?? metadata["disciplina"] ?? "";
 
-    const [bnccChunks, pedagogicMemory] = await Promise.all([
-      isBibliografiaField ? Promise.resolve([]) : retrieveBnccContext(ragQuery, { componente, etapa }),
+    const [curriculum, pedagogicMemory] = await Promise.all([
+      isBibliografiaField
+        ? Promise.resolve({ bncc: [], ctbc: [], saeb: [] })
+        : retrieveAllCurriculumContext(ragQuery, { componente, etapa }),
       getPedagogicMemoryContext(user.uid).catch(() => ""),
     ]);
 
-    const bnccContexto = bnccChunks.length > 0
-      ? bnccChunks.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
+    const bnccContexto = curriculum.bncc.length > 0
+      ? curriculum.bncc.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
+      : null;
+    const ctbcContexto = curriculum.ctbc.length > 0
+      ? curriculum.ctbc.map((c) => c.texto).join("\n")
+      : null;
+    const saebContexto = curriculum.saeb.length > 0
+      ? curriculum.saeb.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
       : null;
 
     const prompt = [
@@ -434,6 +442,8 @@ Responda SOMENTE com JSON válido:
       `</contexto>`,
       ...(pedagogicMemory ? [pedagogicMemory] : []),
       ...(bnccContexto ? [`<habilidades_bncc>\n${bnccContexto}\n</habilidades_bncc>`] : []),
+      ...(ctbcContexto ? [`<habilidades_ctbc>\n${ctbcContexto}\n</habilidades_ctbc>`] : []),
+      ...(saebContexto ? [`<descritores_saeb>\n${saebContexto}\n</descritores_saeb>`] : []),
     ].join("\n");
 
     // Cache key — null when extraContext is present (one-off refinement, don't cache)

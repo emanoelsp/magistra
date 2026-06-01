@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Sparkles } from "lucide-react";
+import { X, Sparkles, ChevronDown } from "lucide-react";
 
 export type AvulsoTipo = "avulso_template" | "avulso_plano";
 
@@ -70,15 +70,18 @@ export function AvulsoModal({ tipo, onClose }: Props) {
             </p>
           </div>
 
-          <select
-            value={periodo}
-            onChange={(e) => setPeriodo(e.target.value)}
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-950"
-          >
-            {PERIODOS.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={periodo}
+              onChange={(e) => setPeriodo(e.target.value)}
+              className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none transition focus:border-slate-950 focus:ring-2 focus:ring-slate-100"
+            >
+              {PERIODOS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          </div>
 
           {error && <p className="text-xs text-red-600">{error}</p>}
 

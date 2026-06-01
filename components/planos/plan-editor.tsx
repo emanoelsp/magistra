@@ -28,6 +28,11 @@ import {
 import { planosService } from "../../lib/services/firestore/planos.service";
 import type { IaSugestao, TemplateFieldSchema, TemplateRecord } from "../../lib/types/firestore";
 import { RichTextEditor } from "../editor/RichTextEditor";
+import {
+  DownloadLimitDialog,
+  triggerDownload,
+  type DownloadLimitInfo,
+} from "./download-plan-button";
 
 export interface PlanEditorHandle {
   getCurrentValues: () => Record<string, string>;
@@ -304,6 +309,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   // Once a plan is finalized (exported), it becomes read-only to prevent
   // users from editing and re-downloading without consuming a new plan from their limit
   const [isFinalized, setIsFinalized] = useState(false);
+  const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
 
   const hasDocx =
     (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
@@ -553,7 +559,9 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             format === "pdf"
               ? `/api/planos/${id}/download?format=pdf`
               : `/api/planos/${id}/download`;
-          window.open(url, "_blank");
+          void triggerDownload(url).then((info) => {
+            if (info) setDownloadLimitInfo(info);
+          }).catch(() => { window.open(url, "_blank"); });
         })
         .catch(() => { setSaveStatus("error"); setTimeout(() => setSaveStatus("idle"), 3000); });
     });
@@ -562,6 +570,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const isSaving = saveStatus === "saving" || isPending;
 
   return (
+    <>
     <div
       className="flex flex-col gap-4"
       style={wizardMode ? undefined : { height: "calc(100vh - 190px)" }}
@@ -892,6 +901,14 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         )}
       </div>
     </div>
+
+    {downloadLimitInfo && (
+      <DownloadLimitDialog
+        info={downloadLimitInfo}
+        onClose={() => setDownloadLimitInfo(null)}
+      />
+    )}
+    </>
   );
 });
 

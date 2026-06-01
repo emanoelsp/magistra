@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 import { getPlanoDetalhes } from "../../../../lib/services/firestore/dashboard.server";
+import { DownloadPlanButton } from "../../../../components/planos/download-plan-button";
 
 export const dynamic = "force-dynamic";
 
@@ -40,24 +41,8 @@ export default async function PlanoDetalhesPage({
             <p className="text-xs text-slate-400">{formatDate(plano.data_geracao)}</p>
           </div>
           <div className="flex items-center gap-2">
-            <a
-              href={`/api/planos/${plano.id}/download`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-            >
-              <Download className="h-4 w-4" />
-              DOCX
-            </a>
-            <a
-              href={`/api/planos/${plano.id}/download?format=pdf`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-            >
-              <Download className="h-4 w-4" />
-              PDF
-            </a>
+            <DownloadPlanButton planoId={plano.id} format="docx" label="DOCX" />
+            <DownloadPlanButton planoId={plano.id} format="pdf" label="PDF" />
           </div>
         </div>
       </div>
