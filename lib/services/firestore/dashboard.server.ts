@@ -105,6 +105,7 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
   const templatesSnapshot = await adminDb.collection("magis_templates").where("user_id", "==", userId).get();
 
   return templatesSnapshot.docs
+    .filter((documentSnapshot) => !documentSnapshot.data().deleted_at) // exclude soft-deleted
     .map((documentSnapshot) => {
       const templateData = documentSnapshot.data();
       const rawSchema = templateData.schema_campos;
@@ -150,6 +151,12 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
         metadata_padrao,
         arquivo_url:
           typeof templateData.arquivo_url === "string" ? templateData.arquivo_url : undefined,
+        fillable_status:
+          templateData.fillable_status === "processando" ||
+          templateData.fillable_status === "pronto" ||
+          templateData.fillable_status === "erro"
+            ? (templateData.fillable_status as import("../../types/firestore").TemplateFillableStatus)
+            : undefined,
       };
     })
     .sort((left, right) => right.criadoEm.localeCompare(left.criadoEm));
@@ -184,12 +191,14 @@ export interface PlanoComNome extends PlanoRecord {
 
 export async function getUserPlanosComNome(
   userId: string,
-  limit = 50,
-): Promise<PlanoComNome[]> {
+  pageSize = 20,
+  page = 1,
+): Promise<{ items: PlanoComNome[]; total: number }> {
   const adminDb = getAdminDb();
   const snapshot = await adminDb.collection("magis_planos").where("user_id", "==", userId).get();
 
-  const planos = snapshot.docs
+  // Sort all in memory (Firestore orderBy needs composite index; this is safe at current scale)
+  const allPlanos = snapshot.docs
     .map((doc) => {
       const d = doc.data();
       return {
@@ -204,11 +213,14 @@ export async function getUserPlanosComNome(
         status: (typeof d.status === "string" ? d.status : "rascunho") as PlanoStatus,
       };
     })
-    .sort((a, b) => b.data_geracao.localeCompare(a.data_geracao))
-    .slice(0, limit);
+    .sort((a, b) => b.data_geracao.localeCompare(a.data_geracao));
 
-  // Fetch template names in one batch
-  const templateIds = [...new Set(planos.map((p) => p.template_id))];
+  const total = allPlanos.length;
+  const skip = (page - 1) * pageSize;
+  const pagePlanos = allPlanos.slice(skip, skip + pageSize);
+
+  // Fetch template names only for the current page (eliminates N+1 on full list)
+  const templateIds = [...new Set(pagePlanos.map((p) => p.template_id))];
   const templateNames: Record<string, { nome: string; escola_nome: string | null }> = {};
 
   await Promise.all(
@@ -225,11 +237,13 @@ export async function getUserPlanosComNome(
     }),
   );
 
-  return planos.map((p) => ({
+  const items = pagePlanos.map((p) => ({
     ...p,
     template_nome: templateNames[p.template_id]?.nome ?? "Template removido",
     escola_nome: templateNames[p.template_id]?.escola_nome ?? null,
   }));
+
+  return { items, total };
 }
 
 export interface RecentTemplate {

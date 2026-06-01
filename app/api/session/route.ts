@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getAdminAuth } from "../../../lib/firebase/admin";
 
 const SESSION_COOKIE_NAME = "__session";
+const SESSION_DURATION_MS = 5 * 24 * 60 * 60 * 1000; // 5 dias
 
 export async function POST(request: Request) {
   try {
@@ -13,17 +14,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Token inválido" }, { status: 400 });
     }
 
-    // Valida o token no backend para garantir que é um ID token do Firebase
-    await getAdminAuth().verifyIdToken(idToken);
+    // Cria um session cookie de longa duração (5 dias) em vez de armazenar o ID token bruto
+    const sessionCookie = await getAdminAuth().createSessionCookie(idToken, {
+      expiresIn: SESSION_DURATION_MS,
+    });
 
     const cookieStore = await cookies();
 
-    cookieStore.set(SESSION_COOKIE_NAME, idToken, {
+    cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60, // 1 hora em segundos
+      maxAge: SESSION_DURATION_MS / 1000,
     });
 
     return NextResponse.json({ ok: true });

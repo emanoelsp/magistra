@@ -4,7 +4,13 @@ import { NextResponse } from "next/server";
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { ResponseSchema } from "@google/generative-ai";
 
+import { createHash } from "crypto";
+
 import { getAdminDb } from "../../../../lib/firebase/admin";
+import { requireCurrentUserProfile } from "../../../../lib/auth/session";
+import { checkRateLimit } from "../../../../lib/services/rate-limit.server";
+import { validateSugestoes } from "../../../../lib/services/suggestion-validator";
+import { getPedagogicMemoryContext } from "../../../../lib/services/pedagogic-memory.server";
 import { retrieveBnccContext } from "../../../../lib/services/bncc-rag.server";
 import {
   buildCacheKey,
@@ -12,6 +18,19 @@ import {
   setCachedSuggestions,
 } from "../../../../lib/services/suggestions-cache.server";
 import type { IaSugestao, TemplateRecord } from "../../../../lib/types/firestore";
+
+function sanitizeForPrompt(value: string): string {
+  return value.replace(/<\/?[^>]+>/g, "").replace(/[{}]/g, "").trim();
+}
+
+function computeSchemaHash(schemaCampos: unknown[]): string {
+  const normalized = JSON.stringify(
+    [...schemaCampos].sort((a, b) =>
+      ((a as { key?: string }).key ?? "").localeCompare((b as { key?: string }).key ?? "")
+    )
+  );
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+}
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -179,6 +198,20 @@ async function generateSuggestions(systemInstruction: string, prompt: string): P
 
 export async function POST(request: Request) {
   try {
+    const user = await requireCurrentUserProfile();
+
+    // Rate limit: per user/hour based on plan
+    const rl = await checkRateLimit(user.uid, user.plano ?? "free", "ia_campo");
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: `Limite de sugestões atingido. Tente novamente após ${new Date(rl.resetAt).toLocaleTimeString("pt-BR")}.` },
+        {
+          status: 429,
+          headers: { "X-RateLimit-Reset": rl.resetAt, "X-RateLimit-Remaining": "0" },
+        },
+      );
+    }
+
     const body = (await request.json()) as {
       templateId?: string;
       fieldKey?: string;
@@ -193,13 +226,20 @@ export async function POST(request: Request) {
     const {
       templateId,
       fieldKey,
-      fieldLabel,
+      fieldLabel: fieldLabelRaw,
       fieldGroup,
       metadata = {},
-      extraContext,
+      extraContext: extraContextRaw,
       bypassCache = false,
       stream = false,
     } = body;
+
+    // Sanitize user-controlled values before prompt interpolation
+    const fieldLabel = sanitizeForPrompt(fieldLabelRaw ?? "");
+    const extraContext = extraContextRaw ? sanitizeForPrompt(extraContextRaw) : undefined;
+    const sanitizedMetadata = Object.fromEntries(
+      Object.entries(metadata).map(([k, v]) => [sanitizeForPrompt(k), sanitizeForPrompt(v)])
+    );
 
     if (!templateId || !fieldKey || !fieldLabel) {
       return NextResponse.json(
@@ -216,13 +256,22 @@ export async function POST(request: Request) {
 
     const template = snap.data() as TemplateRecord;
 
+    // Verify template ownership
+    if (template.user_id !== user.uid) {
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    }
+
+    const schemaHash = Array.isArray(template.schema_campos)
+      ? computeSchemaHash(template.schema_campos)
+      : undefined;
+
     // Find field-level aiInstructions from schema
     const fieldSchema = Array.isArray(template.schema_campos)
       ? template.schema_campos.find((f) => f.key === fieldKey)
       : undefined;
     const fieldAiInstructions = fieldSchema?.aiInstructions?.trim() ?? "";
 
-    const metaLines = Object.entries(metadata)
+    const metaLines = Object.entries(sanitizedMetadata)
       .filter(([, v]) => v.trim())
       .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`);
 
@@ -362,9 +411,11 @@ Responda SOMENTE com JSON válido:
       : "EF";
     const componente = metadata["componente_curricular"] ?? metadata["componente"] ?? metadata["disciplina"] ?? "";
 
-    const bnccChunks = isBibliografiaField
-      ? []
-      : await retrieveBnccContext(ragQuery, { componente, etapa });
+    const [bnccChunks, pedagogicMemory] = await Promise.all([
+      isBibliografiaField ? Promise.resolve([]) : retrieveBnccContext(ragQuery, { componente, etapa }),
+      getPedagogicMemoryContext(user.uid).catch(() => ""),
+    ]);
+
     const bnccContexto = bnccChunks.length > 0
       ? bnccChunks.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
       : null;
@@ -381,13 +432,14 @@ Responda SOMENTE com JSON válido:
       `  <turma>${contexto}</turma>`,
       ...(extraContext?.trim() ? [`  <contexto_extra>${extraContext.trim()}</contexto_extra>`] : []),
       `</contexto>`,
+      ...(pedagogicMemory ? [pedagogicMemory] : []),
       ...(bnccContexto ? [`<habilidades_bncc>\n${bnccContexto}\n</habilidades_bncc>`] : []),
     ].join("\n");
 
     // Cache key — null when extraContext is present (one-off refinement, don't cache)
     const cacheKey = extraContext?.trim()
       ? null
-      : buildCacheKey(fieldKey, templateId, metadata);
+      : buildCacheKey(fieldKey, templateId, sanitizedMetadata, user.uid, schemaHash);
 
     // Cache lookup — skip when bypassCache to force new generation
     if (cacheKey && !bypassCache) {
@@ -412,9 +464,10 @@ Responda SOMENTE com JSON válido:
           try {
             const rawText = await generateWithGroq(systemInstruction, prompt);
             const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
-            const sugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+            const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+            const sugestoes = validateSugestoes(raw, { templateId, fieldKey });
             if (cacheKey && sugestoes.length > 0) {
-              void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId });
+              void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
             }
             return NextResponse.json({ sugestoes });
           } catch {
@@ -438,9 +491,10 @@ Responda SOMENTE com JSON válido:
             // Save to cache after full generation (updates cache even on bypassCache)
             try {
               const parsed = JSON.parse(accumulated) as { sugestoes: IaSugestao[] };
-              const sugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+              const rawSug = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+              const sugestoes = validateSugestoes(rawSug, { templateId, fieldKey });
               if (cacheKey && sugestoes.length > 0) {
-                void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId });
+                void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
               }
             } catch { /* ignore parse errors during cache save */ }
           } catch (err) {
@@ -468,7 +522,7 @@ Responda SOMENTE com JSON válido:
 
       void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
         void logUsage({
-          userId: body.metadata?.["user_id"] as string ?? "unknown",
+          userId: user.uid,
           action: "ia_campo",
           model: MODEL_NAME,
           tokensInput: 0,
@@ -497,10 +551,11 @@ Responda SOMENTE com JSON válido:
       parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1)) as { sugestoes: IaSugestao[] };
     }
 
-    const sugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+    const rawSugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
+    const sugestoes = validateSugestoes(rawSugestoes, { templateId, fieldKey });
 
     if (cacheKey && sugestoes.length > 0) {
-      void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId });
+      void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
     }
 
     return NextResponse.json({ sugestoes });

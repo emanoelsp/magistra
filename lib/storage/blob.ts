@@ -84,6 +84,7 @@ export async function uploadFile({ path, buffer, contentType }: UploadOptions): 
     access: "private",
     contentType,
     addRandomSuffix: false,
+    allowOverwrite: true,
   });
   return blob.url;
 }

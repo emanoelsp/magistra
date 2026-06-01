@@ -39,7 +39,13 @@ export interface UserProfile {
   plano: string;
   plano_validade: string | null;
   tokens_usados_mes: number;
+  avulso_templates?: number;
+  avulso_planos?: number;
+  role?: "admin" | "professor";
+  data_criacao?: string;
 }
+
+export type TemplateFillableStatus = "processando" | "pronto" | "erro";
 
 export interface TemplateRecord {
   id: string;
@@ -52,6 +58,8 @@ export interface TemplateRecord {
   metadata_padrao?: Record<string, string>;
   arquivo_url?: string;
   arquivo_fillable_url?: string;
+  fillable_status?: TemplateFillableStatus;
+  deleted_at?: string;
 }
 
 export interface CreateTemplateInput {
@@ -85,6 +93,7 @@ export interface PlanoRecord {
   data_geracao: string;
   status: PlanoStatus;
   schema_campos?: TemplateFieldSchema[];
+  downloads?: number;
 }
 
 export interface CreatePlanoInput {
@@ -121,6 +130,7 @@ export interface TemplateOption {
   schema_campos?: TemplateFieldSchema[];
   metadata_padrao?: Record<string, string>;
   arquivo_url?: string;
+  fillable_status?: TemplateFillableStatus;
 }
 
 export interface IaSugestao {
@@ -155,6 +165,54 @@ export interface AdminConfig {
   other_monthly_usd: number;
   gemini_input_cost_per_1m: number;
   gemini_output_cost_per_1m: number;
+  updated_at: string;
+}
+
+export type MensagemTipo = "contato" | "suporte";
+export type MensagemStatus = "aberto" | "em_andamento" | "resolvido";
+
+export interface MensagemRecord {
+  id: string;
+  tipo: MensagemTipo;
+  user_id?: string;
+  nome: string;
+  email: string;
+  assunto: string;
+  mensagem: string;
+  status: MensagemStatus;
+  created_at: string;
+  resposta?: string;
+  respondido_em?: string;
+}
+
+export interface BalanceteRecord {
+  id: string;
+  tipo: "mensal" | "anual";
+  periodo: string;           // "2026-05" ou "2026"
+  mrr_brl: number;
+  custo_ia_usd: number;
+  custo_fixo_usd: number;
+  custo_total_usd: number;
+  resultado_brl: number;     // mrr_brl − (custo_total_usd × usd_brl)
+  saldo_anterior_brl: number;
+  saldo_final_brl: number;
+  fechado_em: string;
+  fechado_por: string;
+  notas?: string;
+  usuarios_por_plano: Record<string, number>;
+  total_usuarios: number;
+  planos_gerados: number;
+  tokens_total: number;
+}
+
+export interface MercadoPagoAssinatura {
+  id: string;
+  user_id: string;
+  mp_preapproval_id: string;
+  plano: string;
+  status: "authorized" | "paused" | "cancelled" | "pending";
+  valor_brl: number;
+  created_at: string;
   updated_at: string;
 }
 

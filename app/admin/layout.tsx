@@ -1,26 +1,31 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { BarChart3, DollarSign, Settings, Users, Zap } from "lucide-react";
-import { getCurrentSession as getSession } from "../../lib/auth/session";
+import { Activity, BarChart3, BookOpen, DollarSign, Inbox, Settings, Users, Zap } from "lucide-react";
+import { getCurrentSession as getSession, getCurrentUserProfile } from "../../lib/auth/session";
 
-function isAdmin(email: string | null | undefined): boolean {
+function isEmailAllowed(email: string | null | undefined): boolean {
   if (!email) return false;
   const admins = (process.env.ADMIN_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase());
   return admins.includes(email.toLowerCase());
 }
 
 const NAV = [
-  { href: "/admin", label: "Visão geral", icon: BarChart3 },
-  { href: "/admin/usuarios", label: "Usuários", icon: Users },
-  { href: "/admin/custos", label: "Custos & IA", icon: Zap },
-  { href: "/admin/config", label: "Configuração", icon: Settings },
+  { href: "/admin",           label: "Visão geral",  icon: BarChart3 },
+  { href: "/admin/usuarios",  label: "Usuários",     icon: Users },
+  { href: "/admin/custos",    label: "Custos & IA",  icon: Zap },
+  { href: "/admin/mensagens", label: "Mensagens",    icon: Inbox },
+  { href: "/admin/saude",     label: "Saúde APIs",   icon: Activity },
+  { href: "/admin/caixa",     label: "Caixa",        icon: BookOpen },
+  { href: "/admin/config",    label: "Configuração", icon: Settings },
 ];
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
+  const profile = await getCurrentUserProfile();
 
-  if (!session || !isAdmin(session.email)) {
+  // Gate duplo: email na whitelist de env vars E role=admin no Firestore
+  if (!session || !isEmailAllowed(session.email) || profile?.role !== "admin") {
     redirect("/dashboard");
   }
 
@@ -48,7 +53,14 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           ))}
         </nav>
 
-        <div className="mt-8 border-t border-slate-100 pt-6">
+        <div className="mt-8 border-t border-slate-100 pt-6 space-y-3">
+          <Link
+            href="/planos"
+            className="flex items-center gap-2 text-xs text-violet-600 hover:text-violet-800"
+          >
+            <DollarSign className="h-3.5 w-3.5" />
+            Página de planos
+          </Link>
           <Link
             href="/dashboard"
             className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-800"

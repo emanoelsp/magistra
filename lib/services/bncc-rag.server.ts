@@ -57,35 +57,54 @@ export async function retrieveBnccContext(
     const pineconeFilter: Record<string, unknown> = {};
     if (filters.etapa) pineconeFilter["etapa"] = { $eq: filters.etapa };
 
-    // Normaliza o componente para match parcial via lista de candidatos
+    // Fuzzy match de componente: normaliza ambos e usa inclusão bidirecional de tokens
     if (filters.componente) {
-      const comp = filters.componente.toLowerCase();
-      const componenteMap: Record<string, string> = {
-        matematica: "Matemática",
-        matemática: "Matemática",
-        "língua portuguesa": "Língua Portuguesa",
-        "lingua portuguesa": "Língua Portuguesa",
-        portugues: "Língua Portuguesa",
-        português: "Língua Portuguesa",
-        ciencias: "Ciências",
-        ciências: "Ciências",
-        historia: "História",
-        história: "História",
-        geografia: "Geografia",
-        arte: "Arte",
-        "educacao fisica": "Educação Física",
-        "educação física": "Educação Física",
-        ingles: "Língua Inglesa",
-        inglês: "Língua Inglesa",
-        "ensino religioso": "Ensino Religioso",
-        fisica: "Física",
-        física: "Física",
-        quimica: "Química",
-        química: "Química",
-        biologia: "Biologia",
-      };
-      const mapped = Object.entries(componenteMap).find(([k]) => comp.includes(k))?.[1];
-      if (mapped) pineconeFilter["componente"] = { $eq: mapped };
+      const COMPONENTES_BNCC = [
+        "Matemática",
+        "Língua Portuguesa",
+        "Ciências",
+        "História",
+        "Geografia",
+        "Arte",
+        "Educação Física",
+        "Língua Inglesa",
+        "Ensino Religioso",
+        "Física",
+        "Química",
+        "Biologia",
+        "Sociologia",
+        "Filosofia",
+        "Língua Espanhola",
+      ];
+
+      function normalizeComp(s: string): string {
+        return s
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[̀-ͯ]/g, "")
+          .replace(/[^a-z\s]/g, "")
+          .trim();
+      }
+
+      const needle = normalizeComp(filters.componente);
+      const needleTokens = needle.split(/\s+/);
+
+      let bestMatch: string | undefined;
+      let bestScore = 0;
+
+      for (const candidate of COMPONENTES_BNCC) {
+        const hay = normalizeComp(candidate);
+        const hayTokens = hay.split(/\s+/);
+        const overlap = needleTokens.filter((t) => hayTokens.some((h) => h.includes(t) || t.includes(h))).length;
+        const score = overlap / Math.max(needleTokens.length, hayTokens.length);
+        if (score > bestScore) { bestScore = score; bestMatch = candidate; }
+      }
+
+      if (bestMatch && bestScore >= 0.4) {
+        pineconeFilter["componente"] = { $eq: bestMatch };
+      } else {
+        console.warn("[PlanoMagistra/rag] Componente não mapeado, sem filtro:", filters.componente);
+      }
     }
 
     const response = await index.query({

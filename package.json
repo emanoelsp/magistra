@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "ingest:bncc": "tsx --env-file=.env.local scripts/ingest-bncc.ts"
+    "ingest:bncc": "tsx --env-file=.env.local scripts/ingest-bncc.ts",
+    "seed:admin": "tsx --env-file=.env.local scripts/seed-admin.ts",
+    "migrate:users": "tsx --env-file=.env.local scripts/migrate-users.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -27,6 +29,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.542.0",
     "mammoth": "^1.12.0",
+    "mercadopago": "^3.0.0",
     "next": "^15.5.2",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",

@@ -5,6 +5,7 @@ import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getDashboardStats } from "../../../lib/services/firestore/dashboard.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
 import { PerfilForm } from "./perfil-form";
+import { PerfilUpgradeButton } from "../../../components/dashboard/perfil-upgrade-button";
 
 export const dynamic = "force-dynamic";
 
@@ -162,13 +163,7 @@ export default async function PerfilPage() {
               {maxPlanos === "∞" ? "Planos ilimitados" : `${maxPlanos} planos/mês`}
             </p>
 
-            <button
-              disabled
-              title="Em breve"
-              className="mt-6 w-full cursor-not-allowed rounded-2xl border border-white/20 bg-white/10 py-3 text-sm font-semibold text-white/50 backdrop-blur-sm"
-            >
-              Alterar plano — em breve
-            </button>
+            <PerfilUpgradeButton />
           </div>
 
         </div>

@@ -3,10 +3,13 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import pdf from "pdf-parse";
+import { FieldValue } from "firebase-admin/firestore";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile } from "../../../../../lib/storage/blob";
 import { injectPlaceholders, fillDocx } from "../../../../../lib/utils/docx-filler";
+import { getCurrentUserProfile } from "../../../../../lib/auth/session";
+import { PLAN_LIMITS } from "../../../../../lib/services/limits";
 import type { PlanoRecord, TemplateFieldSchema, TemplateRecord } from "../../../../../lib/types/firestore";
 
 function sanitizeFilename(name: string, ext: string): string {
@@ -251,9 +254,42 @@ function buildFallbackPdf(
   });
 }
 
-export const maxDuration = 60; // Vercel Pro: até 60s para conversão CloudConvert
+export const maxDuration = 60;
 
-// ── CloudConvert: DOCX → PDF ─────────────────────────────────────────────────
+// ── Gotenberg: DOCX → PDF (self-hosted, LibreOffice) ────────────────────────
+// Resposta síncrona — sem polling. Muito mais simples que CloudConvert.
+
+async function convertDocxToPdfGotenberg(
+  docxBuffer: Buffer,
+  filename: string,
+): Promise<Buffer> {
+  const baseUrl = process.env.GOTENBERG_URL?.replace(/\/$/, "");
+  const apiKey  = process.env.GOTENBERG_API_KEY;
+  if (!baseUrl) throw new Error("GOTENBERG_URL não configurada");
+
+  const form = new FormData();
+  form.append(
+    "files",
+    new Blob([new Uint8Array(docxBuffer)], {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }),
+    filename,
+  );
+
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["X-Api-Key"] = apiKey;
+
+  const res = await fetch(`${baseUrl}/forms/libreoffice/convert`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+
+  if (!res.ok) throw new Error(`Gotenberg: conversão falhou (HTTP ${res.status})`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// ── CloudConvert: DOCX → PDF (fallback enquanto há créditos) ────────────────
 
 interface CCTask {
   id: string;
@@ -361,6 +397,11 @@ export async function GET(
       return NextResponse.json({ error: "ID do plano é obrigatório." }, { status: 400 });
     }
 
+    const user = await getCurrentUserProfile();
+    if (!user) {
+      return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
+    }
+
     const db = getAdminDb();
     const planoSnap = await db.collection("magis_planos").doc(id).get();
 
@@ -369,6 +410,25 @@ export async function GET(
     }
 
     const planoData = planoSnap.data() as PlanoRecord;
+
+    if (planoData.user_id !== user.uid) {
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    }
+
+    const planoKey = user.plano?.trim().toLowerCase() || "free";
+    const limits = PLAN_LIMITS[planoKey] ?? PLAN_LIMITS.free;
+    const currentDownloads = planoData.downloads ?? 0;
+
+    if (currentDownloads >= limits.maxDownloadsPerPlano) {
+      return NextResponse.json(
+        {
+          error: "Limite de downloads atingido para este plano de aula.",
+          downloads: currentDownloads,
+          maxDownloads: limits.maxDownloadsPerPlano,
+        },
+        { status: 403 },
+      );
+    }
     const conteudo = normalizeConteudo(planoData.conteudo_gerado ?? {});
 
     // Use plan title as filename if set, otherwise fall back to template name
@@ -423,6 +483,7 @@ export async function GET(
           // Baixar DOCX diretamente
           const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
           const docxFilename = sanitizeFilename(fileBaseName, ext);
+          void db.collection("magis_planos").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
           return new NextResponse(new Blob([new Uint8Array(filledBuffer)], { type: mimeType }), {
             headers: {
               "Content-Type": mimeType,
@@ -432,12 +493,23 @@ export async function GET(
           });
         }
 
-        // Converter DOCX → PDF via CloudConvert
-        const pdfBuffer = await convertDocxToPdfCloudConvert(
-          filledBuffer,
-          sanitizeFilename(fileBaseName, "docx"),
-        );
+        // Converter DOCX → PDF: Gotenberg → CloudConvert → erro
+        let pdfBuffer: Buffer;
+        try {
+          if (!process.env.GOTENBERG_URL) throw new Error("Gotenberg não configurado");
+          pdfBuffer = await convertDocxToPdfGotenberg(
+            filledBuffer,
+            sanitizeFilename(fileBaseName, "docx"),
+          );
+        } catch (gotenbergErr) {
+          console.warn("[PlanoMagistra/download] Gotenberg falhou, tentando CloudConvert:", gotenbergErr);
+          pdfBuffer = await convertDocxToPdfCloudConvert(
+            filledBuffer,
+            sanitizeFilename(fileBaseName, "docx"),
+          );
+        }
         const pdfFilename = sanitizeFilename(fileBaseName, "pdf");
+        void db.collection("magis_planos").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
         return new NextResponse(new Uint8Array(pdfBuffer), {
           headers: {
             "Content-Type": "application/pdf",

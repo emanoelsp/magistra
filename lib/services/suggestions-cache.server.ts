@@ -11,6 +11,8 @@ export function buildCacheKey(
   fieldKey: string,
   templateId: string,
   metadata: Record<string, string>,
+  userId: string,
+  schemaHash?: string,
   extraContext?: string,
 ): string {
   const metaStr = Object.entries(metadata)
@@ -18,7 +20,7 @@ export function buildCacheKey(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v.trim().toLowerCase()}`)
     .join("|");
-  const raw = `${templateId}::${fieldKey}::${metaStr}::${extraContext?.trim() ?? ""}`;
+  const raw = `${userId}::${templateId}::${fieldKey}::${schemaHash ?? ""}::${metaStr}::${extraContext?.trim() ?? ""}`;
   return createHash("sha256").update(raw).digest("hex").slice(0, 32);
 }
 
@@ -39,13 +41,14 @@ export async function getCachedSuggestions(cacheKey: string): Promise<IaSugestao
 export async function setCachedSuggestions(
   cacheKey: string,
   sugestoes: IaSugestao[],
-  meta: { fieldKey: string; templateId: string },
+  meta: { fieldKey: string; templateId: string; userId: string },
 ): Promise<void> {
   const db = getAdminDb();
   await db.collection("magis_suggestions_cache").doc(cacheKey).set({
     sugestoes,
     field_key: meta.fieldKey,
     template_id: meta.templateId,
+    user_id: meta.userId,
     created_at: new Date(),
     expires_at: new Date(Date.now() + CACHE_TTL_MS),
   });

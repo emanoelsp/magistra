@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Edit2, Eye, FileText, FilePen, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Edit2, Eye, FileText, FilePen, Plus, Trash2 } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateOption } from "../../lib/types/firestore";
@@ -90,6 +90,22 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
                 {template.campoCount === 0 && (
                   <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
                     Sem campos
+                  </span>
+                )}
+
+                {template.fillable_status === "processando" && (
+                  <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                    <Clock className="h-3 w-3 animate-pulse" /> Preparando DOCX…
+                  </span>
+                )}
+                {template.fillable_status === "pronto" && (
+                  <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                    <CheckCircle2 className="h-3 w-3" /> DOCX pronto
+                  </span>
+                )}
+                {template.fillable_status === "erro" && (
+                  <span className="flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700" title="Falha ao gerar o DOCX preenchível. Tente re-introspectar o template.">
+                    <AlertCircle className="h-3 w-3" /> Erro no DOCX
                   </span>
                 )}
 

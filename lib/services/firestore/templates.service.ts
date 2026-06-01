@@ -142,6 +142,10 @@ export const templatesService = {
   },
 
   async deleteTemplate(templateId: string): Promise<void> {
-    await deleteDoc(doc(templatesCollection, templateId));
+    // Soft delete: set deleted_at instead of permanently removing
+    // so that associated planos retain access to the schema snapshot
+    await updateDoc(doc(templatesCollection, templateId), {
+      deleted_at: new Date().toISOString(),
+    });
   },
 };

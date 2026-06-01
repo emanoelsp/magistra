@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getAdminAuth, getAdminDb } from "../firebase/admin";
+import { normalizePlanKey } from "../services/plan-config";
 import type { UserProfile } from "../types/firestore";
 
 const SESSION_COOKIE_NAME = "__session";
@@ -24,7 +25,8 @@ export const getCurrentSession = cache(async (): Promise<SessionIdentity | null>
   }
 
   try {
-    const decodedToken = await getAdminAuth().verifyIdToken(sessionCookie);
+    // verifySessionCookie verifica o session cookie de longa duração (createSessionCookie)
+    const decodedToken = await getAdminAuth().verifySessionCookie(sessionCookie, true);
 
     return {
       uid: decodedToken.uid,
@@ -54,12 +56,13 @@ export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null>
       typeof userData.escola_padrao === "string" && userData.escola_padrao.length > 0
         ? userData.escola_padrao
         : null,
-    plano: typeof userData.plano === "string" && userData.plano.length > 0 ? userData.plano : "medio",
+    plano: normalizePlanKey(typeof userData.plano === "string" ? userData.plano : null),
     plano_validade: typeof userData.plano_validade === "string" ? userData.plano_validade : null,
     tokens_usados_mes:
       typeof userData.tokens_usados_mes === "number" && Number.isFinite(userData.tokens_usados_mes)
         ? userData.tokens_usados_mes
         : 0,
+    role: userData.role === "admin" ? "admin" : "professor",
   };
 });
 

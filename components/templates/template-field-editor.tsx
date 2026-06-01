@@ -65,8 +65,8 @@ function newField(): TemplateFieldSchema {
 
 // ─── DocxViewer ────────────────────────────────────────────────────────────────
 // Two view modes:
-//   "office"      → Microsoft Office Online iframe (pixel-perfect, images/fonts exact)
-//   "interactive" → docx-preview (click-to-add-field works, but images may look scaled)
+//   "interactive" → docx-preview (click-to-add-field, works offline/localhost)
+//   "office"      → Microsoft Office Online iframe (pixel-perfect, requires HTTPS)
 
 interface DocxViewerProps {
   templateId: string;
@@ -77,39 +77,97 @@ interface DocxViewerProps {
 }
 
 function DocxViewer({ templateId, arquivoUrl, fields, activeKey, onClickElement }: DocxViewerProps) {
+  const [viewMode, setViewMode] = useState<"interactive" | "office">("interactive");
+  const [officeEmbedUrl, setOfficeEmbedUrl] = useState<string | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [isLocalhost, setIsLocalhost] = useState(true);
+
+  useEffect(() => {
+    const host = window.location.hostname;
+    setIsLocalhost(host === "localhost" || host === "127.0.0.1" || host.endsWith(".local"));
+  }, []);
+
+  async function activateOfficeView() {
+    if (officeEmbedUrl) { setViewMode("office"); return; }
+    setTokenLoading(true);
+    try {
+      const res = await fetch(`/api/templates/${templateId}/preview-token`);
+      if (!res.ok) throw new Error();
+      const { token, exp } = (await res.json()) as { token: string; exp: number };
+      const previewPath = `/api/templates/${templateId}/preview-publico?token=${encodeURIComponent(token)}&exp=${exp}`;
+      const previewUrl = `${window.location.origin}${previewPath}`;
+      setOfficeEmbedUrl(
+        `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`,
+      );
+      setViewMode("office");
+    } catch {
+      // stay in interactive mode
+    } finally {
+      setTokenLoading(false);
+    }
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {onClickElement && (
-        <div className="shrink-0 flex items-center justify-end border-b border-slate-100 bg-white px-3 py-2">
-          <p className="text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
+      {/* Toolbar */}
+      <div className="shrink-0 flex items-center justify-between border-b border-slate-100 bg-white px-3 py-1.5">
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode("interactive")}
+            className={`rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition ${
+              viewMode === "interactive"
+                ? "bg-slate-100 text-slate-950"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            Interativo
+          </button>
+          {isLocalhost ? (
+            <span className="ml-1 text-[10px] italic text-slate-400">
+              Preview Word disponível em produção
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void activateOfficeView()}
+              disabled={tokenLoading}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition disabled:opacity-60 ${
+                viewMode === "office"
+                  ? "bg-slate-100 text-slate-950"
+                  : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {tokenLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+              Preview Word
+            </button>
+          )}
         </div>
+        {viewMode === "interactive" && onClickElement && (
+          <p className="text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
+        )}
+      </div>
+
+      {viewMode === "office" && officeEmbedUrl ? (
+        <iframe
+          src={officeEmbedUrl}
+          className="flex-1 w-full border-0"
+          title="Pré-visualização do documento"
+          allowFullScreen
+        />
+      ) : (
+        <DocxInteractive
+          templateId={templateId}
+          fields={fields}
+          activeKey={activeKey}
+          onClickElement={onClickElement}
+        />
       )}
-      <DocxInteractive
-        templateId={templateId}
-        fields={fields}
-        activeKey={activeKey}
-        onClickElement={onClickElement}
-      />
     </div>
   );
 }
 
-// ─── OfficeViewer ─────────────────────────────────────────────────────────────
-// Embeds Microsoft Office Online for pixel-perfect DOCX rendering.
-
-function OfficeViewer({ arquivoUrl }: { arquivoUrl: string }) {
-  const src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(arquivoUrl)}`;
-  return (
-    <iframe
-      src={src}
-      className="flex-1 w-full border-0"
-      title="Pré-visualização do documento"
-      allowFullScreen
-    />
-  );
-}
-
-// ─── DocxInteractive ─────────────────────────────────────────────────────────
+// ─── DocxInteractive ──────────────────────────────────────────────────────────
 // docx-preview renderer with highlight and click-to-add-field support.
 
 interface DocxInteractiveProps {
@@ -259,28 +317,25 @@ function DocxInteractive({ templateId, fields, activeKey, onClickElement }: Docx
     };
   }, [phase, onClickElement]);
 
-  const busy = phase === "loading" || phase === "rendering";
-
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
       <style>{`
-        .docx-wrapper { background: #f1f5f9 !important; padding: 20px 12px !important; }
-        .docx-wrapper section.docx {
-          box-shadow: 0 2px 8px rgba(0,0,0,.10), 0 8px 32px rgba(0,0,0,.07) !important;
-          border-radius: 3px !important;
-          margin-bottom: 16px !important;
-        }
+        .docx-html-preview { background: #f1f5f9; padding: 20px 12px; }
+        .docx-html-preview table { border-collapse: collapse; }
+        .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; }
+        .docx-html-preview img { max-width: 100%; height: auto; }
+        .docx-html-preview p { margin: 0.2em 0; }
       `}</style>
       <div
         ref={scrollerRef}
-        className={`flex-1 overflow-y-auto ${busy || phase === "error" ? "invisible absolute" : ""}`}
+        className={`flex-1 overflow-y-auto ${phase === "error" ? "invisible absolute" : ""}`}
       >
-        <div ref={containerRef} />
+        <div ref={containerRef} className="docx-html-preview" />
       </div>
-      {busy && (
+      {phase === "loading" && (
         <div className="flex h-full items-center justify-center gap-3 text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
-          <span className="text-sm">{phase === "loading" ? "Carregando documento…" : "Renderizando…"}</span>
+          <span className="text-sm">Carregando documento…</span>
         </div>
       )}
       {phase === "error" && (

@@ -46,16 +46,27 @@ interface TableInfo {
   borders?: Partial<Record<"top" | "bottom" | "left" | "right" | "insideH" | "insideV", BorderStyle>>;
 }
 
+interface ImageDimension {
+  widthPx: number;
+  heightPx: number;
+}
+
 interface DocxLayout {
   gridWidths: number[][];
   cellAligns: string[];
   cellStyles: CellStyle[];
   rowStyles: RowStyle[];
   tableInfos: TableInfo[];
+  imageDims: ImageDimension[];
 }
 
 function emptyLayout(): DocxLayout {
-  return { gridWidths: [], cellAligns: [], cellStyles: [], rowStyles: [], tableInfos: [] };
+  return { gridWidths: [], cellAligns: [], cellStyles: [], rowStyles: [], tableInfos: [], imageDims: [] };
+}
+
+// 1 EMU = 1/914400 inch; at 96 DPI → px = EMU / 9525
+function emuToPx(emu: number): number {
+  return Math.round(emu / 9525);
 }
 
 // ─── Border helpers ───────────────────────────────────────────────────────────
@@ -224,7 +235,24 @@ async function extractDocxLayout(buffer: Buffer): Promise<DocxLayout> {
       cellStyles.push(style);
     }
 
-    return { gridWidths, cellAligns, cellStyles, rowStyles, tableInfos };
+    // 5. Image dimensions — one entry per <w:drawing> in document order
+    // Each <wp:extent cx="..." cy="..."/> gives the image size in EMU.
+    // This lets us inject width/height onto <img> tags so table columns
+    // don't collapse when images have no intrinsic HTML size.
+    const imageDims: ImageDimension[] = [];
+    const drawingRe = /<w:drawing\b[^>]*>([\s\S]*?)<\/w:drawing>/g;
+    let dm: RegExpExecArray | null;
+    while ((dm = drawingRe.exec(xmlContent)) !== null) {
+      const extentMatch = dm[1].match(/wp:extent\b[^/]*cx="(\d+)"[^/]*cy="(\d+)"/);
+      if (extentMatch) {
+        imageDims.push({
+          widthPx: emuToPx(Number(extentMatch[1])),
+          heightPx: emuToPx(Number(extentMatch[2])),
+        });
+      }
+    }
+
+    return { gridWidths, cellAligns, cellStyles, rowStyles, tableInfos, imageDims };
   } catch {
     return emptyLayout();
   }
@@ -321,6 +349,39 @@ function injectRowStyles(html: string, styles: RowStyle[]): string {
       return `<tr${attrs.replace(/\bstyle="([^"]*)"/, `style="$1;${newStyle}`)}>`;
     }
     return `<tr${attrs} style="${newStyle}">`;
+  });
+}
+
+// Applies explicit width/height to every <img> in document order using the
+// dimensions extracted from <wp:extent> in the DOCX XML.
+// Without this, browsers can't determine column widths for tables containing
+// images, causing the layout to collapse (header logos moving to wrong position).
+function injectImageSizes(html: string, dims: ImageDimension[]): string {
+  if (dims.length === 0) return html;
+  // Cap at 400px so oversized images don't overflow the preview panel
+  const MAX_W = 400;
+  let i = 0;
+  return html.replace(/<img([^>]*?)(\s*\/?>)/g, (match, attrs, close) => {
+    const dim = dims[i++];
+    if (!dim) return match;
+    const scale = dim.widthPx > MAX_W ? MAX_W / dim.widthPx : 1;
+    const w = Math.round(dim.widthPx * scale);
+    const h = Math.round(dim.heightPx * scale);
+    // Only inject if not already present
+    if (/\bwidth=/i.test(attrs)) return match;
+    return `<img${attrs} width="${w}" height="${h}" style="display:block;max-width:100%"${close}`;
+  });
+}
+
+// Forces all tables to fixed layout so <colgroup> percentages are respected.
+// Without this, browsers auto-size columns by content and ignore column widths.
+function injectTableFixed(html: string): string {
+  return html.replace(/<table([^>]*)>/g, (match, attrs) => {
+    const style = "table-layout:fixed;width:100%;border-collapse:collapse";
+    if (/\bstyle="/.test(attrs)) {
+      return `<table${attrs.replace(/\bstyle="([^"]*)"/, `style="$1;${style}"`)}>`;
+    }
+    return `<table${attrs} style="${style}">`;
   });
 }
 
@@ -486,10 +547,12 @@ export async function GET(
 
     // Apply layout and styling, then annotate interactive fields
     const withColWidths = injectColgroups(rawHtml, layout.gridWidths);
-    const withAlignments = injectCellAlignments(withColWidths, layout.cellAligns);
+    const withFixed = injectTableFixed(withColWidths);
+    const withAlignments = injectCellAlignments(withFixed, layout.cellAligns);
     const withCellStyles = injectCellStyles(withAlignments, layout.cellStyles);
     const withRowStyles = injectRowStyles(withCellStyles, layout.rowStyles);
-    const annotated = annotateFields(withRowStyles, schema);
+    const withImageSizes = injectImageSizes(withRowStyles, layout.imageDims);
+    const annotated = annotateFields(withImageSizes, schema);
 
     return NextResponse.json({ html: annotated });
   } catch (err) {

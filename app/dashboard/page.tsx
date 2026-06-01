@@ -71,13 +71,14 @@ function UsagePill({ used, max, label, icon }: UsagePillProps) {
 
 export default async function DashboardPage() {
   const user = await requireCurrentUserProfile();
-  const [stats, planos, templates, limits] = await Promise.all([
+  const [stats, planosResult, templates, limits] = await Promise.all([
     getDashboardStats(user),
-    getUserPlanosComNome(user.uid, 5),
+    getUserPlanosComNome(user.uid, 5, 1),
     getRecentTemplates(user.uid, 4),
     getLimitsStatus(user.uid, user.plano),
   ]);
 
+  const planos = planosResult.items;
   const primeiroNome = (user.nome ?? user.email ?? "Professor").split(" ")[0];
   const temTemplates = stats.totalTemplates > 0;
   const canAddTemplate = limits.canCreateTemplate;

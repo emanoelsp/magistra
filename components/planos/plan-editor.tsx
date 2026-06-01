@@ -295,6 +295,10 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   // Preview mode: read-only view of filled doc
   const [previewMode, setPreviewMode] = useState(false);
 
+  // Once a plan is finalized (exported), it becomes read-only to prevent
+  // users from editing and re-downloading without consuming a new plan from their limit
+  const [isFinalized, setIsFinalized] = useState(false);
+
   const hasDocx =
     (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
 
@@ -435,8 +439,17 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metadataComplete]);
 
+  function trackSugestaoAceita(sugestaoId: string, tipo: "titulo" | "completo") {
+    void fetch("/api/ia/aceitar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: template.id, fieldKey: activeFieldKey, sugestaoId, tipo }),
+    }).catch(() => {});
+  }
+
   function insertSuggestion(suggestion: IaSugestao, mode: "label" | "full" = "label") {
     if (!activeFieldKey) return;
+    trackSugestaoAceita(suggestion.id, mode === "full" ? "completo" : "titulo");
 
     const text =
       mode === "full" && suggestion.descricao
@@ -487,6 +500,12 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     };
     if (planoId) {
       await planosService.updatePlano(planoId, { conteudo_gerado: conteudo, status });
+      // Snapshot version on every save (fire-and-forget)
+      void fetch(`/api/planos/${planoId}/versoes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conteudo_gerado: conteudo }),
+      }).catch(() => {});
       return planoId;
     }
     // Snapshot schema_campos at creation so preview/download survive future template edits
@@ -516,6 +535,14 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       void savePlano("gerado")
         .then((id) => {
           setSaveStatus("saved");
+          setIsFinalized(true);
+          setPreviewMode(true);
+          // Update pedagogic memory in background (fire-and-forget)
+          void fetch("/api/ia/memoria", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conteudo: values, metadata: extractMetadata(values, schema) }),
+          }).catch(() => {});
           const url =
             format === "pdf"
               ? `/api/planos/${id}/download?format=pdf`
@@ -571,7 +598,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
               {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               Salvar rascunho
             </button>
-            {docHtml && (
+            {docHtml && !isFinalized && (
               <button
                 type="button"
                 onClick={() => setPreviewMode((v) => !v)}
@@ -804,35 +831,57 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         )}
         {previewMode && (
           <div className="flex w-64 shrink-0 flex-col items-center justify-center gap-4 border-l border-slate-100 bg-slate-50 p-6 text-center">
-            <Eye className="h-8 w-8 text-slate-300" />
-            <div>
-              <p className="text-sm font-semibold text-slate-700">Modo visualização</p>
-              <p className="mt-1 text-xs text-slate-500">
-                Veja o documento preenchido. Clique em "Editar" para continuar modificando os campos.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2 w-full">
-              {hasDocx && (
-                <button
-                  type="button"
-                  onClick={() => handleExport("docx")}
-                  disabled={isSaving}
-                  className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 disabled:opacity-50"
+            {isFinalized ? (
+              <>
+                <div className="rounded-full bg-emerald-100 p-3">
+                  <CheckCircle2 className="h-7 w-7 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">Plano finalizado</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Este plano está concluído e não pode ser editado novamente. Para uma nova turma ou versão, gere um novo plano.
+                  </p>
+                </div>
+                <a
+                  href="/dashboard/gerar"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
                 >
-                  <FileText className="h-3.5 w-3.5" />
-                  Exportar DOCX
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => handleExport("pdf")}
-                disabled={isSaving}
-                className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-500 disabled:opacity-50"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Exportar PDF
-              </button>
-            </div>
+                  Gerar novo plano
+                </a>
+              </>
+            ) : (
+              <>
+                <Eye className="h-8 w-8 text-slate-300" />
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">Modo visualização</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Veja o documento preenchido. Clique em "Editar" para continuar modificando os campos.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 w-full">
+                  {hasDocx && (
+                    <button
+                      type="button"
+                      onClick={() => handleExport("docx")}
+                      disabled={isSaving}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 disabled:opacity-50"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      Exportar DOCX
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleExport("pdf")}
+                    disabled={isSaving}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Exportar PDF
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

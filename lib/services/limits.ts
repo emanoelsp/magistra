@@ -1,21 +1,10 @@
 import "server-only";
 
 import { getAdminDb } from "../firebase/admin";
-
-export interface PlanLimits {
-  maxTemplates: number;
-  maxPlanosPerMonth: number;
-}
-
-export const PLAN_LIMITS: Record<string, PlanLimits> = {
-  free:     { maxTemplates: 1,   maxPlanosPerMonth: 1   },  // Explorador — R$0
-  starter:  { maxTemplates: 1,   maxPlanosPerMonth: 2   },  // Educador   — R$9,90
-  medio:    { maxTemplates: 2,   maxPlanosPerMonth: 4   },  // Mestre     — R$19,90
-  pro:      { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // Regente    — R$49,90
-  avancado: { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // alias → Regente
-  premium:  { maxTemplates: 5,   maxPlanosPerMonth: 10  },  // alias → Regente
-  escola:   { maxTemplates: 999, maxPlanosPerMonth: 999 },  // Escola     — sob consulta
-};
+export { PLAN_LIMITS, PLAN_PRICES_BRL, PLAN_LABELS, normalizePlanKey } from "./plan-config";
+export type { PlanLimits } from "./plan-config";
+import { PLAN_LIMITS, normalizePlanKey } from "./plan-config";
+import type { PlanLimits } from "./plan-config";
 
 export interface LimitsStatus {
   canCreateTemplate: boolean;
@@ -48,26 +37,39 @@ function toDate(value: unknown): Date | null {
 
 export async function getLimitsStatus(userId: string, plano: string): Promise<LimitsStatus> {
   const db = getAdminDb();
-  const normalizedPlano = plano?.trim().toLowerCase() || "free";
-  const limits = PLAN_LIMITS[normalizedPlano] ?? PLAN_LIMITS.free;
+  const normalizedPlano = normalizePlanKey(plano);
+  const baseLimits = PLAN_LIMITS[normalizedPlano] ?? PLAN_LIMITS.free;
 
-  const [templatesSnap, planosSnap] = await Promise.all([
+  const [templatesSnap, planosSnap, userSnap] = await Promise.all([
     db.collection("magis_templates").where("user_id", "==", userId).get(),
     db.collection("magis_planos").where("user_id", "==", userId).get(),
+    db.collection("magis_users").doc(userId).get(),
   ]);
+
+  const userData = userSnap.data() ?? {};
+  const avulsoTemplates = (userData.avulso_templates as number | undefined) ?? 0;
+  const avulsoPlanos = (userData.avulso_planos as number | undefined) ?? 0;
+
+  const limits: PlanLimits = {
+    ...baseLimits,
+    maxTemplates: baseLimits.maxTemplates >= 999 ? baseLimits.maxTemplates : baseLimits.maxTemplates + avulsoTemplates,
+    maxPlanosPerMonth: baseLimits.maxPlanosPerMonth >= 999 ? baseLimits.maxPlanosPerMonth : baseLimits.maxPlanosPerMonth + avulsoPlanos,
+  };
 
   const monthStart = getMonthStart();
   let currentPlanosThisMonth = 0;
 
   for (const doc of planosSnap.docs) {
     const d = doc.data();
+    if (d.status !== "gerado") continue; // only finalized plans count toward limit
     const created = toDate(d.data_geracao);
     if (created && created >= monthStart) {
       currentPlanosThisMonth += 1;
     }
   }
 
-  const currentTemplates = templatesSnap.size;
+  // Exclude soft-deleted templates from the count
+  const currentTemplates = templatesSnap.docs.filter((d) => !d.data().deleted_at).length;
 
   return {
     canCreateTemplate: currentTemplates < limits.maxTemplates,

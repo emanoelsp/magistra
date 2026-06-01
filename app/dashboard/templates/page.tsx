@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { ArrowLeft, FileText, Sparkles, TrendingUp } from "lucide-react";
+import { ArrowLeft, FileText, Sparkles } from "lucide-react";
 
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
 import { TemplatesUploader } from "../../../components/templates/templates-uploader";
 import { TemplatesList } from "../../../components/templates/templates-list";
+import { LimitActions } from "../../../components/dashboard/limit-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -101,22 +102,7 @@ export default async function TemplatesPage() {
       <section>
         {templateLimitReached ? (
           <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-sm">
-            <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <Link
-                href="/dashboard/perfil"
-                className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-              >
-                <TrendingUp className="h-4 w-4" />
-                Fazer upgrade do plano
-              </Link>
-              <div className="relative flex cursor-not-allowed select-none items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm font-medium text-slate-400">
-                <Sparkles className="h-4 w-4" />
-                Contratar templates avulsos
-                <span className="absolute -right-2 -top-2 rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-                  Em breve
-                </span>
-              </div>
-            </div>
+            <LimitActions avulsoTipo="avulso_template" avulsoLabel="Contratar template avulso" />
           </div>
         ) : (
           <TemplatesUploader userId={user.uid} />

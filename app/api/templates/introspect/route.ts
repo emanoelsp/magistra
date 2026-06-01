@@ -7,6 +7,8 @@ import pdf from "pdf-parse";
 import PizZip from "pizzip";
 
 import { getAdminDb } from "../../../../lib/firebase/admin";
+import { requireCurrentUserProfile } from "../../../../lib/auth/session";
+import { getLimitsStatus } from "../../../../lib/services/limits";
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -188,9 +190,12 @@ function parseSchema(raw: string): unknown {
 
 export async function POST(request: Request) {
   try {
+    const user = await requireCurrentUserProfile();
+
     const formData = await request.formData();
     const templateId = (formData.get("templateId") as string | null) ?? null;
     const file = formData.get("file") as File | null;
+    const isNew = formData.get("isNew") === "true"; // flag to distinguish create vs re-introspect
 
     console.log("[PlanoMagistra] 2. Extraindo campos do template...", {
       templateId,
@@ -200,6 +205,27 @@ export async function POST(request: Request) {
 
     if (!templateId || !file) {
       return NextResponse.json({ error: "templateId e arquivo PDF são obrigatórios." }, { status: 400 });
+    }
+
+    // Enforce template limit only on first introspection (template creation)
+    if (isNew) {
+      const limits = await getLimitsStatus(user.uid, user.plano ?? "free");
+      if (!limits.canCreateTemplate) {
+        return NextResponse.json(
+          {
+            error: `Limite de ${limits.limits.maxTemplates} templates atingido. Faça upgrade do plano.`,
+            limitReached: true,
+          },
+          { status: 403 },
+        );
+      }
+    }
+
+    // Verify template ownership
+    const db = getAdminDb();
+    const templateSnap = await db.collection("magis_templates").doc(templateId).get();
+    if (!templateSnap.exists || templateSnap.data()?.user_id !== user.uid) {
+      return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
     }
 
     const pdfText = await extractFileText(file);
@@ -251,8 +277,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
 
-    const db = getAdminDb();
-    await db.collection("magis_templates").doc(templateId).update({ schema_campos: schema });
+    await db.collection("magis_templates").doc(templateId).update({
+      schema_campos: schema,
+      fillable_status: "processando",
+    });
 
     console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: (schema as unknown[]).length });
 
@@ -260,12 +288,18 @@ export async function POST(request: Request) {
       try {
         const { downloadFile, uploadFile } = await import("../../../../lib/storage/blob");
         const { injectPlaceholders } = await import("../../../../lib/utils/docx-filler");
-        const templateSnap = await db.collection("magis_templates").doc(templateId).get();
-        const tData = templateSnap.data();
+        const templateSnapFill = await db.collection("magis_templates").doc(templateId).get();
+        const tData = templateSnapFill.data();
         const originalUrl = typeof tData?.arquivo_url === "string" ? tData.arquivo_url : null;
-        if (!originalUrl) return;
+        if (!originalUrl) {
+          await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" });
+          return;
+        }
         const isDocx = /\.(docx|doc)(\?|$)/i.test(originalUrl);
-        if (!isDocx) return;
+        if (!isDocx) {
+          await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" });
+          return;
+        }
 
         const rawBuffer = await downloadFile(originalUrl);
         const fillableBuffer = injectPlaceholders(
@@ -278,9 +312,13 @@ export async function POST(request: Request) {
           buffer: fillableBuffer,
           contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         });
-        await db.collection("magis_templates").doc(templateId).update({ arquivo_fillable_url: fillableUrl });
+        await db.collection("magis_templates").doc(templateId).update({
+          arquivo_fillable_url: fillableUrl,
+          fillable_status: "pronto",
+        });
       } catch (e) {
         console.warn("[PlanoMagistra/introspect] Falha ao regenerar DOCX preenchível:", e);
+        await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" }).catch(() => {});
       }
     })();
 

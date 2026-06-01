@@ -1,6 +1,7 @@
 import Link from "next/link";
 import MagisWidget from "../components/magis-widget";
 import { EscolaContactButton } from "../components/escola-contact-modal";
+import { ContactModal } from "../components/landing/contact-modal";
 import { StickyCta } from "../components/landing/sticky-cta";
 import { TermsLink } from "../components/landing/terms-modal";
 import {
@@ -281,7 +282,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* RIGHT — editor split-view mockup */}
+              {/* RIGHT — editor passo a passo mockup */}
               <div className="float hidden lg:block">
                 <div className="overflow-hidden rounded-3xl shadow-2xl shadow-slate-300/60 ring-1 ring-slate-200">
                   {/* Browser chrome */}
@@ -562,7 +563,7 @@ export default function HomePage() {
                     n: "03",
                     icon: Sparkles,
                     title: "Magis sugere em tempo real",
-                    desc: "No editor split-view, foque um campo e a Magis gera sugestões na hora. Insira, edite ou peça uma nova — ela adapta ao perfil da sua turma.",
+                    desc: "No editor passo a passo, foque um campo e a Magis gera sugestões na hora. Insira, edite ou peça uma nova — ela adapta ao perfil da sua turma.",
                     iconBg: "bg-violet-600",
                   },
                   {
@@ -908,8 +909,8 @@ export default function HomePage() {
                       "1 template por mês",
                       "1 plano por mês",
                       "Magis: BNCC, SAEB e CTBC",
-                      "Editor split-view",
-                      "Download DOCX",
+                      "Editor passo a passo",
+                      "1 download por plano (DOCX)",
                     ],
                     href: "/login",
                     cta: "Começar grátis",
@@ -926,6 +927,7 @@ export default function HomePage() {
                     features: [
                       "1 template ativo",
                       "2 planos por mês",
+                      "1 download por plano (DOCX ou PDF)",
                       "Tudo do Explorador",
                       "Prioridade no suporte",
                     ],
@@ -944,6 +946,7 @@ export default function HomePage() {
                     features: [
                       "2 templates ativos",
                       "4 planos por mês",
+                      "2 downloads por plano (DOCX e/ou PDF)",
                       "Tudo do Educador",
                       "Histórico completo",
                     ],
@@ -962,6 +965,7 @@ export default function HomePage() {
                     features: [
                       "5 templates ativos",
                       "10 planos por mês",
+                      "4 downloads por plano (DOCX e/ou PDF)",
                       "Tudo do Mestre",
                       "Relatórios de uso",
                     ],
@@ -1100,22 +1104,22 @@ export default function HomePage() {
         </section>
 
         {/* ── CTA FINAL ────────────────────────────────────────────── */}
-        <section className="bg-slate-950 py-28">
+        <section className="bg-slate-950 py-16">
           <div className="mx-auto max-w-4xl px-6 text-center">
-            <div className="mb-7 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-600">
-              <Sparkles className="h-8 w-8 text-white" />
+            <div className="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600">
+              <Sparkles className="h-7 w-7 text-white" />
             </div>
-            <p className="mb-3 text-[11px] font-bold uppercase tracking-widest text-violet-400">
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-violet-400">
               Magis — Assistente Pedagógica IA
             </p>
             <h2 className="text-4xl font-black tracking-tight text-white sm:text-5xl">
               Seu próximo plano<br />
               <span className="magis-accent">em menos de 5 minutos.</span>
             </h2>
-            <p className="mx-auto mt-5 max-w-lg text-lg text-slate-400">
+            <p className="mx-auto mt-4 max-w-lg text-lg text-slate-400">
               Junte-se a 2.400 professores que já planejam com a Magis — inteligência pedagógica que conhece a BNCC tão bem quanto você.
             </p>
-            <div className="mt-10 flex flex-wrap justify-center gap-4">
+            <div className="mt-8 flex flex-wrap justify-center gap-4">
               <Link
                 href="/login"
                 className="btn-violet inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-8 py-4 text-sm font-bold text-white"
@@ -1131,7 +1135,19 @@ export default function HomePage() {
                 <ChevronRight className="h-4 w-4" />
               </Link>
             </div>
-            <p className="mt-6 text-xs text-slate-600">Sem cartão de crédito. Comece grátis com 1 template e 1 plano por mês.</p>
+
+            {/* Contato — separador visual */}
+            <div className="mx-auto mt-8 max-w-sm">
+              <div className="h-px bg-slate-800" />
+            </div>
+            <div className="mt-5 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+              <p className="text-sm font-medium text-slate-300">
+                Ficou curioso? Entre em contato e tire suas dúvidas.
+              </p>
+              <ContactModal />
+            </div>
+
+            <p className="mt-6 text-xs text-slate-700">Sem cartão de crédito. Comece grátis com 1 template e 1 plano por mês.</p>
           </div>
         </section>
 

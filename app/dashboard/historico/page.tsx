@@ -43,15 +43,22 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
   const tab = tabParam === "templates" ? "templates" : "planos";
   const page = Math.max(1, Number(pageParam) || 1);
 
-  const [planos, templates] = await Promise.all([
-    getUserPlanosComNome(user.uid, 999),
+  const [planosResult, templates] = await Promise.all([
+    getUserPlanosComNome(user.uid, PAGE_SIZE, page),
     getUserTemplateOptions(user.uid),
   ]);
 
-  const items = tab === "planos" ? planos : templates;
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const planos = planosResult.items;
+  const totalPlanos = planosResult.total;
+
+  const templateTotalPages = Math.max(1, Math.ceil(templates.length / PAGE_SIZE));
+  const totalPages = tab === "planos"
+    ? Math.max(1, Math.ceil(totalPlanos / PAGE_SIZE))
+    : templateTotalPages;
   const safePage = Math.min(page, totalPages);
-  const pageItems = items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageItems = tab === "planos"
+    ? planos
+    : templates.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -77,7 +84,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
 
       {/* Tabs */}
       <Suspense fallback={<div className="h-11 w-64 animate-pulse rounded-2xl bg-slate-100" />}>
-        <HistoricoTabs totalPlanos={planos.length} totalTemplates={templates.length} />
+        <HistoricoTabs totalPlanos={totalPlanos} totalTemplates={templates.length} />
       </Suspense>
 
       {/* Lista */}

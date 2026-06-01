@@ -1,7 +1,7 @@
- "use client";
+"use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LockKeyhole } from "lucide-react";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
@@ -11,7 +11,16 @@ import { firebaseAuth, firebaseDb } from "../../lib/firebase/client";
 type Mode = "login" | "signup" | "forgot";
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,6 +54,8 @@ export default function LoginPage() {
             plano_validade: null,
             tokens_usados_mes: 0,
             onboarding_concluido: false,
+            role: "professor",
+            data_criacao: new Date().toISOString(),
           },
           { merge: true },
         );
@@ -62,7 +73,9 @@ export default function LoginPage() {
         throw new Error("Não foi possível criar a sessão segura.");
       }
 
-      router.push(isNewUser ? "/onboarding" : "/dashboard");
+      const next = searchParams.get("next");
+      const destination = isNewUser ? "/onboarding" : (next && next.startsWith("/") ? next : "/dashboard");
+      router.push(destination);
       router.refresh();
     } catch (err) {
       console.error(err);
