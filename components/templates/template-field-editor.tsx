@@ -73,10 +73,11 @@ interface DocxViewerProps {
   arquivoUrl: string;
   fields: TemplateFieldSchema[];
   activeKey: string | null;
-  onClickElement?: (text: string) => void;
+  previewVersion?: number;
+  onClickElement?: (text: string, ordinal: number) => void;
 }
 
-function DocxViewer({ templateId, arquivoUrl, fields, activeKey, onClickElement }: DocxViewerProps) {
+function DocxViewer({ templateId, arquivoUrl, fields, activeKey, previewVersion, onClickElement }: DocxViewerProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
@@ -90,6 +91,7 @@ function DocxViewer({ templateId, arquivoUrl, fields, activeKey, onClickElement 
         templateId={templateId}
         fields={fields}
         activeKey={activeKey}
+        previewVersion={previewVersion}
         onClickElement={onClickElement}
       />
     </div>
@@ -103,24 +105,30 @@ interface DocxInteractiveProps {
   templateId: string;
   fields: TemplateFieldSchema[];
   activeKey: string | null;
-  onClickElement?: (text: string) => void;
+  previewVersion?: number;
+  onClickElement?: (text: string, ordinal: number) => void;
 }
 
-function DocxInteractive({ templateId, fields, activeKey, onClickElement }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, activeKey, previewVersion = 0, onClickElement }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
 
-  // Phase 1: fetch file
+  // Phase 1: fetch file — reload whenever previewVersion changes
   useEffect(() => {
+    setPhase("loading");
+    bufferRef.current = null;
     let cancelled = false;
-    fetch(`/api/templates/${templateId}/arquivo`)
+    // Try fillable first; fall back to original if not available
+    fetch(`/api/templates/${templateId}/arquivo?fillable=1`)
+      .then((r) => r.ok ? r : fetch(`/api/templates/${templateId}/arquivo`))
       .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
       .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
       .catch(() => { if (!cancelled) setPhase("error"); });
     return () => { cancelled = true; };
-  }, [templateId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateId, previewVersion]);
 
   // Phase 2: render → scale to fit → show
   useEffect(() => {
@@ -229,8 +237,12 @@ function DocxInteractive({ templateId, fields, activeKey, onClickElement }: Docx
     };
     const onClick = (e: Event) => {
       e.stopPropagation();
-      const text = (e.currentTarget as HTMLElement).textContent?.trim() ?? "";
-      if (text) onClickElement(text);
+      const el = e.currentTarget as HTMLElement;
+      const text = el.textContent?.trim() ?? "";
+      const ordinal = els
+        .slice(0, els.indexOf(el))
+        .filter((t) => t.textContent?.trim() === text).length;
+      onClickElement(text, ordinal);
     };
     for (const el of els) {
       el.addEventListener("mouseenter", onEnter);
@@ -297,6 +309,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
   const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
+  const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number }>>({});
+  const [previewVersion, setPreviewVersion] = useState(0);
 
   const fieldListRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
@@ -348,7 +362,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setActiveFieldKey(f.key);
   }
 
-  function handleAddFromDoc(rawText: string) {
+  function handleAddFromDoc(rawText: string, clickOrdinal = 0) {
     let label = rawText.trim();
     let defaultValue: string | undefined;
 
@@ -409,6 +423,13 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setFields((prev) => [...prev, f]);
     setExpandedField(f.key);
     setActiveFieldKey(f.key);
+    // Store the clicked cell's position for direct DOCX injection on save
+    if (rawText.trim()) {
+      setFieldPositions((prev) => ({
+        ...prev,
+        [f.key]: { cellText: rawText.trim(), ordinal: clickOrdinal },
+      }));
+    }
   }
 
   function removeField(index: number) {
@@ -416,6 +437,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setFields((prev) => prev.filter((_, i) => i !== index));
     if (activeFieldKey === key) setActiveFieldKey(null);
     if (expandedField === key) setExpandedField(null);
+    if (key) setFieldPositions((prev) => { const next = { ...prev }; delete next[key]; return next; });
   }
 
   function updateField(index: number, patch: Partial<TemplateFieldSchema>) {
@@ -449,12 +471,25 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     }
 
     startTransition(() => {
-      void templatesService
-        .updateTemplate(template.id, {
+      void fetch(`/api/templates/${template.id}/schema`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           nome: nome.trim() || template.nome,
           schema_campos: fields,
+          field_positions: fieldPositions,
+        }),
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const d = await res.json().catch(() => null) as { error?: string } | null;
+            throw new Error(d?.error ?? "Falha ao salvar.");
+          }
+          return res.json();
         })
         .then(() => {
+          // Clear positions — they've been applied to the DOCX
+          setFieldPositions({});
           if (mode === "confirm") {
             setShowConfirmSuccess(true);
             setTimeout(() => {
@@ -463,6 +498,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             }, 3000);
           } else {
             setSaved(true);
+            setPreviewVersion((v) => v + 1);
             setTimeout(() => setSaved(false), 2500);
             router.refresh();
           }
@@ -944,7 +980,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         <div className="flex gap-6" style={{ minHeight: "calc(100vh - 280px)" }}>
           {/* Left: document preview */}
           <div className="hidden w-[65%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 xl:flex xl:flex-col">
-            <DocxViewer templateId={template.id} arquivoUrl={template.arquivo_url ?? ""} fields={fields} activeKey={expandedField} onClickElement={handleAddFromDoc} />
+            <DocxViewer templateId={template.id} arquivoUrl={template.arquivo_url ?? ""} fields={fields} activeKey={expandedField} previewVersion={previewVersion} onClickElement={handleAddFromDoc} />
           </div>
 
           {/* Right: field list */}

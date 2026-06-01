@@ -159,6 +159,74 @@ function setCellContent(cellXml: string, content: string): string {
   return cellXml.replace(firstPara, newPara);
 }
 
+// ── Remove a single placeholder ─────────────────────────────────────────────
+
+/**
+ * Removes all occurrences of {{fieldKey}} from the DOCX by emptying the
+ * <w:t> element that contains it.  Leaves all other text and formatting intact.
+ */
+export function removePlaceholder(docxBuffer: Buffer, fieldKey: string): Buffer {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  const placeholder = `{{${fieldKey}}}`;
+  let xml = zip.files[xmlPath].asText();
+  if (!xml.includes(placeholder)) return docxBuffer;
+
+  xml = xml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, (match, text: string) =>
+    text === placeholder ? "<w:t/>" : match,
+  );
+
+  zip.file(xmlPath, xml);
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
+// ── Inject at a specific cell (by text fingerprint) ──────────────────────────
+
+/**
+ * Finds the `ordinal`-th <w:tc> whose normalized text equals `cellText` and
+ * injects {{fieldKey}} into it.  If cellText is empty or no match is found,
+ * returns the buffer unchanged so injectPlaceholders() can handle it later.
+ */
+export function injectAtCell(
+  docxBuffer: Buffer,
+  cellText: string,
+  ordinal: number,
+  fieldKey: string,
+): Buffer {
+  if (!cellText.trim()) return docxBuffer;
+
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  let xml = zip.files[xmlPath].asText();
+  const placeholder = `{{${fieldKey}}}`;
+
+  const tcRegex = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
+  let match: RegExpExecArray | null;
+  let hits = 0;
+
+  while ((match = tcRegex.exec(xml)) !== null) {
+    const tcXml = match[0];
+    const text = extractText(tcXml).trim();
+
+    if (normText(text) === normText(cellText)) {
+      if (hits === ordinal) {
+        if (tcXml.includes(placeholder)) return docxBuffer; // already there
+        const newTc = setCellContent(tcXml, placeholder);
+        xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + tcXml.length);
+        zip.file(xmlPath, xml);
+        return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+      }
+      hits++;
+    }
+  }
+
+  return docxBuffer; // no match — caller falls back to injectPlaceholders
+}
+
 // ── Main: inject placeholders ────────────────────────────────────────────────
 
 /**
@@ -182,7 +250,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   if (!zip.files[xmlPath]) throw new Error("DOCX inválido: word/document.xml não encontrado.");
 
   let xml = zip.files[xmlPath].asText();
-  if (xml.includes("{{")) return docxBuffer; // already prepared
+  // Only skip injection if ALL schema fields already have placeholders in the document
+  if (schema.every((f) => xml.includes(`{{${f.key}}}`))) return docxBuffer;
 
   // Only strip change tracking, preserve all other formatting
   xml = stripChangeTracking(xml);
