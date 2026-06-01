@@ -112,8 +112,8 @@ export default async function VisualizarTemplatePage({ params }: PageProps) {
             {!isDocx
               ? "Template PDF — visualização aproximada"
               : hasFillable
-                ? "Preview Word com {{variáveis}} visíveis no documento"
-                : "Preview Word do arquivo original"}
+                ? "Visão do documento com variáveis coloridas"
+                : "Visão do documento — arquivo original"}
           </span>
         </div>
       </header>
