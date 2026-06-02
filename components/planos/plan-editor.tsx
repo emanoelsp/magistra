@@ -275,11 +275,11 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       if (ef) init[ef.key] = template.escola_nome;
     }
     if (!initialValues) return init;
-    // Merge initialValues but always start ia_sugerida fields empty —
-    // they must be filled by AI suggestions, not by default DOCX content.
+    // Apply manual/metadata values from initialValues, then unconditionally
+    // clear every ia_sugerida field so Magis fills them fresh each generation.
     const merged = { ...init, ...initialValues };
     for (const f of schema) {
-      if (f.role === "ia_sugerida" && !initialValues[f.key]) merged[f.key] = "";
+      if (f.role === "ia_sugerida") merged[f.key] = "";
     }
     return merged;
   });

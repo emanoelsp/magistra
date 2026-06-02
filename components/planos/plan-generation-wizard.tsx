@@ -266,9 +266,12 @@ export function PlanGenerationWizard({
 
   // ── Initial values para o editor ───────────────────────────────────────────
 
+  // metadataValues (passo 2) always wins over previously captured editor values
+  // so the professor's latest configuration overrides any old plan content.
+  // IA fields are cleared separately inside PlanEditor regardless.
   const editorInitialValues: Record<string, string> = {
-    ...metadataValues,
     ...(Object.keys(capturedEditorValues).length > 0 ? capturedEditorValues : {}),
+    ...metadataValues,
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────

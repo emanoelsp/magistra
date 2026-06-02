@@ -17,9 +17,9 @@ import {
   X,
 } from "lucide-react";
 
-import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateFieldSchema, TemplateRecord } from "../../lib/types/firestore";
 import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
+import { OfficeInlineViewer } from "../shared/office-inline-viewer";
 
 interface TemplateFieldEditorProps {
   template: TemplateRecord;
@@ -64,234 +64,6 @@ function newField(): TemplateFieldSchema {
   };
 }
 
-// ─── DocxViewer ────────────────────────────────────────────────────────────────
-// Two view modes:
-//   "interactive" → docx-preview (click-to-add-field, works offline/localhost)
-//   "office"      → Microsoft Office Online iframe (pixel-perfect, requires HTTPS)
-
-interface DocxViewerProps {
-  templateId: string;
-  arquivoUrl: string;
-  fields: TemplateFieldSchema[];
-  activeKey: string | null;
-  previewVersion?: number;
-  onClickElement?: (text: string, ordinal: number) => void;
-}
-
-function DocxViewer({ templateId, arquivoUrl, fields, activeKey, previewVersion, onClickElement }: DocxViewerProps) {
-  return (
-    <div className="flex h-full flex-col overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between border-b border-slate-100 bg-white px-3 py-1.5">
-        <span className="text-[11px] font-medium text-slate-700">Visão do documento</span>
-        {onClickElement && (
-          <p className="text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
-        )}
-      </div>
-      <DocxInteractive
-        templateId={templateId}
-        fields={fields}
-        activeKey={activeKey}
-        previewVersion={previewVersion}
-        onClickElement={onClickElement}
-      />
-    </div>
-  );
-}
-
-// ─── DocxInteractive ──────────────────────────────────────────────────────────
-// docx-preview renderer with highlight and click-to-add-field support.
-
-interface DocxInteractiveProps {
-  templateId: string;
-  fields: TemplateFieldSchema[];
-  activeKey: string | null;
-  previewVersion?: number;
-  onClickElement?: (text: string, ordinal: number) => void;
-}
-
-function DocxInteractive({ templateId, fields, activeKey, previewVersion = 0, onClickElement }: DocxInteractiveProps) {
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const bufferRef = useRef<ArrayBuffer | null>(null);
-  const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
-
-  // Phase 1: fetch file — reload whenever previewVersion changes
-  useEffect(() => {
-    setPhase("loading");
-    bufferRef.current = null;
-    let cancelled = false;
-    // Try fillable first; fall back to original if not available
-    fetch(`/api/templates/${templateId}/arquivo?fillable=1`)
-      .then((r) => r.ok ? r : fetch(`/api/templates/${templateId}/arquivo`))
-      .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
-      .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
-      .catch(() => { if (!cancelled) setPhase("error"); });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateId, previewVersion]);
-
-  // Phase 2: render → scale to fit → show
-  useEffect(() => {
-    if (phase !== "rendering" || !bufferRef.current || !containerRef.current) return;
-    let cancelled = false;
-    const container = containerRef.current;
-    const scroller = scrollerRef.current;
-
-    import("docx-preview")
-      .then(({ renderAsync }) => {
-        if (cancelled || !bufferRef.current) return;
-        container.innerHTML = "";
-        return renderAsync(bufferRef.current, container, undefined, {
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: true,
-          ignoreFonts: false,
-          breakPages: true,
-          useBase64URL: true,
-          renderEndnotes: true,
-          renderFooters: true,
-          renderFootnotes: true,
-          renderHeaders: true,
-        });
-      })
-      .then(() => {
-        if (cancelled) return;
-        const wrapper = container.querySelector(".docx-wrapper") as HTMLElement | null;
-        const page = container.querySelector("section.docx") as HTMLElement | null;
-        if (wrapper && page && scroller) {
-          const availableW = scroller.clientWidth;
-          const naturalW = page.offsetWidth;
-          if (naturalW > 0 && availableW > 0 && naturalW > availableW) {
-            const scale = availableW / naturalW;
-            const naturalH = wrapper.offsetHeight;
-            wrapper.style.transformOrigin = "top left";
-            wrapper.style.transform = `scale(${scale})`;
-            container.style.height = `${naturalH * scale}px`;
-          }
-        }
-        setPhase("done");
-      })
-      .catch(() => { if (!cancelled) setPhase("error"); });
-    return () => { cancelled = true; };
-  }, [phase]);
-
-  // Highlight the active field
-  useEffect(() => {
-    if (phase !== "done" || !containerRef.current) return;
-    const container = containerRef.current;
-    container.querySelectorAll("[data-mhl]").forEach((el) => {
-      (el as HTMLElement).style.removeProperty("background");
-      (el as HTMLElement).style.removeProperty("outline");
-      (el as HTMLElement).style.removeProperty("border-radius");
-      el.removeAttribute("data-mhl");
-    });
-    if (!activeKey) return;
-    const field = fields.find((f) => f.key === activeKey);
-    if (!field) return;
-    const terms = [field.label, field.defaultValue].filter(
-      (t): t is string => typeof t === "string" && t.trim().length > 2,
-    );
-    if (!terms.length) return;
-    const candidates = Array.from(container.querySelectorAll("td, p"));
-    let bestEl: Element | null = null;
-    let bestScore = 0;
-    for (const el of candidates) {
-      const text = (el.textContent ?? "").trim();
-      if (!text) continue;
-      for (const term of terms) {
-        if (text.includes(term)) {
-          const score = term.length / Math.max(text.length, 1);
-          if (score > bestScore) { bestScore = score; bestEl = el; }
-        }
-      }
-    }
-    if (bestEl) {
-      (bestEl as HTMLElement).style.background = "rgba(139,92,246,0.15)";
-      (bestEl as HTMLElement).style.outline = "2px solid rgba(139,92,246,0.5)";
-      (bestEl as HTMLElement).style.borderRadius = "2px";
-      bestEl.setAttribute("data-mhl", "true");
-      bestEl.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [activeKey, fields, phase]);
-
-  // Click-to-add listeners
-  useEffect(() => {
-    if (phase !== "done" || !containerRef.current || !onClickElement) return;
-    const container = containerRef.current;
-    const els = Array.from(container.querySelectorAll("td, p")) as HTMLElement[];
-    const onEnter = (e: Event) => {
-      const el = e.currentTarget as HTMLElement;
-      if (!el.hasAttribute("data-mhl")) {
-        el.style.cursor = "pointer";
-        el.style.outline = "1.5px dashed rgba(139,92,246,0.4)";
-        el.style.borderRadius = "2px";
-      }
-    };
-    const onLeave = (e: Event) => {
-      const el = e.currentTarget as HTMLElement;
-      if (!el.hasAttribute("data-mhl")) {
-        el.style.removeProperty("cursor");
-        el.style.removeProperty("outline");
-        el.style.removeProperty("border-radius");
-      }
-    };
-    const onClick = (e: Event) => {
-      e.stopPropagation();
-      const el = e.currentTarget as HTMLElement;
-      const text = el.textContent?.trim() ?? "";
-      const ordinal = els
-        .slice(0, els.indexOf(el))
-        .filter((t) => t.textContent?.trim() === text).length;
-      onClickElement(text, ordinal);
-    };
-    for (const el of els) {
-      el.addEventListener("mouseenter", onEnter);
-      el.addEventListener("mouseleave", onLeave);
-      el.addEventListener("click", onClick);
-    }
-    return () => {
-      for (const el of els) {
-        el.removeEventListener("mouseenter", onEnter);
-        el.removeEventListener("mouseleave", onLeave);
-        el.removeEventListener("click", onClick);
-      }
-    };
-  }, [phase, onClickElement]);
-
-  return (
-    <div className="relative flex flex-1 flex-col overflow-hidden">
-      <style>{`
-        .docx-html-preview { background: #f1f5f9; padding: 20px 12px; }
-        .docx-html-preview table { border-collapse: collapse; }
-        .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; }
-        .docx-html-preview img { max-width: 100%; height: auto; }
-        .docx-html-preview p { margin: 0.2em 0; }
-      `}</style>
-      <div
-        ref={scrollerRef}
-        className={`flex-1 overflow-y-auto ${phase === "error" ? "invisible absolute" : ""}`}
-      >
-        <div ref={containerRef} className="docx-html-preview" />
-      </div>
-      {phase === "loading" && (
-        <div className="flex h-full items-center justify-center gap-3 text-slate-500">
-          <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
-          <span className="text-sm">Carregando documento…</span>
-        </div>
-      )}
-      {phase === "error" && (
-        <div className="flex h-full items-center justify-center px-8 text-center">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-slate-600">Pré-visualização indisponível.</p>
-            <p className="text-xs text-slate-400">Configure os campos na lista à direita.</p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── TemplateFieldEditor ──────────────────────────────────────────────────────
 
 export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEditorProps) {
@@ -311,7 +83,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
   const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
-  const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number }>>({});
   const [previewVersion, setPreviewVersion] = useState(0);
 
   const fieldListRef = useRef<HTMLDivElement>(null);
@@ -364,82 +135,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setActiveFieldKey(f.key);
   }
 
-  function handleAddFromDoc(rawText: string, clickOrdinal = 0) {
-    let label = rawText.trim();
-    let defaultValue: string | undefined;
-
-    // Split "Label: Value" inline pattern
-    const colonIdx = label.indexOf(":");
-    if (colonIdx > 0 && colonIdx < label.length - 1) {
-      const before = label.slice(0, colonIdx).trim();
-      const after = label.slice(colonIdx + 1).trim();
-      if (before.length > 0 && before.length <= 80) {
-        label = before;
-        if (after.length > 0 && after.length < 300) defaultValue = after;
-      }
-    }
-
-    // Strip trailing colons
-    label = label.replace(/:+$/, "").trim();
-    if (!label || label.length > 80) return;
-
-    const toKey = (s: string) =>
-      s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-
-    const key = toKey(label) || `campo_${Date.now()}`;
-
-    // If field already exists, just expand it
-    const existing = fields.find((f) => f.key === key || f.label.toLowerCase() === label.toLowerCase());
-    if (existing) {
-      setExpandedField(existing.key);
-      setActiveFieldKey(existing.key);
-      return;
-    }
-
-    // Smart role/group detection
-    const lower = toKey(label);
-    let role: TemplateFieldSchema["role"] = "manual";
-    let group: TemplateFieldSchema["group"] = "dados_turma";
-    if (/habilidade|bncc|saeb|ctbc|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(lower)) {
-      role = "ia_sugerida";
-      if (/habilidade|bncc|saeb|ctbc/.test(lower)) group = "habilidades";
-      else if (/competencia/.test(lower)) group = "competencias";
-      else if (/objetivo/.test(lower)) group = "objetivos";
-      else if (/avaliacao/.test(lower)) group = "avaliacao";
-      else group = "conteudos";
-    }
-
-    const f: TemplateFieldSchema = {
-      key,
-      label,
-      type: "text",
-      required: true,
-      role,
-      group,
-      placeholder: "",
-      helperText: "",
-      aiInstructions: "",
-      ...(defaultValue !== undefined ? { defaultValue } : {}),
-    };
-
-    setFields((prev) => [...prev, f]);
-    setExpandedField(f.key);
-    setActiveFieldKey(f.key);
-    // Store the clicked cell's position for direct DOCX injection on save
-    if (rawText.trim()) {
-      setFieldPositions((prev) => ({
-        ...prev,
-        [f.key]: { cellText: rawText.trim(), ordinal: clickOrdinal },
-      }));
-    }
-  }
-
   function removeField(index: number) {
     const key = fields[index]?.key;
     setFields((prev) => prev.filter((_, i) => i !== index));
     if (activeFieldKey === key) setActiveFieldKey(null);
     if (expandedField === key) setExpandedField(null);
-    if (key) setFieldPositions((prev) => { const next = { ...prev }; delete next[key]; return next; });
   }
 
   function updateField(index: number, patch: Partial<TemplateFieldSchema>) {
@@ -480,7 +180,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           nome: nome.trim() || template.nome,
           estado: estado || null,
           schema_campos: fields,
-          field_positions: fieldPositions,
         }),
       })
         .then(async (res) => {
@@ -491,8 +190,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           return res.json();
         })
         .then(() => {
-          // Clear positions — they've been applied to the DOCX
-          setFieldPositions({});
           if (mode === "confirm") {
             setShowConfirmSuccess(true);
             setTimeout(() => {
@@ -996,15 +693,22 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     </div>
   );
 
-  // DOCX templates: split-view (doc preview left, field list right)
+  // DOCX templates: split-view (Office Online preview left, field list right)
   if (isDocx) {
     return (
       <>
         {confirmSuccessModal}
         <div className="flex gap-6" style={{ minHeight: "calc(100vh - 280px)" }}>
-          {/* Left: document preview */}
-          <div className="hidden w-[65%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 xl:flex xl:flex-col">
-            <DocxViewer templateId={template.id} arquivoUrl={template.arquivo_url ?? ""} fields={fields} activeKey={expandedField} previewVersion={previewVersion} onClickElement={handleAddFromDoc} />
+          {/* Left: Office Online inline Word viewer */}
+          <div className="hidden w-[65%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 xl:flex xl:flex-col">
+            <OfficeInlineViewer
+              key={previewVersion}
+              tokenEndpoint={`/api/templates/${template.id}/preview-token`}
+              previewPublicoPath={`/api/templates/${template.id}/preview-publico`}
+              extraParams="annotated=1"
+              title="Pré-visualização do template"
+              className="h-full"
+            />
           </div>
 
           {/* Right: field list */}
