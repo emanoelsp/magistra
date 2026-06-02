@@ -67,7 +67,7 @@ function DocxPreview({
               <span className="text-sm">Carregando preview Word…</span>
             </div>
           ) : (
-            /* Clip the Office Online toolbar so users cannot download from the viewer */
+            /* Clip top toolbar + cover bottom-bar icons */
             <div className="relative h-full overflow-hidden">
               <iframe
                 src={officeUrl}
@@ -82,6 +82,7 @@ function DocxPreview({
                   border: "none",
                 }}
               />
+              <div aria-hidden style={{ position: "absolute", bottom: 0, right: 0, width: 80, height: 40, background: "white", zIndex: 10 }} />
             </div>
           )}
         </div>

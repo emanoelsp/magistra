@@ -84,8 +84,8 @@ export function OfficeInlineViewer({
     );
   }
 
-  // Production: clip the Office Online native toolbar (~56 px) so users
-  // cannot download or print via the viewer menu.
+  // Production: clip the top toolbar (~56 px) and overlay the bottom-bar
+  // icons (book menu + fullscreen) so users cannot download/print from the viewer.
   return (
     <div className={base}>
       <iframe
@@ -99,6 +99,19 @@ export function OfficeInlineViewer({
           width: "100%",
           height: "calc(100% + 60px)",
           border: "none",
+        }}
+      />
+      {/* Cover the Office Online bottom-bar book-menu and fullscreen icons */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          bottom: 0,
+          right: 0,
+          width: 80,
+          height: 40,
+          background: "white",
+          zIndex: 10,
         }}
       />
     </div>
