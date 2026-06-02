@@ -32,10 +32,29 @@ export interface SaebChunk {
   topico: string;
 }
 
+export interface CurriculoEstadualChunk {
+  id: string;
+  texto: string;
+  estado: string;
+  etapa: string;
+  componente: string;
+  secao: string;
+}
+
+export interface CnctChunk {
+  id: string;
+  texto: string;
+  curso: string;
+  eixo: string;
+  etapa: string;
+}
+
 export interface CurriculumContext {
   bncc: BnccChunk[];
   ctbc: CtbcChunk[];
   saeb: SaebChunk[];
+  curriculo_estadual: CurriculoEstadualChunk[];
+  cnct: CnctChunk[];
 }
 
 function getPinecone(): Pinecone {
@@ -206,15 +225,86 @@ async function retrieveSaebContext(
   }
 }
 
+// ── Currículo Estadual retrieval (namespace "curriculo_estadual") ─────────────
+
+async function retrieveCurriculoEstadual(
+  vector: number[],
+  filters: { estado?: string; componente?: string; etapa?: string },
+): Promise<CurriculoEstadualChunk[]> {
+  if (!filters.estado) return [];
+  try {
+    const ns = getIndex().namespace("curriculo_estadual");
+    const pineconeFilter: Record<string, unknown> = { estado: { $eq: filters.estado } };
+    const comp = matchComponente(filters.componente ?? "");
+    if (comp) pineconeFilter["componente"] = { $eq: comp };
+    if (filters.etapa) pineconeFilter["etapa"] = { $eq: filters.etapa };
+
+    const response = await ns.query({
+      vector,
+      topK: TOP_K,
+      filter: pineconeFilter,
+      includeMetadata: true,
+    });
+
+    return (response.matches ?? [])
+      .filter((m) => (m.score ?? 0) > 0.45)
+      .map((m) => ({
+        id: String(m.id),
+        texto: String(m.metadata?.["texto"] ?? ""),
+        estado: String(m.metadata?.["estado"] ?? ""),
+        etapa: String(m.metadata?.["etapa"] ?? ""),
+        componente: String(m.metadata?.["componente"] ?? ""),
+        secao: String(m.metadata?.["secao"] ?? ""),
+      }));
+  } catch (err) {
+    console.warn("[rag] Currículo estadual retrieval falhou:", err);
+    return [];
+  }
+}
+
+// ── CNCT retrieval (namespace "cnct") ─────────────────────────────────────────
+
+async function retrieveCnct(
+  vector: number[],
+  filters: { componente?: string },
+): Promise<CnctChunk[]> {
+  try {
+    const ns = getIndex().namespace("cnct");
+    const pineconeFilter: Record<string, unknown> = {};
+    const comp = matchComponente(filters.componente ?? "");
+    if (comp) pineconeFilter["componente"] = { $eq: comp };
+
+    const response = await ns.query({
+      vector,
+      topK: TOP_K,
+      filter: Object.keys(pineconeFilter).length > 0 ? pineconeFilter : undefined,
+      includeMetadata: true,
+    });
+
+    return (response.matches ?? [])
+      .filter((m) => (m.score ?? 0) > 0.45)
+      .map((m) => ({
+        id: String(m.id),
+        texto: String(m.metadata?.["texto"] ?? ""),
+        curso: String(m.metadata?.["curso"] ?? ""),
+        eixo: String(m.metadata?.["eixo"] ?? ""),
+        etapa: String(m.metadata?.["etapa"] ?? ""),
+      }));
+  } catch (err) {
+    console.warn("[rag] CNCT retrieval falhou:", err);
+    return [];
+  }
+}
+
 // ── Combined retrieval — 1 embed call, 3 queries in parallel ─────────────────
 
 export async function retrieveAllCurriculumContext(
   query: string,
-  filters: { componente?: string; etapa?: string },
-  options?: { skipCtbc?: boolean; skipSaeb?: boolean },
+  filters: { componente?: string; etapa?: string; estado?: string },
+  options?: { skipCtbc?: boolean; skipSaeb?: boolean; skipEstadual?: boolean; skipCnct?: boolean },
 ): Promise<CurriculumContext> {
   const apiKey = process.env.PINECONE_API_KEY;
-  if (!apiKey) return { bncc: [], ctbc: [], saeb: [] };
+  if (!apiKey) return { bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] };
 
   try {
     // Single embed call shared across all three sources
@@ -226,7 +316,7 @@ export async function retrieveAllCurriculumContext(
     const comp = matchComponente(filters.componente ?? "");
     if (comp) pineconeFilter["componente"] = { $eq: comp };
 
-    const [bnccResult, ctbcResult, saebResult] = await Promise.all([
+    const [bnccResult, ctbcResult, saebResult, estadualResult, cnctResult] = await Promise.all([
       // BNCC — default namespace
       index.query({
         vector, topK: TOP_K,
@@ -236,13 +326,23 @@ export async function retrieveAllCurriculumContext(
 
       // CTBC
       options?.skipCtbc
-        ? Promise.resolve({ matches: [] })
+        ? Promise.resolve({ _ctbc: [] as CtbcChunk[] })
         : retrieveCtbcContext(vector, filters).then((r) => ({ _ctbc: r })).catch(() => ({ _ctbc: [] as CtbcChunk[] })),
 
       // SAEB
       options?.skipSaeb
-        ? Promise.resolve({ matches: [] })
+        ? Promise.resolve({ _saeb: [] as SaebChunk[] })
         : retrieveSaebContext(vector, filters).then((r) => ({ _saeb: r })).catch(() => ({ _saeb: [] as SaebChunk[] })),
+
+      // Currículo Estadual — only if estado is set
+      options?.skipEstadual || !filters.estado
+        ? Promise.resolve({ _estadual: [] as CurriculoEstadualChunk[] })
+        : retrieveCurriculoEstadual(vector, filters).then((r) => ({ _estadual: r })).catch(() => ({ _estadual: [] as CurriculoEstadualChunk[] })),
+
+      // CNCT — cursos técnicos
+      options?.skipCnct
+        ? Promise.resolve({ _cnct: [] as CnctChunk[] })
+        : retrieveCnct(vector, { componente: filters.componente }).then((r) => ({ _cnct: r })).catch(() => ({ _cnct: [] as CnctChunk[] })),
     ]);
 
     const bncc = (bnccResult.matches ?? [])
@@ -258,11 +358,13 @@ export async function retrieveAllCurriculumContext(
 
     const ctbc = "_ctbc" in ctbcResult ? ctbcResult._ctbc : [];
     const saeb = "_saeb" in saebResult ? saebResult._saeb : [];
+    const curriculo_estadual = "_estadual" in estadualResult ? estadualResult._estadual : [];
+    const cnct = "_cnct" in cnctResult ? cnctResult._cnct : [];
 
-    return { bncc, ctbc, saeb };
+    return { bncc, ctbc, saeb, curriculo_estadual, cnct };
   } catch (err) {
     console.warn("[rag] Combined retrieval falhou, prosseguindo sem contexto:", err);
-    return { bncc: [], ctbc: [], saeb: [] };
+    return { bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] };
   }
 }
 

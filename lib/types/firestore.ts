@@ -53,6 +53,7 @@ export interface TemplateRecord {
   nome: string;
   escola_nome?: string | null;
   tipo_plano?: string | null;
+  estado?: string | null;
   schema_campos: TemplateFieldSchema[];
   data_criacao: string;
   metadata_padrao?: Record<string, string>;
@@ -125,6 +126,7 @@ export interface TemplateOption {
   nome: string;
   escolaNome?: string | null;
   tipoPlano?: string | null;
+  estado?: string | null;
   campoCount: number;
   criadoEm: string;
   schema_campos?: TemplateFieldSchema[];

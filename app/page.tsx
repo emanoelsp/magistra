@@ -248,8 +248,20 @@ export default function HomePage() {
                 </div>
 
                 <p className="anim-up d-3 max-w-xl text-lg leading-relaxed text-slate-600">
-                  Suba o template da sua escola e a <strong className="text-slate-900">Magis</strong> — nossa assistente pedagógica — aprende a estrutura e sugere conteúdos campo a campo: BNCC, SAEB e CTBC, com a linguagem de uma coordenadora que conhece o seu contexto.
+                  Suba o template da sua escola e a <strong className="text-slate-900">Magis</strong> — nossa assistente pedagógica — aprende a estrutura e sugere conteúdos campo a campo: BNCC, SAEB e currículos regionais alinhados a cada território.
                 </p>
+
+                {/* Chips dos 27 estados */}
+                <div className="anim-up d-35 mt-4 flex max-w-xl flex-wrap gap-1.5">
+                  {["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"].map((uf) => (
+                    <span
+                      key={uf}
+                      className="rounded-lg bg-violet-50 px-2 py-0.5 text-[11px] font-bold text-violet-600 ring-1 ring-violet-200"
+                    >
+                      {uf}
+                    </span>
+                  ))}
+                </div>
 
                 <div className="anim-up d-4 mt-8 flex flex-wrap gap-3">
                   <Link
@@ -267,18 +279,16 @@ export default function HomePage() {
                   </a>
                 </div>
 
-                {/* Quick stats */}
-                <div className="anim-up d-5 mt-9 flex flex-wrap items-center gap-8">
-                  {[
-                    { n: "2.400+", label: "professores" },
-                    { n: "18.000+", label: "planos gerados" },
-                    { n: "26", label: "estados" },
-                  ].map((s) => (
-                    <div key={s.label}>
-                      <p className="text-2xl font-black text-slate-950">{s.n}</p>
-                      <p className="text-xs text-slate-400">{s.label}</p>
-                    </div>
-                  ))}
+                {/* CTA tempo */}
+                <div className="anim-up d-5 mt-9 inline-flex items-center gap-4 rounded-2xl bg-violet-600 px-6 py-4 shadow-lg shadow-violet-300/50">
+                  <div className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl bg-white/20">
+                    <span className="text-2xl font-black leading-none text-white">5</span>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-violet-200">min</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white">Seu plano de aula em menos de 5 minutos</p>
+                    <p className="text-xs text-violet-200">Do template em branco ao Word preenchido. Todo bimestre.</p>
+                  </div>
                 </div>
               </div>
 
@@ -413,14 +423,14 @@ export default function HomePage() {
               {/* Left — Magis visual */}
               <div className="flex flex-col items-center gap-6">
                 {/* Magis avatar card */}
-                <div className="magis-card magis-float w-full max-w-sm rounded-3xl p-7 shadow-2xl shadow-violet-900/30">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl bg-violet-600 shadow-lg shadow-violet-500/40">
-                      <Sparkles className="h-7 w-7 text-white" />
+                <div className="magis-card magis-float w-full max-w-xs rounded-3xl p-5 shadow-2xl shadow-violet-900/30">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-violet-600 shadow-lg shadow-violet-500/40">
+                      <Sparkles className="h-5 w-5 text-white" />
                     </div>
                     <div>
-                      <p className="text-lg font-black text-white">Magis</p>
-                      <p className="text-xs text-violet-300">Assistente Pedagógica IA</p>
+                      <p className="text-base font-black text-white">Magis</p>
+                      <p className="text-[11px] text-violet-300">Assistente Pedagógica IA</p>
                     </div>
                     <div className="ml-auto flex gap-1">
                       <span className="h-2 w-2 rounded-full bg-emerald-400 dot-1" />
@@ -429,7 +439,7 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  <div className="mt-6 space-y-3">
+                  <div className="mt-3 space-y-2">
                     {[
                       { from: "magis", text: "Olá! Vi que você está montando o plano do 9º ano. Que tal começarmos pelas habilidades BNCC de Matemática?" },
                       { from: "user",  text: "Sim! Preciso focar em álgebra para o 2º bimestre." },
@@ -455,7 +465,7 @@ export default function HomePage() {
                 </div>
 
                 {/* Traits */}
-                <div className="grid w-full max-w-sm grid-cols-2 gap-3">
+                <div className="grid w-full max-w-xs grid-cols-2 gap-3">
                   {[
                     { icon: Heart,          label: "Acolhedora",         desc: "Linguagem próxima e empática" },
                     { icon: Brain,          label: "Especialista",        desc: "BNCC, SAEB e CTBC" },

@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 import { getPlanoDetalhes } from "../../../../lib/services/firestore/dashboard.server";
 import { DownloadPlanButton } from "../../../../components/planos/download-plan-button";
+import { OfficeInlineViewer } from "../../../../components/shared/office-inline-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -47,13 +48,14 @@ export default async function PlanoDetalhesPage({
         </div>
       </div>
 
-      {/* Document preview iframe */}
-      <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <iframe
-          src={`/api/planos/${plano.id}/preview`}
-          className="h-full w-full"
-          style={{ minHeight: "70vh" }}
-          title="Preview do plano"
+      {/* Document viewer — Office Online in production, mammoth HTML fallback on localhost */}
+      <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" style={{ minHeight: "70vh" }}>
+        <OfficeInlineViewer
+          tokenEndpoint={`/api/planos/${plano.id}/preview-token`}
+          previewPublicoPath={`/api/planos/${plano.id}/preview-publico`}
+          fallbackSrc={`/api/planos/${plano.id}/preview`}
+          title="Visualização do plano"
+          className="h-full"
         />
       </div>
     </div>

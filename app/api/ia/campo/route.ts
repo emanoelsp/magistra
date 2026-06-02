@@ -410,11 +410,12 @@ Responda SOMENTE com JSON válido:
       ? "EM"
       : "EF";
     const componente = metadata["componente_curricular"] ?? metadata["componente"] ?? metadata["disciplina"] ?? "";
+    const estado = typeof template.estado === "string" ? template.estado : undefined;
 
     const [curriculum, pedagogicMemory] = await Promise.all([
       isBibliografiaField
-        ? Promise.resolve({ bncc: [], ctbc: [], saeb: [] })
-        : retrieveAllCurriculumContext(ragQuery, { componente, etapa }),
+        ? Promise.resolve({ bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] })
+        : retrieveAllCurriculumContext(ragQuery, { componente, etapa, estado }),
       getPedagogicMemoryContext(user.uid).catch(() => ""),
     ]);
 
@@ -426,6 +427,12 @@ Responda SOMENTE com JSON válido:
       : null;
     const saebContexto = curriculum.saeb.length > 0
       ? curriculum.saeb.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
+      : null;
+    const estadualContexto = curriculum.curriculo_estadual.length > 0
+      ? curriculum.curriculo_estadual.map((c) => c.texto).join("\n")
+      : null;
+    const cnctContexto = curriculum.cnct.length > 0
+      ? curriculum.cnct.map((c) => `${c.curso}: ${c.texto}`).join("\n")
       : null;
 
     const prompt = [
@@ -444,6 +451,8 @@ Responda SOMENTE com JSON válido:
       ...(bnccContexto ? [`<habilidades_bncc>\n${bnccContexto}\n</habilidades_bncc>`] : []),
       ...(ctbcContexto ? [`<habilidades_ctbc>\n${ctbcContexto}\n</habilidades_ctbc>`] : []),
       ...(saebContexto ? [`<descritores_saeb>\n${saebContexto}\n</descritores_saeb>`] : []),
+      ...(estadualContexto ? [`<curriculo_${estado ?? "estadual"}>\n${estadualContexto}\n</curriculo_${estado ?? "estadual"}>`] : []),
+      ...(cnctContexto ? [`<catalogo_tecnico_cnct>\n${cnctContexto}\n</catalogo_tecnico_cnct>`] : []),
     ].join("\n");
 
     // Cache key — null when extraContext is present (one-off refinement, don't cache)

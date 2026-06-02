@@ -67,12 +67,22 @@ function DocxPreview({
               <span className="text-sm">Carregando preview Word…</span>
             </div>
           ) : (
-            <iframe
-              src={officeUrl}
-              className="h-full w-full border-0"
-              title="Pré-visualização do template"
-              allowFullScreen
-            />
+            /* Clip the Office Online toolbar so users cannot download from the viewer */
+            <div className="relative h-full overflow-hidden">
+              <iframe
+                src={officeUrl}
+                title="Pré-visualização do template"
+                allowFullScreen
+                style={{
+                  position: "absolute",
+                  top: "-56px",
+                  left: 0,
+                  width: "100%",
+                  height: "calc(100% + 60px)",
+                  border: "none",
+                }}
+              />
+            </div>
           )}
         </div>
 

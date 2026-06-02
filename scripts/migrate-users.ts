@@ -8,7 +8,9 @@
  * Seguro para rodar múltiplas vezes (idempotente — só preenche campos ausentes).
  */
 
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+dotenv.config();
 import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 

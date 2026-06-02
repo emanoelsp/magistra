@@ -12,7 +12,9 @@
  *   EM:      BNCC_20dez_site.pdf
  */
 
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+dotenv.config();
 import fs from "fs";
 import path from "path";
 import pdf from "pdf-parse";

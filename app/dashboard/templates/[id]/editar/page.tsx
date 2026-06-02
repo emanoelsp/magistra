@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, FileText } from "lucide-react";
 
 import { TemplateFieldEditor } from "../../../../../components/templates/template-field-editor";
+import { OfficeInlineViewer } from "../../../../../components/shared/office-inline-viewer";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import type { TemplateRecord } from "../../../../../lib/types/firestore";
@@ -44,10 +45,15 @@ export default async function EditarTemplatePage({ params }: PageProps) {
     nome: typeof data.nome === "string" ? data.nome : "Template",
     escola_nome: typeof data.escola_nome === "string" ? data.escola_nome : null,
     tipo_plano: typeof data.tipo_plano === "string" ? data.tipo_plano : null,
+    estado: typeof data.estado === "string" ? data.estado : null,
     schema_campos: Array.isArray(data.schema_campos) ? data.schema_campos : [],
     data_criacao: toIso(data.data_criacao),
     arquivo_url: typeof data.arquivo_url === "string" ? data.arquivo_url : undefined,
   };
+
+  const arquivoUrl = typeof data.arquivo_url === "string" ? data.arquivo_url : "";
+  const ext = arquivoUrl.split(".").pop()?.toLowerCase() ?? "";
+  const isDocx = ext === "docx" || ext === "doc";
 
   return (
     <div className="space-y-6">
@@ -77,6 +83,18 @@ export default async function EditarTemplatePage({ params }: PageProps) {
           </div>
         </div>
       </header>
+
+      {isDocx && (
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm" style={{ height: "70vh" }}>
+          <OfficeInlineViewer
+            tokenEndpoint={`/api/templates/${template.id}/preview-token`}
+            previewPublicoPath={`/api/templates/${template.id}/preview-publico`}
+            extraParams="annotated=1"
+            title="Pré-visualização do template"
+            className="h-full"
+          />
+        </div>
+      )}
 
       <TemplateFieldEditor template={template} />
     </div>

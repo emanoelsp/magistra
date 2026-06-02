@@ -19,6 +19,7 @@ interface FieldPosition {
 
 interface SchemaBody {
   nome?: string;
+  estado?: string | null;
   schema_campos?: TemplateFieldSchema[];
   field_positions?: Record<string, FieldPosition>;
 }
@@ -55,6 +56,9 @@ export async function PATCH(
     const nome: string = typeof body.nome === "string" && body.nome.trim()
       ? body.nome.trim()
       : (typeof data.nome === "string" ? data.nome : "Template");
+    const estado: string | null = body.estado !== undefined
+      ? (body.estado || null)
+      : (typeof data.estado === "string" ? data.estado : null);
     const fieldPositions: Record<string, FieldPosition> = body.field_positions ?? {};
 
     // Identify deleted keys (were in old schema, not in new)
@@ -73,7 +77,7 @@ export async function PATCH(
     const isDocx = /\.(docx|doc)$/i.test(arquivoUrl.split("?")[0]);
     if (!isDocx || !arquivoUrl) {
       // Non-DOCX template: just update Firestore schema
-      await db.collection("magis_templates").doc(id).update({ nome, schema_campos: newSchema });
+      await db.collection("magis_templates").doc(id).update({ nome, estado, schema_campos: newSchema });
       return NextResponse.json({ ok: true });
     }
 
@@ -108,6 +112,7 @@ export async function PATCH(
     // 5. Update Firestore
     await db.collection("magis_templates").doc(id).update({
       nome,
+      estado,
       schema_campos: newSchema,
       arquivo_fillable_url: newFillableUrl,
       fillable_status: "pronto",

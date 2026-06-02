@@ -694,7 +694,7 @@ export function PlanGenerationWizard({
           )}
 
           {/* Preview — Office Online (produção) ou HTML (localhost/fallback) */}
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" style={{ height: "72vh" }}>
+          <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" style={{ height: "72vh" }}>
             {isAutoSaving || !savedPlanoId || officePreviewLoading ? (
               <div className="flex h-full items-center justify-center gap-3 text-slate-500">
                 <LoaderCircle className="h-5 w-5 animate-spin text-violet-500" />
@@ -703,18 +703,26 @@ export function PlanGenerationWizard({
                 </span>
               </div>
             ) : officePreviewUrl ? (
+              /* Clip the Office Online toolbar so users cannot download from the viewer */
               <iframe
                 key={officePreviewUrl}
                 src={officePreviewUrl}
-                className="h-full w-full border-0"
                 title="Pré-visualização do plano"
                 allowFullScreen
+                style={{
+                  position: "absolute",
+                  top: "-56px",
+                  left: 0,
+                  width: "100%",
+                  height: "calc(100% + 60px)",
+                  border: "none",
+                }}
               />
             ) : (
               <iframe
                 key={savedPlanoId}
                 src={`/api/planos/${savedPlanoId}/preview`}
-                className="h-full w-full"
+                className="h-full w-full border-0"
                 title="Pré-visualização do plano"
               />
             )}

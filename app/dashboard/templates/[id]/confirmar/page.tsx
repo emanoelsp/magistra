@@ -44,6 +44,7 @@ export default async function ConfirmarTemplatePage({ params }: PageProps) {
     nome: typeof data.nome === "string" ? data.nome : "Template",
     escola_nome: typeof data.escola_nome === "string" ? data.escola_nome : null,
     tipo_plano: typeof data.tipo_plano === "string" ? data.tipo_plano : null,
+    estado: typeof data.estado === "string" ? data.estado : null,
     schema_campos: Array.isArray(data.schema_campos) ? data.schema_campos : [],
     data_criacao: toIso(data.data_criacao),
     arquivo_url: typeof data.arquivo_url === "string" ? data.arquivo_url : undefined,

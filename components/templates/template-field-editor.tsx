@@ -19,6 +19,7 @@ import {
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateFieldSchema, TemplateRecord } from "../../lib/types/firestore";
+import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
 
 interface TemplateFieldEditorProps {
   template: TemplateRecord;
@@ -298,6 +299,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [isPending, startTransition] = useTransition();
 
   const [nome, setNome] = useState(template.nome);
+  const [estado, setEstado] = useState(template.estado ?? "");
   const [fields, setFields] = useState<TemplateFieldSchema[]>(
     template.schema_campos.length > 0 ? [...template.schema_campos] : [],
   );
@@ -476,6 +478,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nome: nome.trim() || template.nome,
+          estado: estado || null,
           schema_campos: fields,
           field_positions: fieldPositions,
         }),
@@ -520,6 +523,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           onChange={(e) => setNome(e.target.value)}
           className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
         />
+      </div>
+
+      {/* Estado (RAG guardrail) */}
+      <div>
+        <label className="block text-sm font-medium text-slate-700">
+          Estado da escola
+          <span className="ml-1.5 text-xs font-normal text-violet-600">(filtra currículo regional na IA)</span>
+        </label>
+        <div className="relative mt-1.5">
+          <select
+            value={estado}
+            onChange={(e) => setEstado(e.target.value)}
+            className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+          >
+            <option value="">Não especificado</option>
+            {ESTADOS_BRASIL.map((e) => (
+              <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        </div>
       </div>
 
       {/* Help modal */}
