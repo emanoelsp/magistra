@@ -88,6 +88,7 @@ export function OfficeInlineViewer({
   // icons (book menu + fullscreen) so users cannot download/print from the viewer.
   return (
     <div className={base}>
+      {/* top:-56px clips the Office Online header; height:calc(100%+100px) clips the bottom toolbar too */}
       <iframe
         src={officeUrl!}
         title={title}
@@ -97,21 +98,8 @@ export function OfficeInlineViewer({
           top: "-56px",
           left: 0,
           width: "100%",
-          height: "calc(100% + 60px)",
+          height: "calc(100% + 100px)",
           border: "none",
-        }}
-      />
-      {/* Cover the Office Online bottom-bar book-menu and fullscreen icons */}
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          bottom: 0,
-          right: 0,
-          width: 80,
-          height: 40,
-          background: "white",
-          zIndex: 10,
         }}
       />
     </div>

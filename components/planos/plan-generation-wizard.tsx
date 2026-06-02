@@ -703,24 +703,21 @@ export function PlanGenerationWizard({
                 </span>
               </div>
             ) : officePreviewUrl ? (
-              /* Clip top toolbar + cover bottom-bar icons */
-              <>
-                <iframe
-                  key={officePreviewUrl}
-                  src={officePreviewUrl}
-                  title="Pré-visualização do plano"
-                  allowFullScreen
-                  style={{
-                    position: "absolute",
-                    top: "-56px",
-                    left: 0,
-                    width: "100%",
-                    height: "calc(100% + 60px)",
-                    border: "none",
-                  }}
-                />
-                <div aria-hidden style={{ position: "absolute", bottom: 0, right: 0, width: 80, height: 40, background: "white", zIndex: 10 }} />
-              </>
+              /* Clip top toolbar and bottom toolbar via overflow:hidden */
+              <iframe
+                key={officePreviewUrl}
+                src={officePreviewUrl}
+                title="Pré-visualização do plano"
+                allowFullScreen
+                style={{
+                  position: "absolute",
+                  top: "-56px",
+                  left: 0,
+                  width: "100%",
+                  height: "calc(100% + 100px)",
+                  border: "none",
+                }}
+              />
             ) : (
               <iframe
                 key={savedPlanoId}
