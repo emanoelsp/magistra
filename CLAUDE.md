@@ -2,7 +2,7 @@
 
 ## O que é este projeto
 
-SaaS para professores da educação básica brasileira. Reduz em 70% o tempo de preenchimento de planos de aula. O professor sobe o template da escola, a IA extrai a estrutura e sugere conteúdo por campo (BNCC, SAEB, CTBC). O professor edita no editor split-view e baixa o PDF pronto.
+SaaS para professores da educação básica brasileira. Reduz em 70% o tempo de preenchimento de planos de aula. O professor sobe o template da escola, a IA extrai a estrutura e sugere conteúdo por campo (BNCC, SAEB, currículos territoriais). O professor edita no editor split-view e baixa o PDF pronto.
 
 Leia `docs/PRD.md` para requisitos completos, `docs/ARCHITECTURE.md` para a stack e estrutura.
 

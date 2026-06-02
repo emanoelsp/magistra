@@ -45,8 +45,8 @@ export default function MagisWidget() {
       >
         {/* ── Balão de diálogo ─── posicionado para ficar à altura do rosto */}
         <div
-          className="magis-bubble-anim relative mr-1 w-52 rounded-2xl rounded-br-none border border-violet-100 bg-white px-4 py-4 shadow-xl shadow-violet-200/60"
-          style={{ marginBottom: 190 }}
+          className="magis-bubble-anim relative w-52 rounded-2xl rounded-br-none border border-violet-100 bg-white px-4 py-4 shadow-xl shadow-violet-200/60"
+          style={{ marginBottom: 190, marginRight: -2 }}
         >
           {/* Botão fechar */}
           <button

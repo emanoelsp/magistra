@@ -366,7 +366,7 @@ export default function HomePage() {
                       {[
                         "Competência 3 — Argumentação matemática",
                         "Obj.: compreender a fórmula de Báskara",
-                        "CTBC: sequência pedagógica recomendada",
+                        "Currículo regional: sequência recomendada",
                       ].map((s, i) => (
                         <div key={i} className="rounded-xl border border-slate-700 bg-slate-800 p-2.5">
                           <p className="text-[10px] leading-relaxed text-slate-300">{s}</p>
@@ -443,7 +443,7 @@ export default function HomePage() {
                     {[
                       { from: "magis", text: "Olá! Vi que você está montando o plano do 9º ano. Que tal começarmos pelas habilidades BNCC de Matemática?" },
                       { from: "user",  text: "Sim! Preciso focar em álgebra para o 2º bimestre." },
-                      { from: "magis", text: "Perfeito. Separei as habilidades EF09MA06 e EF09MA07, alinhadas ao SAEB — posso incluir o sequenciamento sugerido pelo CTBC também." },
+                      { from: "magis", text: "Perfeito. Separei as habilidades EF09MA06 e EF09MA07, alinhadas ao SAEB — posso incluir o sequenciamento do currículo específico do seu território também." },
                     ].map((msg, i) => (
                       <div
                         key={i}
@@ -468,7 +468,7 @@ export default function HomePage() {
                 <div className="grid w-full max-w-xs grid-cols-2 gap-3">
                   {[
                     { icon: Heart,          label: "Acolhedora",         desc: "Linguagem próxima e empática" },
-                    { icon: Brain,          label: "Especialista",        desc: "BNCC, SAEB e CTBC" },
+                    { icon: Brain,          label: "Especialista",        desc: "BNCC, SAEB e currículos territoriais" },
                     { icon: Shield,         label: "Confiável",           desc: "Zero referências inventadas" },
                     { icon: MessageCircle,  label: "Contextual",          desc: "Adapta ao seu perfil de turma" },
                   ].map((t) => {
@@ -499,7 +499,7 @@ export default function HomePage() {
                 </h2>
 
                 <p className="mt-6 text-lg leading-relaxed text-slate-600">
-                  A <strong className="text-slate-900">Magis</strong> não é apenas um gerador de texto. Ela foi treinada para pensar como uma coordenadora pedagógica moderna: conhece a BNCC de ponta a ponta, domina o SAEB, entende o CTBC — e ainda aprende a estrutura do documento da <em>sua</em> escola.
+                  A <strong className="text-slate-900">Magis</strong> não é apenas um gerador de texto. Ela foi treinada para pensar como uma coordenadora pedagógica moderna: conhece a BNCC de ponta a ponta, domina o SAEB, entende o currículo específico de cada território nacional — e ainda aprende a estrutura do documento da <em>sua</em> escola.
                 </p>
                 <p className="mt-4 text-lg leading-relaxed text-slate-600">
                   Ela é acolhedora sem ser imprecisa, técnica sem ser fria. Cada sugestão vem contextualizada pela série, disciplina e perfil da sua turma.
@@ -615,7 +615,7 @@ export default function HomePage() {
                 <span className="wordmark-accent">em ação.</span>
               </h2>
               <p className="mx-auto mt-5 max-w-lg text-lg text-slate-500">
-                Foque em um campo e a Magis gera sugestões pedagógicas precisas na hora — BNCC, SAEB e CTBC sem digitar nada.
+                Foque em um campo e a Magis gera sugestões pedagógicas precisas na hora — BNCC, SAEB e currículo do seu território, sem digitar nada.
               </p>
             </div>
 
@@ -761,7 +761,7 @@ export default function HomePage() {
                 {
                   icon: Sparkles,
                   title: "Magis, Assistente Pedagógica",
-                  desc: "Sugere habilidades BNCC, competências SAEB e conteúdos CTBC — com a precisão de uma coordenadora, sem inventar códigos.",
+                  desc: "Sugere habilidades BNCC, competências SAEB e conteúdos do currículo específico de cada território — com a precisão de uma coordenadora, sem inventar códigos.",
                   bg: "bg-violet-600",
                   tag: "Magis IA",
                 },
@@ -781,7 +781,7 @@ export default function HomePage() {
                 },
                 {
                   icon: Shield,
-                  title: "BNCC, SAEB e CTBC reais",
+                  title: "BNCC, SAEB e currículos territoriais reais",
                   desc: "Nenhum dado inventado. A Magis usa referências verificadas de fontes oficiais.",
                   bg: "bg-slate-950",
                   tag: null,
@@ -918,7 +918,7 @@ export default function HomePage() {
                     features: [
                       "1 template por mês",
                       "1 plano por mês",
-                      "Magis: BNCC, SAEB e CTBC",
+                      "Magis: BNCC, SAEB e currículo territorial",
                       "Editor passo a passo",
                       "1 download por plano (DOCX)",
                     ],

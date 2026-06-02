@@ -16,7 +16,7 @@ const PLANS = [
     features: [
       "1 template por mês",
       "1 plano por mês",
-      "Magis: BNCC, SAEB e CTBC",
+      "Magis: BNCC, SAEB e currículo territorial",
       "Editor split-view",
       "Download DOCX",
     ],

@@ -1,5 +1,5 @@
 /**
- * Script de ingestão do CTBC (Currículo Territorial) no Pinecone.
+ * Script de ingestão do Currículo Territorial (namespace "ctbc") no Pinecone.
  *
  * Uso:
  *   npx tsx scripts/ingest-ctbc.ts
@@ -212,7 +212,7 @@ async function main() {
   const index = pinecone.index(PINECONE_INDEX);
   const ns = index.namespace(NAMESPACE);
 
-  console.log(`\n📄 Carregando documento CTBC...`);
+  console.log(`\n📄 Carregando Currículo Territorial...`);
   const pdfBuffer = await loadPdf();
   const { text } = await pdf(pdfBuffer);
   const chunks = extractChunks(text);
@@ -224,11 +224,11 @@ async function main() {
     await upsertBatch(ns, batch, batchNum, totalBatches);
   }
 
-  console.log(`\n✅ Ingestão CTBC concluída! ${chunks.length} chunks indexados.`);
+  console.log(`\n✅ Ingestão Currículo Territorial concluída! ${chunks.length} chunks indexados.`);
   console.log(`   Index: ${PINECONE_INDEX} | Namespace: ${NAMESPACE}`);
 }
 
 main().catch((err) => {
-  console.error("❌ Erro na ingestão CTBC:", err);
+  console.error("❌ Erro na ingestão Currículo Territorial:", err);
   process.exit(1);
 });

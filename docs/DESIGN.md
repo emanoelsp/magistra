@@ -69,7 +69,7 @@
 - Campo manual: label com badge `Dado fixo` em `amber-100 text-amber-700`
 - Campo IA: label com ícone ✨ + botão "Sugerir" inline
 - Painel direito: sticky, scroll independente do lado esquerdo
-- Sugestão com badge de fonte: `(BNCC)`, `(SAEB)`, `(CTBC)` em `slate-500`
+- Sugestão com badge de fonte: `(BNCC)`, `(SAEB)`, `(currículos territoriais)` em `slate-500`
 
 ## Templates — Cards
 

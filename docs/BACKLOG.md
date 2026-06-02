@@ -3,7 +3,7 @@
 ## Em progresso / Próximos
 
 ### RAG sobre BNCC + SAEB
-- Vetorizar documentos oficiais (BNCC, SAEB, CTBC) com `text-embedding-004`
+- Vetorizar documentos oficiais (BNCC, SAEB, currículos territoriais) com `text-embedding-004`
 - Armazenar vetores em pgvector (Supabase) ou Pinecone
 - No `/api/ia/campo`, recuperar os N chunks mais relevantes antes de gerar
 - Elimina alucinação de códigos curriculares — principal risco de perda de confiança do professor

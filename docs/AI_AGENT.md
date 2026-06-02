@@ -30,7 +30,7 @@
 **Tarefa:** Gerar sugestões para todos os campos ia_sugerida de uma vez.
 
 **System prompt:**
-> "Para cada campo solicitado, retorne um array de sugestões no formato `{ id, label, descricao?, fonte? }`. Baseie-se em BNCC, SAEB e CTBC. Parafraseie sempre. Retorne SOMENTE o JSON com chaves dos campos."
+> "Para cada campo solicitado, retorne um array de sugestões no formato `{ id, label, descricao?, fonte? }`. Baseie-se em BNCC, SAEB e currículos territoriais. Parafraseie sempre. Retorne SOMENTE o JSON com chaves dos campos."
 
 **Saída:** `Record<string, IaSugestao[]>`
 
@@ -43,7 +43,7 @@
 **Tarefa:** Gerar 3–5 sugestões específicas para um único campo, altamente contextualizadas pelo metadata fornecido.
 
 **System prompt:**
-> "Você é um especialista em currículo da educação básica brasileira. Gere 3 a 5 sugestões para o campo `{fieldLabel}` do grupo `{fieldGroup}`. Use o contexto: turma `{turma}`, ano `{ano}`, disciplina `{disciplina}`, etapa `{etapa}`. Baseie-se em BNCC, SAEB e CTBC quando aplicável. Retorne SOMENTE um JSON: `{ sugestoes: [{ id, label, descricao?, fonte? }] }`."
+> "Você é um especialista em currículo da educação básica brasileira. Gere 3 a 5 sugestões para o campo `{fieldLabel}` do grupo `{fieldGroup}`. Use o contexto: turma `{turma}`, ano `{ano}`, disciplina `{disciplina}`, etapa `{etapa}`. Baseie-se em BNCC, SAEB e currículos territoriais quando aplicável. Retorne SOMENTE um JSON: `{ sugestoes: [{ id, label, descricao?, fonte? }] }`."
 
 **Saída:** `{ sugestoes: IaSugestao[] }`
 

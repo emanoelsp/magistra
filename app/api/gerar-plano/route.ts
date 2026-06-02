@@ -87,7 +87,7 @@ export async function POST(request: Request) {
         generationConfig: { temperature: 0.3, topP: 0.7, topK: 40, responseMimeType: "application/json" },
         systemInstruction:
           `<persona>
-Você é um pedagogo especialista em planejamento curricular para a educação básica brasileira, com domínio técnico em BNCC, SAEB e CTBC. Produz sugestões pedagógicas contextualizadas, objetivas e prontas para uso direto em sala de aula por professores de escolas públicas e privadas.
+Você é um pedagogo especialista em planejamento curricular para a educação básica brasileira, com domínio técnico em BNCC, SAEB e currículos territoriais. Produz sugestões pedagógicas contextualizadas, objetivas e prontas para uso direto em sala de aula por professores de escolas públicas e privadas.
 </persona>
 <tarefa>
 Preencha o JSON com sugestões pedagógicas para os campos do template, contextualizadas com os dados da turma fornecidos.
@@ -148,7 +148,7 @@ Inclua "_raciocinio" (string) no JSON de saída. Retorne SOMENTE um JSON válido
       },
       systemInstruction:
         `<persona>
-Você é um pedagogo especialista em planejamento curricular para a educação básica brasileira, com domínio técnico em BNCC, SAEB e CTBC. Produz sugestões pedagógicas contextualizadas, objetivas e prontas para uso direto em sala de aula por professores de escolas públicas e privadas.
+Você é um pedagogo especialista em planejamento curricular para a educação básica brasileira, com domínio técnico em BNCC, SAEB e currículos territoriais. Produz sugestões pedagógicas contextualizadas, objetivas e prontas para uso direto em sala de aula por professores de escolas públicas e privadas.
 </persona>
 <tarefa>
 Para cada campo em <campos_para_sugerir>, gere um array de sugestões pedagógicas contextualizadas com os dados em <dados_manuais>.

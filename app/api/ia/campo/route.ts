@@ -88,7 +88,7 @@ Saída:
 <campo><nome>Conteúdos programáticos</nome><categoria>conteudos</categoria></campo>
 <contexto><turma>disciplina: Língua Portuguesa | ano: 1º ano EM | escola: EEM Prof. José Ribeiro</turma></contexto>
 Saída:
-{"raciocinio":"Campo de conteúdos para Língua Portuguesa no 1º ano do EM. Organizo do mais básico ao mais complexo, alinhado ao currículo do EM.","sugestoes":[{"id":"s1","label":"Gêneros textuais argumentativos: artigo de opinião — estrutura, tese e argumentos","descricao":"Introduz escrita argumentativa formal do EM, diferenciando fato de opinião por marcas linguísticas.","fonte":"BNCC EM13LP04"},{"id":"s2","label":"Variedades linguísticas: norma culta, registros formais e informais em diferentes contextos","descricao":"Amplia repertório comunicativo sem desvalorizar a variedade materna do aluno, alinhado ao CTBC.","fonte":"BNCC EM13LP01 | CTBC"},{"id":"s3","label":"Leitura crítica de textos multimodais: charge, infográfico e artigo — identificação de ponto de vista","descricao":"Desenvolve letramento visual e verbal, alinhado ao perfil leitor exigido pelo ENEM e SAEB.","fonte":"BNCC EM13LP03 | SAEB"}]}`,
+{"raciocinio":"Campo de conteúdos para Língua Portuguesa no 1º ano do EM. Organizo do mais básico ao mais complexo, alinhado ao currículo do EM.","sugestoes":[{"id":"s1","label":"Gêneros textuais argumentativos: artigo de opinião — estrutura, tese e argumentos","descricao":"Introduz escrita argumentativa formal do EM, diferenciando fato de opinião por marcas linguísticas.","fonte":"BNCC EM13LP04"},{"id":"s2","label":"Variedades linguísticas: norma culta, registros formais e informais em diferentes contextos","descricao":"Amplia repertório comunicativo sem desvalorizar a variedade materna do aluno, alinhado ao currículo territorial.","fonte":"BNCC EM13LP01 | currículo territorial"},{"id":"s3","label":"Leitura crítica de textos multimodais: charge, infográfico e artigo — identificação de ponto de vista","descricao":"Desenvolve letramento visual e verbal, alinhado ao perfil leitor exigido pelo ENEM e SAEB.","fonte":"BNCC EM13LP03 | SAEB"}]}`,
 
   competencias: `Entrada:
 <campo><nome>Competências gerais</nome><categoria>competencias</categoria></campo>
@@ -351,8 +351,8 @@ export async function POST(request: Request) {
         ? `O campo "${fieldLabel}" é de CONTEÚDOS PROGRAMÁTICOS. ` +
           "Sugira tópicos específicos do componente curricular adequados ao ano/série informados, do mais básico ao mais complexo. " +
           "label = nome do tópico de conteúdo (conciso, ex: 'Equações do 2° grau — discriminante e fórmula de Bhaskara'); " +
-          "descricao = o que será trabalhado, como se conecta ao cotidiano e à vida do aluno, e link com CTBC quando aplicável; " +
-          "fonte = 'Currículo [componente]' ou 'CTBC'."
+          "descricao = o que será trabalhado, como se conecta ao cotidiano e à vida do aluno, e link com currículo territorial quando aplicável; " +
+          "fonte = 'Currículo [componente]' ou 'currículo territorial'."
 
       : fieldGroup === "avaliacao"
         ? `O campo "${fieldLabel}" é de AVALIAÇÃO. ` +
@@ -366,21 +366,21 @@ export async function POST(request: Request) {
         "Gere sugestões específicas, contextualizadas com a turma e a disciplina fornecidas. " +
         "label = conteúdo pronto para inserção neste campo (conciso e direto); " +
         "descricao = justificativa pedagógica — por que essa sugestão é adequada ao contexto; " +
-        "fonte = referência curricular ou pedagógica pertinente (BNCC, SAEB, CTBC ou outra).";
+        "fonte = referência curricular ou pedagógica pertinente (BNCC, SAEB, currículo territorial ou outra).";
 
     // ── System instruction — persona + contrato de saída ─────────────────────
     const exampleKey = is2profField || isBibliografiaField ? "outros" : (fieldGroup ?? "outros");
     const fewShotExample = FEW_SHOT_EXAMPLES[exampleKey] ?? FEW_SHOT_EXAMPLES["outros"]!;
 
     const systemInstruction = `<persona>
-Você é um pedagogo sênior com 15 anos de experiência em planejamento de aulas para a educação básica brasileira. Domina a BNCC, o SAEB e o CTBC com profundidade técnica, conhece o vocabulário oficial do MEC e sabe como professores de escolas públicas e privadas aplicam esses referenciais na prática de sala de aula.
+Você é um pedagogo sênior com 15 anos de experiência em planejamento de aulas para a educação básica brasileira. Domina a BNCC, o SAEB e o currículo territorial com profundidade técnica, conhece o vocabulário oficial do MEC e sabe como professores de escolas públicas e privadas aplicam esses referenciais na prática de sala de aula.
 </persona>
 <tarefa>
 Gere de 3 a 5 sugestões de preenchimento para o campo indicado em <campo>. Cada sugestão deve ser específica para a disciplina, ano/série e escola descritos em <contexto>.
 </tarefa>
 <regras>
 1. NUNCA copie trechos literais de documentos oficiais — parafraseie sempre com suas próprias palavras.
-2. NUNCA invente ou complete códigos BNCC, SAEB ou CTBC — use SOMENTE os que você conhece com certeza.
+2. NUNCA invente ou complete códigos BNCC, SAEB ou currículo territorial — use SOMENTE os que você conhece com certeza.
 3. Se <habilidades_bncc> estiver presente, use EXCLUSIVAMENTE os códigos listados ali — nunca invente outros.
 4. Se <instrucao_do_professor> estiver presente, respeite-a como prioridade máxima.
 </regras>
@@ -399,7 +399,7 @@ Cada sugestão deve conter:
 - id: string única simples ('s1', 's2', ...)
 - label: texto curto e pronto para inserção direta — o professor clica e insere
 - descricao: justificativa pedagógica em 1-2 frases — POR QUE esta sugestão serve para este campo e contexto
-- fonte: referência curricular específica (ex: 'BNCC EF09MA06', 'Competência Geral 2', 'SAEB', 'CTBC', 'Avaliação formativa')
+- fonte: referência curricular específica (ex: 'BNCC EF09MA06', 'Competência Geral 2', 'SAEB', 'currículo territorial', 'Avaliação formativa')
 Responda SOMENTE com JSON válido:
 { "raciocinio": string, "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string }] }
 </contrato_de_saida>`;

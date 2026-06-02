@@ -156,7 +156,7 @@ export async function retrieveBnccContext(
   }
 }
 
-// ── CTBC retrieval (namespace "ctbc") ────────────────────────────────────────
+// ── Currículo Territorial retrieval (namespace "ctbc") ───────────────────────
 
 async function retrieveCtbcContext(
   vector: number[],
@@ -186,7 +186,7 @@ async function retrieveCtbcContext(
         etapa: String(m.metadata?.["etapa"] ?? ""),
       }));
   } catch (err) {
-    console.warn("[rag] CTBC retrieval falhou:", err);
+    console.warn("[rag] Currículo Territorial retrieval falhou:", err);
     return [];
   }
 }
@@ -324,7 +324,7 @@ export async function retrieveAllCurriculumContext(
         includeMetadata: true,
       }).catch(() => ({ matches: [] })),
 
-      // CTBC
+      // Currículo Territorial
       options?.skipCtbc
         ? Promise.resolve({ _ctbc: [] as CtbcChunk[] })
         : retrieveCtbcContext(vector, filters).then((r) => ({ _ctbc: r })).catch(() => ({ _ctbc: [] as CtbcChunk[] })),

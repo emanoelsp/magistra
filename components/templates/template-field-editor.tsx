@@ -599,7 +599,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                     <h3 className="text-sm font-bold text-slate-950">Campo sugerido pela Magis</h3>
                   </div>
                   <p className="text-sm leading-relaxed text-slate-600">
-                    Quando o professor foca neste campo no editor, a Magis gera sugestões automáticas alinhadas à BNCC, SAEB e CTBC com um clique.
+                    Quando o professor foca neste campo no editor, a Magis gera sugestões automáticas alinhadas à BNCC, SAEB e ao currículo territorial com um clique.
                   </p>
                   <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3">
                     <p className="text-xs font-semibold text-violet-800">Como adicionar contexto para a IA</p>

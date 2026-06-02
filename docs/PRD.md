@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Plataforma SaaS que reduz em 70% o tempo do professor para criar planos de aula, planejamentos anuais e outros documentos pedagógicos. O professor sobe o template oficial da escola, a IA extrai a estrutura e sugere conteúdo por campo (BNCC, CTBC, SAEB, competências, habilidades, conteúdos). O professor revisa, edita e baixa o documento pronto para entregar à escola.
+Plataforma SaaS que reduz em 70% o tempo do professor para criar planos de aula, planejamentos anuais e outros documentos pedagógicos. O professor sobe o template oficial da escola, a IA extrai a estrutura e sugere conteúdo por campo (BNCC, currículos territoriais, SAEB, competências, habilidades, conteúdos). O professor revisa, edita e baixa o documento pronto para entregar à escola.
 
 ## Público-alvo
 
@@ -12,7 +12,7 @@ Professores da educação básica (Infantil, Fundamental, Médio) que precisam p
 
 Cada escola tem um template Word diferente. O professor precisa:
 1. Abrir o template no Word
-2. Buscar manualmente referências BNCC, SAEB, CTBC na internet
+2. Buscar manualmente referências BNCC, SAEB, currículos territoriais na internet
 3. Copiar e adaptar os conteúdos campo a campo
 4. Salvar e postar no sistema da escola
 
@@ -86,7 +86,7 @@ Gemini 2.0 Flash: ~$0,005 USD = R$ 0,03. Margem bruta do Starter: >99%. O custo 
 - RF003: Upload de template PDF/DOCX com extração de campos via IA
 - RF004: Edição in-app dos campos do template
 - RF005: Editor split-view (esquerda: formulário, direita: painel IA)
-- RF006: Sugestões IA por campo (BNCC, SAEB, CTBC, habilidades, competências, conteúdos)
+- RF006: Sugestões IA por campo (BNCC, SAEB, currículos territoriais, habilidades, competências, conteúdos)
 - RF007: Auto-sugestão ao completar campos manuais (escola, turma, ano, disciplina)
 - RF008: Inserção de sugestão com um clique no campo ativo
 - RF009: Salvamento de rascunho + finalização com download PDF

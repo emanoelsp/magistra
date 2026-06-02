@@ -50,7 +50,7 @@ export function TermsLink() {
 
               <section>
                 <h3 className="mb-3 text-base font-bold text-slate-950">2. Descrição do Serviço</h3>
-                <p>O PlanoMagistra é uma plataforma SaaS destinada a professores da educação básica brasileira que auxilia na criação e preenchimento de planos de aula. Por meio da assistente pedagógica de inteligência artificial <strong>Magis</strong>, o sistema analisa o template (modelo) de plano de aula fornecido pelo usuário e sugere conteúdos pedagógicos alinhados à BNCC (Base Nacional Comum Curricular), ao SAEB (Sistema de Avaliação da Educação Básica) e ao CTBC, campo a campo, no editor split-view.</p>
+                <p>O PlanoMagistra é uma plataforma SaaS destinada a professores da educação básica brasileira que auxilia na criação e preenchimento de planos de aula. Por meio da assistente pedagógica de inteligência artificial <strong>Magis</strong>, o sistema analisa o template (modelo) de plano de aula fornecido pelo usuário e sugere conteúdos pedagógicos alinhados à BNCC (Base Nacional Comum Curricular), ao SAEB (Sistema de Avaliação da Educação Básica) e ao currículo específico de cada território nacional, campo a campo, no editor split-view.</p>
               </section>
 
               <section>
