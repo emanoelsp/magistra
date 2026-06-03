@@ -6,9 +6,11 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Eye,
   GripVertical,
   HelpCircle,
   Loader2,
+  MousePointer2,
   Plus,
   RefreshCw,
   Save,
@@ -26,30 +28,6 @@ interface TemplateFieldEditorProps {
   mode?: "edit" | "confirm";
 }
 
-const FIELD_TYPES: TemplateFieldSchema["type"][] = [
-  "text",
-  "textarea",
-  "number",
-  "date",
-  "select",
-  "multiselect",
-];
-
-const FIELD_ROLES: Array<{ value: TemplateFieldSchema["role"]; label: string }> = [
-  { value: "manual", label: "Metadado fixo (professor preenche)" },
-  { value: "ia_sugerida", label: "Campo IA (sugestão automática)" },
-];
-
-const FIELD_GROUPS: Array<{ value: TemplateFieldSchema["group"]; label: string }> = [
-  { value: "dados_turma", label: "Dados da turma" },
-  { value: "objetivos", label: "Objetivos" },
-  { value: "competencias", label: "Competências" },
-  { value: "habilidades", label: "Habilidades" },
-  { value: "conteudos", label: "Conteúdos" },
-  { value: "avaliacao", label: "Avaliação" },
-  { value: "outros", label: "Outros" },
-];
-
 function newField(): TemplateFieldSchema {
   return {
     key: `campo_${Date.now()}`,
@@ -62,6 +40,185 @@ function newField(): TemplateFieldSchema {
     helperText: "",
     aiInstructions: "",
   };
+}
+
+// ─── DocxInteractive ──────────────────────────────────────────────────────────
+// mammoth/docx-preview renderer with click-to-add-field support.
+
+interface DocxInteractiveProps {
+  templateId: string;
+  fields: TemplateFieldSchema[];
+  activeKey: string | null;
+  previewVersion?: number;
+  onClickElement: (text: string, ordinal: number) => void;
+}
+
+function DocxInteractive({ templateId, fields, activeKey, previewVersion = 0, onClickElement }: DocxInteractiveProps) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const bufferRef = useRef<ArrayBuffer | null>(null);
+  const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
+
+  useEffect(() => {
+    setPhase("loading");
+    bufferRef.current = null;
+    let cancelled = false;
+    fetch(`/api/templates/${templateId}/arquivo?fillable=1`)
+      .then((r) => r.ok ? r : fetch(`/api/templates/${templateId}/arquivo`))
+      .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
+      .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
+      .catch(() => { if (!cancelled) setPhase("error"); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateId, previewVersion]);
+
+  useEffect(() => {
+    if (phase !== "rendering" || !bufferRef.current || !containerRef.current) return;
+    let cancelled = false;
+    const container = containerRef.current;
+    const scroller = scrollerRef.current;
+    import("docx-preview")
+      .then(({ renderAsync }) => {
+        if (cancelled || !bufferRef.current) return;
+        container.innerHTML = "";
+        return renderAsync(bufferRef.current, container, undefined, {
+          inWrapper: true, ignoreWidth: false, ignoreHeight: true,
+          ignoreFonts: false, breakPages: true, useBase64URL: true,
+          renderEndnotes: true, renderFooters: true, renderFootnotes: true, renderHeaders: true,
+        });
+      })
+      .then(() => {
+        if (cancelled) return;
+        const wrapper = container.querySelector(".docx-wrapper") as HTMLElement | null;
+        const page = container.querySelector("section.docx") as HTMLElement | null;
+        if (wrapper && page && scroller) {
+          const availableW = scroller.clientWidth;
+          const naturalW = page.offsetWidth;
+          if (naturalW > 0 && availableW > 0 && naturalW > availableW) {
+            const scale = availableW / naturalW;
+            const naturalH = wrapper.offsetHeight;
+            wrapper.style.transformOrigin = "top left";
+            wrapper.style.transform = `scale(${scale})`;
+            container.style.height = `${naturalH * scale}px`;
+          }
+        }
+        setPhase("done");
+      })
+      .catch(() => { if (!cancelled) setPhase("error"); });
+    return () => { cancelled = true; };
+  }, [phase]);
+
+  // Highlight the active field
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    container.querySelectorAll("[data-mhl]").forEach((el) => {
+      (el as HTMLElement).style.removeProperty("background");
+      (el as HTMLElement).style.removeProperty("outline");
+      (el as HTMLElement).style.removeProperty("border-radius");
+      el.removeAttribute("data-mhl");
+    });
+    if (!activeKey) return;
+    const field = fields.find((f) => f.key === activeKey);
+    if (!field) return;
+    const terms = [field.label, field.defaultValue].filter(
+      (t): t is string => typeof t === "string" && t.trim().length > 2,
+    );
+    if (!terms.length) return;
+    const candidates = Array.from(container.querySelectorAll("td, p"));
+    let bestEl: Element | null = null;
+    let bestScore = 0;
+    for (const el of candidates) {
+      const text = (el.textContent ?? "").trim();
+      if (!text) continue;
+      for (const term of terms) {
+        if (text.includes(term)) {
+          const score = term.length / Math.max(text.length, 1);
+          if (score > bestScore) { bestScore = score; bestEl = el; }
+        }
+      }
+    }
+    if (bestEl) {
+      (bestEl as HTMLElement).style.background = "rgba(139,92,246,0.15)";
+      (bestEl as HTMLElement).style.outline = "2px solid rgba(139,92,246,0.5)";
+      (bestEl as HTMLElement).style.borderRadius = "2px";
+      bestEl.setAttribute("data-mhl", "true");
+      bestEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [activeKey, fields, phase]);
+
+  // Click-to-add listeners
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    const els = Array.from(container.querySelectorAll("td, p")) as HTMLElement[];
+    const onEnter = (e: Event) => {
+      const el = e.currentTarget as HTMLElement;
+      if (!el.hasAttribute("data-mhl")) {
+        el.style.cursor = "pointer";
+        el.style.outline = "1.5px dashed rgba(139,92,246,0.4)";
+        el.style.borderRadius = "2px";
+      }
+    };
+    const onLeave = (e: Event) => {
+      const el = e.currentTarget as HTMLElement;
+      if (!el.hasAttribute("data-mhl")) {
+        el.style.removeProperty("cursor");
+        el.style.removeProperty("outline");
+        el.style.removeProperty("border-radius");
+      }
+    };
+    const onClick = (e: Event) => {
+      e.stopPropagation();
+      const el = e.currentTarget as HTMLElement;
+      const text = el.textContent?.trim() ?? "";
+      const ordinal = els
+        .slice(0, els.indexOf(el))
+        .filter((t) => t.textContent?.trim() === text).length;
+      onClickElement(text, ordinal);
+    };
+    for (const el of els) {
+      el.addEventListener("mouseenter", onEnter);
+      el.addEventListener("mouseleave", onLeave);
+      el.addEventListener("click", onClick);
+    }
+    return () => {
+      for (const el of els) {
+        el.removeEventListener("mouseenter", onEnter);
+        el.removeEventListener("mouseleave", onLeave);
+        el.removeEventListener("click", onClick);
+      }
+    };
+  }, [phase, onClickElement]);
+
+  return (
+    <div className="relative flex flex-1 flex-col overflow-hidden">
+      <style>{`
+        .docx-html-preview { background: #f1f5f9; padding: 20px 12px; }
+        .docx-html-preview table { border-collapse: collapse; }
+        .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; }
+        .docx-html-preview img { max-width: 100%; height: auto; }
+        .docx-html-preview p { margin: 0.2em 0; }
+      `}</style>
+      <div ref={scrollerRef} className={`flex-1 overflow-y-auto ${phase === "error" ? "invisible absolute" : ""}`}>
+        <div ref={containerRef} className="docx-html-preview" />
+      </div>
+      {phase === "loading" && (
+        <div className="flex h-full items-center justify-center gap-3 text-slate-500">
+          <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
+          <span className="text-sm">Carregando documento…</span>
+        </div>
+      )}
+      {phase === "error" && (
+        <div className="flex h-full items-center justify-center px-8 text-center">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-slate-600">Pré-visualização indisponível.</p>
+            <p className="text-xs text-slate-400">Configure os campos na lista à direita.</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── TemplateFieldEditor ──────────────────────────────────────────────────────
@@ -83,7 +240,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
   const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
+  const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number }>>({});
   const [previewVersion, setPreviewVersion] = useState(0);
+  const [viewMode, setViewMode] = useState<"preview" | "interactive">("preview");
 
   const fieldListRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
@@ -97,13 +256,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   const isDocx = (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
 
-  // Scroll to field card when activeFieldKey changes
   useEffect(() => {
     if (!activeFieldKey || !fieldListRef.current) return;
     const card = fieldListRef.current.querySelector(`[data-field-card="${activeFieldKey}"]`);
     if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeFieldKey]);
-
 
   async function handleReExtract() {
     setIsReExtracting(true);
@@ -135,11 +292,74 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setActiveFieldKey(f.key);
   }
 
+  function handleAddFromDoc(rawText: string, clickOrdinal = 0) {
+    let label = rawText.trim();
+    let defaultValue: string | undefined;
+
+    const colonIdx = label.indexOf(":");
+    if (colonIdx > 0 && colonIdx < label.length - 1) {
+      const before = label.slice(0, colonIdx).trim();
+      const after = label.slice(colonIdx + 1).trim();
+      if (before.length > 0 && before.length <= 80) {
+        label = before;
+        if (after.length > 0 && after.length < 300) defaultValue = after;
+      }
+    }
+
+    label = label.replace(/:+$/, "").trim();
+    if (!label || label.length > 80) return;
+
+    const toKey = (s: string) =>
+      s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+    const key = toKey(label) || `campo_${Date.now()}`;
+
+    const existing = fields.find((f) => f.key === key || f.label.toLowerCase() === label.toLowerCase());
+    if (existing) {
+      setExpandedField(existing.key);
+      setActiveFieldKey(existing.key);
+      return;
+    }
+
+    const lower = toKey(label);
+    let role: TemplateFieldSchema["role"] = "manual";
+    let group: TemplateFieldSchema["group"] = "dados_turma";
+    if (/habilidade|bncc|saeb|ctbc|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(lower)) {
+      role = "ia_sugerida";
+      if (/habilidade|bncc|saeb|ctbc/.test(lower)) group = "habilidades";
+      else if (/competencia/.test(lower)) group = "competencias";
+      else if (/objetivo/.test(lower)) group = "objetivos";
+      else if (/avaliacao/.test(lower)) group = "avaliacao";
+      else group = "conteudos";
+    }
+
+    const f: TemplateFieldSchema = {
+      key,
+      label,
+      type: "text",
+      required: true,
+      role,
+      group,
+      placeholder: "",
+      helperText: "",
+      aiInstructions: "",
+      ...(defaultValue !== undefined ? { defaultValue } : {}),
+    };
+
+    setFields((prev) => [...prev, f]);
+    setExpandedField(f.key);
+    setActiveFieldKey(f.key);
+    if (rawText.trim()) {
+      setFieldPositions((prev) => ({ ...prev, [f.key]: { cellText: rawText.trim(), ordinal: clickOrdinal } }));
+    }
+  }
+
   function removeField(index: number) {
     const key = fields[index]?.key;
     setFields((prev) => prev.filter((_, i) => i !== index));
     if (activeFieldKey === key) setActiveFieldKey(null);
     if (expandedField === key) setExpandedField(null);
+    if (key) setFieldPositions((prev) => { const next = { ...prev }; delete next[key]; return next; });
   }
 
   function updateField(index: number, patch: Partial<TemplateFieldSchema>) {
@@ -180,6 +400,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           nome: nome.trim() || template.nome,
           estado: estado || null,
           schema_campos: fields,
+          field_positions: fieldPositions,
         }),
       })
         .then(async (res) => {
@@ -190,6 +411,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           return res.json();
         })
         .then(() => {
+          setFieldPositions({});
           if (mode === "confirm") {
             setShowConfirmSuccess(true);
             setTimeout(() => {
@@ -209,143 +431,86 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     });
   }
 
-  const fieldListPanel = (
-    <div className="flex flex-col gap-4" ref={fieldListRef}>
-      {/* Template name */}
-      <div>
-        <label className="block text-sm font-medium text-slate-700">Nome do template</label>
-        <input
-          type="text"
-          value={nome}
-          onChange={(e) => setNome(e.target.value)}
-          className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-        />
-      </div>
-
-      {/* Estado (RAG guardrail) */}
-      <div>
-        <label className="block text-sm font-medium text-slate-700">
-          Estado da escola
-          <span className="ml-1.5 text-xs font-normal text-violet-600">(filtra currículo regional na IA)</span>
-        </label>
-        <div className="relative mt-1.5">
-          <select
-            value={estado}
-            onChange={(e) => setEstado(e.target.value)}
-            className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-          >
-            <option value="">Não especificado</option>
-            {ESTADOS_BRASIL.map((e) => (
-              <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+  // Help modal
+  const helpModal = showHelp && (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm"
+      onClick={() => setShowHelp(false)}
+    >
+      <div
+        className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
+          <div>
+            <h2 className="text-base font-bold text-slate-950">Guia do editor de template</h2>
+            <p className="mt-0.5 text-xs text-slate-400">Entenda cada tipo de campo e como configurá-los</p>
+          </div>
+          <button type="button" onClick={() => setShowHelp(false)} className="rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950">
+            <X className="h-4 w-4" />
+          </button>
         </div>
-      </div>
-
-      {/* Help modal */}
-      {showHelp && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm"
-          onClick={() => setShowHelp(false)}
-        >
-          <div
-            className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
-              <div>
-                <h2 className="text-base font-bold text-slate-950">Guia do editor de template</h2>
-                <p className="mt-0.5 text-xs text-slate-400">Entenda cada tipo de campo e como configurá-los</p>
+        <div className="flex-1 overflow-y-auto">
+          <div className="space-y-2 p-6">
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+              <div className="mb-3 flex items-center gap-2.5">
+                <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">Fixo</span>
+                <h3 className="text-sm font-bold text-slate-950">Campo fixo</h3>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowHelp(false)}
-                className="rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <p className="text-sm leading-relaxed text-slate-600">
+                Preenchido manualmente pelo professor — a Magis <strong className="text-slate-800">não</strong> sugere conteúdo. Ideal para escola, turma, professor e período.
+              </p>
             </div>
-
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto">
-              <div className="space-y-2 p-6">
-
-                {/* Fixo */}
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
-                  <div className="mb-3 flex items-center gap-2.5">
-                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">Fixo</span>
-                    <h3 className="text-sm font-bold text-slate-950">Campo fixo</h3>
-                  </div>
-                  <p className="text-sm leading-relaxed text-slate-600">
-                    Preenchido manualmente pelo professor — a Magis <strong className="text-slate-800">não</strong> sugere conteúdo. Ideal para escola, turma, professor e período.
-                  </p>
-                  <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-                    <p className="text-xs font-semibold text-amber-800">Como adicionar valor padrão</p>
-                    <p className="mt-1 text-xs leading-relaxed text-amber-700">
-                      Expanda o campo (clique na seta) e preencha <em>Valor padrão</em>. Ele aparece pré-preenchido em todos os planos gerados com este template.
-                    </p>
-                  </div>
-                </div>
-
-                {/* IA */}
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
-                  <div className="mb-3 flex items-center gap-2.5">
-                    <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">IA</span>
-                    <h3 className="text-sm font-bold text-slate-950">Campo sugerido pela Magis</h3>
-                  </div>
-                  <p className="text-sm leading-relaxed text-slate-600">
-                    Quando o professor foca neste campo no editor, a Magis gera sugestões automáticas alinhadas à BNCC, SAEB e ao currículo territorial com um clique.
-                  </p>
-                  <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3">
-                    <p className="text-xs font-semibold text-violet-800">Como adicionar contexto para a IA</p>
-                    <p className="mt-1 text-xs leading-relaxed text-violet-700">
-                      Expanda o campo e preencha <em>Contexto para a IA</em>. Exemplos:
-                    </p>
-                    <ul className="mt-1.5 space-y-0.5 text-xs text-violet-700">
-                      <li>· <em>"Sugira habilidades do 6º ao 9º ano"</em></li>
-                      <li>· <em>"Foque em competências socioemocionais"</em></li>
-                      <li>· <em>"Priorize descritores do SAEB para Matemática"</em></li>
-                    </ul>
-                  </div>
-                </div>
-
-                {/* Variáveis */}
-                {isDocx && fields.length > 0 && (
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
-                    <h3 className="mb-1 text-sm font-bold text-slate-950">Variáveis do documento</h3>
-                    <p className="mb-4 text-xs leading-relaxed text-slate-500">
-                      Insira <code className="rounded bg-slate-200 px-1 font-mono">{"{{chave}}"}</code> no seu arquivo Word exatamente onde cada campo deve aparecer ao gerar o plano.
-                    </p>
-                    <div className="grid gap-1.5 sm:grid-cols-2">
-                      {fields.map((f) => (
-                        <button
-                          key={f.key}
-                          type="button"
-                          onClick={() => {
-                            setExpandedField(f.key);
-                            setActiveFieldKey(f.key);
-                            setShowHelp(false);
-                          }}
-                          className="flex flex-col rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left transition hover:border-violet-300 hover:bg-violet-50"
-                          title="Clique para destacar no documento"
-                        >
-                          <span className="truncate text-[10px] text-slate-400">{f.label}</span>
-                          <code className="truncate font-mono text-[11px] font-semibold text-violet-600">{`{{${f.key}}}`}</code>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+              <div className="mb-3 flex items-center gap-2.5">
+                <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">IA</span>
+                <h3 className="text-sm font-bold text-slate-950">Campo sugerido pela Magis</h3>
               </div>
+              <p className="text-sm leading-relaxed text-slate-600">
+                Quando o professor foca neste campo no editor, a Magis gera sugestões automáticas alinhadas à BNCC, SAEB e ao currículo territorial.
+              </p>
             </div>
+            <div className="rounded-2xl border border-violet-100 bg-violet-50 p-5">
+              <div className="mb-3 flex items-center gap-2.5">
+                <MousePointer2 className="h-4 w-4 text-violet-600" />
+                <h3 className="text-sm font-bold text-slate-950">Como adicionar campos pelo documento</h3>
+              </div>
+              <p className="text-sm leading-relaxed text-slate-600">
+                Clique na aba <strong>"Adicionar campos"</strong> no painel esquerdo. O documento ficará no modo interativo — clique em qualquer célula ou parágrafo para criar um campo associado àquela posição.
+              </p>
+            </div>
+            {isDocx && fields.length > 0 && (
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                <h3 className="mb-1 text-sm font-bold text-slate-950">Variáveis do documento</h3>
+                <p className="mb-4 text-xs leading-relaxed text-slate-500">
+                  Insira <code className="rounded bg-slate-200 px-1 font-mono">{"{{chave}}"}</code> no seu arquivo Word exatamente onde cada campo deve aparecer.
+                </p>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {fields.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => { setExpandedField(f.key); setActiveFieldKey(f.key); setShowHelp(false); }}
+                      className="flex flex-col rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left transition hover:border-violet-300 hover:bg-violet-50"
+                    >
+                      <span className="truncate text-[10px] text-slate-400">{f.label}</span>
+                      <code className="truncate font-mono text-[11px] font-semibold text-violet-600">{`{{${f.key}}}`}</code>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
+    </div>
+  );
 
-      {/* Fields list */}
+  // Fields-only panel (no nome/estado — those live in the header bar for DOCX mode)
+  const fieldsPanel = (
+    <div className="flex flex-col gap-4" ref={fieldListRef}>
+      {helpModal}
+
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
@@ -389,26 +554,18 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   disabled={isReExtracting}
                   className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-60"
                 >
-                  {isReExtracting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
+                  {isReExtracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   {isReExtracting ? "Extraindo…" : "Re-extrair do arquivo"}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={addField}
-                className="text-sm font-medium text-slate-600 hover:text-slate-950"
-              >
+              <button type="button" onClick={addField} className="text-sm font-medium text-slate-600 hover:text-slate-950">
                 Adicionar campo manualmente
               </button>
             </div>
           </div>
         ) : (
           <div className="space-y-2">
-            {fields.length > 0 && template.arquivo_url && (
+            {template.arquivo_url && (
               <div className="flex justify-end">
                 <button
                   type="button"
@@ -416,11 +573,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   disabled={isReExtracting}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-slate-400 hover:text-slate-900 disabled:opacity-50"
                 >
-                  {isReExtracting ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3 w-3" />
-                  )}
+                  {isReExtracting ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                   Re-extrair
                 </button>
               </div>
@@ -434,12 +587,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   key={field.key}
                   data-field-card={field.key}
                   className={`rounded-2xl border bg-white transition-all ${
-                    isActive
-                      ? "border-violet-300 ring-1 ring-violet-200"
-                      : "border-slate-200"
+                    isActive ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"
                   }`}
                 >
-                  {/* Field header — always visible */}
                   <div
                     className="flex cursor-pointer items-center gap-2 px-4 py-3"
                     onClick={() => {
@@ -453,25 +603,17 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         {field.label || <span className="italic text-slate-400">sem nome</span>}
                       </p>
                       <p className="text-xs text-slate-400">
-                        {field.role === "ia_sugerida" ? "IA sugere" : "Manual"} ·{" "}
-                        {field.group ?? "outros"}
+                        {field.role === "ia_sugerida" ? "IA sugere" : "Manual"} · {field.group ?? "outros"}
                       </p>
                     </div>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        field.role === "ia_sugerida"
-                          ? "bg-violet-100 text-violet-700"
-                          : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                      field.role === "ia_sugerida" ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-700"
+                    }`}>
                       {field.role === "ia_sugerida" ? "IA" : "Fixo"}
                     </span>
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeField(index);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); removeField(index); }}
                       className="rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -483,11 +625,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                     )}
                   </div>
 
-                  {/* Expanded field config */}
                   {isExpanded && (
                     <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
-
-                      {/* Row 1: nome do campo + variável — chips read-only */}
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                         <div className="flex items-center gap-1.5">
                           <span className="text-[10px] text-slate-400">Campo:</span>
@@ -501,43 +640,33 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </div>
                       </div>
 
-
-                      {/* Row 3: papel — segmented toggle */}
                       <div>
                         <span className="text-xs font-medium text-slate-600">Papel</span>
                         <div className="mt-1.5 flex gap-2">
                           <button
                             type="button"
-                            onClick={() =>
-                              preserveScroll(() => updateField(index, { role: "manual", group: field.group ?? "dados_turma" }))
-                            }
+                            onClick={() => preserveScroll(() => updateField(index, { role: "manual", group: field.group ?? "dados_turma" }))}
                             className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
                               field.role !== "ia_sugerida"
                                 ? "border-amber-400 bg-amber-50 text-amber-800"
                                 : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
                             }`}
                           >
-                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${
-                              field.role !== "ia_sugerida" ? "border-amber-500 bg-amber-500" : "border-slate-300"
-                            }`}>
+                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${field.role !== "ia_sugerida" ? "border-amber-500 bg-amber-500" : "border-slate-300"}`}>
                               {field.role !== "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
                             </span>
                             Fixo / Manual
                           </button>
                           <button
                             type="button"
-                            onClick={() =>
-                              preserveScroll(() => updateField(index, { role: "ia_sugerida", group: field.group ?? "outros" }))
-                            }
+                            onClick={() => preserveScroll(() => updateField(index, { role: "ia_sugerida", group: field.group ?? "outros" }))}
                             className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
                               field.role === "ia_sugerida"
                                 ? "border-violet-400 bg-violet-50 text-violet-800"
                                 : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
                             }`}
                           >
-                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${
-                              field.role === "ia_sugerida" ? "border-violet-500 bg-violet-500" : "border-slate-300"
-                            }`}>
+                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${field.role === "ia_sugerida" ? "border-violet-500 bg-violet-500" : "border-slate-300"}`}>
                               {field.role === "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
                             </span>
                             Sugestão / Magis
@@ -545,18 +674,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </div>
                       </div>
 
-                      {/* Contexto para a Magis — only for ia_sugerida fields */}
                       {field.role === "ia_sugerida" && (
                         <label className="block">
                           <span className="text-xs font-semibold text-violet-700">Contexto para a Magis</span>
                           <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
-                            Dê instruções específicas para a Magis ao sugerir conteúdo neste campo. Ex.: <em>"Foco em 6º ano"</em>, <em>"Priorizar SAEB"</em>.
+                            Dê instruções específicas para a Magis ao sugerir conteúdo neste campo.
                           </p>
                           <textarea
                             value={field.aiInstructions ?? ""}
-                            onChange={(e) =>
-                              updateField(index, { aiInstructions: e.target.value })
-                            }
+                            onChange={(e) => updateField(index, { aiInstructions: e.target.value })}
                             rows={2}
                             placeholder="Ex.: Priorizar habilidades do 6º ano, foco em interpretação de texto…"
                             className="mt-0.5 w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-violet-400 focus:bg-white"
@@ -564,7 +690,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </label>
                       )}
 
-                      {/* Valor padrão — only for manual/fixed fields */}
                       {field.role !== "ia_sugerida" && (
                         <label className="block">
                           <span className="text-xs font-semibold text-amber-700">Valor padrão</span>
@@ -573,9 +698,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                           </p>
                           <textarea
                             value={field.defaultValue ?? ""}
-                            onChange={(e) =>
-                              preserveScroll(() => updateField(index, { defaultValue: e.target.value || undefined }))
-                            }
+                            onChange={(e) => preserveScroll(() => updateField(index, { defaultValue: e.target.value || undefined }))}
                             rows={2}
                             placeholder="Ex.: Escola Estadual, 9º Ano B, 2º Bimestre…"
                             className="mt-0.5 w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-amber-400 focus:bg-white"
@@ -591,16 +714,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         )}
       </div>
 
-      {error && (
-        <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>
-      )}
-
+      {error && <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
       {reExtractMsg && (
         <p className="rounded-xl bg-violet-50 px-4 py-3 text-sm font-medium text-violet-700">
           {reExtractMsg} Salve para confirmar.
         </p>
       )}
-
       {saved && (
         <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
           Template salvo com sucesso!
@@ -645,87 +764,170 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             from { opacity: 0; transform: scale(0.7) translateY(24px); }
             to   { opacity: 1; transform: scale(1) translateY(0); }
           }
-          @keyframes magis-spin {
-            from { transform: rotate(0deg); }
-            to   { transform: rotate(360deg); }
-          }
         `}</style>
-
-        {/* Magis avatar */}
         <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
           <Sparkles className="h-7 w-7 text-white" />
-          <span
-            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
-            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}
-          >
+          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
+            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}>
             <CheckCircle2 className="h-3.5 w-3.5 text-white" />
           </span>
         </div>
-
-        {/* Magis bubble */}
         <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
           <div className="mb-1.5 flex items-center justify-center gap-1.5">
             <Sparkles className="h-3 w-3 text-violet-500" />
             <span className="text-xs font-bold text-violet-700">Magis</span>
           </div>
-          <p className="text-sm font-medium leading-relaxed text-slate-800">
-            Seu template foi configurado com sucesso! 🎉
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Redirecionando para Meus Templates…
-          </p>
+          <p className="text-sm font-medium leading-relaxed text-slate-800">Seu template foi configurado com sucesso! 🎉</p>
+          <p className="mt-1 text-xs text-slate-500">Redirecionando para Meus Templates…</p>
         </div>
-
-        {/* Progress bar */}
         <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
-          <div
-            className="h-full rounded-full bg-violet-500"
-            style={{ animation: "magis-progress 3s linear forwards" }}
-          />
+          <div className="h-full rounded-full bg-violet-500" style={{ animation: "magis-progress 3s linear forwards" }} />
         </div>
-        <style>{`
-          @keyframes magis-progress {
-            from { width: 100%; }
-            to   { width: 0%; }
-          }
-        `}</style>
+        <style>{`@keyframes magis-progress { from { width: 100%; } to { width: 0%; } }`}</style>
       </div>
     </div>
   );
 
-  // DOCX templates: split-view (Office Online preview left, field list right)
+  // DOCX: header bar + split view (left = tabbed viewer, right = fields)
   if (isDocx) {
     return (
       <>
         {confirmSuccessModal}
-        <div className="flex gap-6" style={{ minHeight: "calc(100vh - 280px)" }}>
-          {/* Left: Office Online inline Word viewer */}
-          <div className="hidden w-[65%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 xl:flex xl:flex-col">
-            <OfficeInlineViewer
-              key={previewVersion}
-              tokenEndpoint={`/api/templates/${template.id}/preview-token`}
-              previewPublicoPath={`/api/templates/${template.id}/preview-publico`}
-              extraParams="annotated=1"
-              title="Pré-visualização do template"
-              className="h-full"
+
+        {/* Header bar: nome + estado */}
+        <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-end sm:gap-4">
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-slate-600">Nome do template</label>
+            <input
+              type="text"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              className="mt-1 w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
             />
           </div>
+          <div className="sm:w-56">
+            <label className="block text-xs font-medium text-slate-600">
+              Estado <span className="text-violet-600">(currículo regional)</span>
+            </label>
+            <div className="relative mt-1">
+              <select
+                value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-2.5 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+              >
+                <option value="">Não especificado</option>
+                {ESTADOS_BRASIL.map((e) => (
+                  <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+          </div>
+        </div>
 
-          {/* Right: field list */}
+        {/* Split view */}
+        <div className="flex gap-6" style={{ minHeight: "calc(100vh - 320px)" }}>
+          {/* Left: tabbed viewer — only on xl+ */}
+          <div className="hidden w-[65%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 xl:flex xl:flex-col">
+            {/* Tab bar */}
+            <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 bg-white px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setViewMode("preview")}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-semibold transition ${
+                  viewMode === "preview"
+                    ? "bg-slate-950 text-white"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                }`}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                Preview Word
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("interactive")}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-semibold transition ${
+                  viewMode === "interactive"
+                    ? "bg-violet-600 text-white"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                }`}
+              >
+                <MousePointer2 className="h-3.5 w-3.5" />
+                Adicionar campos
+              </button>
+              {viewMode === "interactive" && (
+                <p className="ml-2 text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
+              )}
+            </div>
+
+            {/* Viewer content */}
+            <div className="flex flex-1 flex-col overflow-hidden">
+              {viewMode === "preview" ? (
+                <OfficeInlineViewer
+                  key={previewVersion}
+                  tokenEndpoint={`/api/templates/${template.id}/preview-token`}
+                  previewPublicoPath={`/api/templates/${template.id}/preview-publico`}
+                  extraParams="annotated=1"
+                  title="Pré-visualização do template"
+                  className="h-full"
+                />
+              ) : (
+                <DocxInteractive
+                  templateId={template.id}
+                  fields={fields}
+                  activeKey={expandedField}
+                  previewVersion={previewVersion}
+                  onClickElement={handleAddFromDoc}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Right: fields panel */}
           <div ref={panelScrollRef} className="flex-1 min-w-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none]">
-            {fieldListPanel}
+            {fieldsPanel}
           </div>
         </div>
       </>
     );
   }
 
-  // Non-DOCX: single column
+  // Non-DOCX: single column with nome+estado included
   return (
     <>
       {confirmSuccessModal}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        {fieldListPanel}
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:gap-6">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-slate-700">Nome do template</label>
+            <input
+              type="text"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+            />
+          </div>
+          <div className="sm:w-56">
+            <label className="block text-sm font-medium text-slate-700">
+              Estado da escola
+              <span className="ml-1.5 text-xs font-normal text-violet-600">(filtra currículo regional na IA)</span>
+            </label>
+            <div className="relative mt-1.5">
+              <select
+                value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+              >
+                <option value="">Não especificado</option>
+                {ESTADOS_BRASIL.map((e) => (
+                  <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+          </div>
+        </div>
+        {fieldsPanel}
       </div>
     </>
   );
