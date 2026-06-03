@@ -3,8 +3,8 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { ResponseSchema } from "@google/generative-ai";
+import mammoth from "mammoth";
 import pdf from "pdf-parse";
-import PizZip from "pizzip";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
@@ -56,31 +56,35 @@ function isQuotaError(err: unknown): boolean {
   return status === 429 && (msg.includes("free_tier") || msg.includes("limit: 0") || msg.includes("PerDay"));
 }
 
-function extractDocxText(buffer: Buffer): string {
-  const zip = new PizZip(buffer);
-  const xmlFile = zip.files["word/document.xml"];
-  if (!xmlFile) return "";
-  const xml = xmlFile.asText();
-  return xml
-    .replace(/<\/w:p>/g, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .join("\n");
+// ── Extração de conteúdo ────────────────────────────────────────────────────
+
+async function extractDocxHtml(buffer: Buffer): Promise<string> {
+  const result = await mammoth.convertToHtml(
+    { buffer },
+    // Skip embedded images — reduces token count significantly
+    { convertImage: mammoth.images.imgElement(() => Promise.resolve({ src: "" })) },
+  );
+  // Remove empty img tags left by the converter
+  return result.value.replace(/<img[^>]*>/gi, "");
 }
 
-async function extractText(buffer: Buffer, url: string): Promise<string> {
+interface ExtractedContent {
+  content: string;
+  isHtml: boolean;
+}
+
+async function extractContent(buffer: Buffer, url: string): Promise<ExtractedContent> {
   const lower = url.toLowerCase().split("?")[0];
   if (lower.endsWith(".docx") || lower.endsWith(".doc")) {
-    return extractDocxText(buffer);
+    const html = await extractDocxHtml(buffer);
+    return { content: html, isHtml: true };
   }
   const data = await pdf(buffer);
-  return data.text;
+  return { content: data.text, isHtml: false };
 }
 
-// ── Response schema — restringe role, group e type aos valores válidos ─────
+// ── Response schema ─────────────────────────────────────────────────────────
+
 const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
   type: SchemaType.OBJECT,
   required: ["raciocinio", "campos"],
@@ -105,28 +109,66 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
   },
 };
 
+// ── System instruction (shared for both Gemini and Groq) ────────────────────
+
 const SYSTEM_INSTRUCTION = `<persona>
-Você é um analista de currículo escolar sênior, especializado em estruturar documentos pedagógicos brasileiros segundo as normas do MEC e a BNCC. Tem expertise em identificar a arquitetura de planos de aula — distinguindo campos de identificação de campos pedagógicos — e em extrair sua estrutura com precisão absoluta, sem inferências ou normalizações.
+Você é um analista de currículo escolar sênior especializado em documentos pedagógicos brasileiros (MEC/BNCC). Você recebe o HTML semântico gerado pelo Mammoth a partir de um arquivo Word (.docx). O HTML preserva toda a topologia do documento: tabelas (<table>/<tr>/<td>), parágrafos (<p>) e listas. Sua tarefa é mapear cada campo preenchível de forma geometricamente precisa.
 </persona>
 <regras>
-1. REGRA CRÍTICA: O campo 'label' DEVE ser copiado EXATAMENTE como aparece no documento — sem tradução, normalização, abreviação ou substituição.
-   Exemplos: 'Área/Componente:' → label 'Área/Componente' | 'HABILIDADES:' → label 'Habilidades' | 'Professor(a):' → label 'Professor(a)'.
-   NUNCA invente labels.
-2. Campos de identificação (professor, curso/área, turma, componente etc.) → role 'manual', group 'dados_turma'.
-3. Campos pedagógicos (objetivos, competências, habilidades, BNCC, SAEB, conteúdos, avaliação) → role 'ia_sugerida'.
+1. REGRA CRÍTICA — LABEL EXATO: O 'label' DEVE ser copiado EXATAMENTE como aparece no texto da célula rótulo — sem tradução, normalização, abreviação ou substituição. Exemplos: a célula diz "PROFESSOR (A):" → label "PROFESSOR (A)" | a célula diz "Área/Componente:" → label "Área/Componente".
+2. REGRA DE TOPOLOGIA — COMO IDENTIFICAR UM CAMPO:
+   • Em tabelas: o rótulo está na <td> ANTERIOR (mesma <tr>) ou na <th>/<td> do cabeçalho da coluna. A célula à direita (ou abaixo) vazia ou com valor de exemplo é o campo.
+   • Em parágrafos: o padrão é "Rótulo: valor" — o rótulo é o texto antes do ":" e o valor é o campo.
+   • Se a célula contiver texto não-vazio (valor preenchido), capture-o como 'defaultValue'.
+3. REGRA DE CLASSIFICAÇÃO:
+   • Identificação (professor, turma, escola, componente, data, carga horária) → role "manual", group "dados_turma".
+   • Pedagógicos (objetivos, competências, habilidades, BNCC, SAEB, conteúdos, avaliação, metodologia) → role "ia_sugerida".
 4. Grupos válidos: dados_turma | objetivos | competencias | habilidades | conteudos | avaliacao | outros.
-5. O 'key' é o label em snake_case sem acentos (ex: 'area_componente', 'numero_de_aulas').
+5. O 'key' é o label em snake_case sem acentos (ex: "professor_a", "area_componente", "n_aulas_semanais").
+6. type "textarea" para campos pedagógicos longos (objetivos, habilidades, conteúdos, avaliação); "text" para campos curtos (nome, turma, data).
+7. NÃO inclua células que são apenas títulos de seção ou decoração visual sem campo associado.
 </regras>
 <raciocinio_obrigatorio>
-Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
-1. Faça uma leitura geral do documento para mapear sua estrutura (seções, rótulos, campos preenchíveis).
-2. Classifique cada campo: é de identificação (professor, turma, escola, data) ou pedagógico (objetivos, habilidades, conteúdos, avaliação)?
-3. Para cada campo pedagógico, determine o group correto: objetivos | competencias | habilidades | conteudos | avaliacao | outros.
-4. Confirme que cada label será copiado EXATAMENTE como aparece no documento, sem normalização.
+Antes de extrair, raciocine em "raciocinio":
+1. Mapeie a estrutura HTML: quantas tabelas existem, quantas colunas por tabela, quais são cabeçalhos vs. dados.
+2. Para cada <tr>: identifique quais <td> são rótulos (texto em negrito, geralmente à esquerda) e quais são campos (vazia ou com valor de exemplo à direita/abaixo).
+3. Classifique cada campo: identificação ou pedagógico? Qual group?
+4. Confirme que cada label será copiado EXATAMENTE do HTML, sem normalização.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
 </contrato_de_saida>`;
+
+// ── Prompt builder ──────────────────────────────────────────────────────────
+
+const fewShotExample = {
+  regra: "NUNCA invente labels. Se o HTML tem <td><strong>PROFESSOR (A):</strong></td><td>Luiz Carlos</td>, o label é 'PROFESSOR (A)' e o defaultValue é 'Luiz Carlos'.",
+  html_input_example: "<table><tbody><tr><td><strong>PROFESSOR (A):</strong></td><td>Luiz Carlos Covre</td><td><strong>CURSO</strong></td><td>DSI</td></tr><tr><td><strong>Área(s) do Conhecimento:</strong></td><td>Práticas em DSI</td><td><strong>Nº aulas semanais:</strong></td><td>2</td></tr><tr><td colspan=\"4\"><strong>HABILIDADES</strong></td></tr><tr><td colspan=\"4\"></td></tr></tbody></table>",
+  campos: [
+    { key: "professor_a", label: "PROFESSOR (A)", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "Luiz Carlos Covre" },
+    { key: "curso", label: "CURSO", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "DSI" },
+    { key: "areas_do_conhecimento", label: "Área(s) do Conhecimento", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "Práticas em DSI" },
+    { key: "n_aulas_semanais", label: "Nº aulas semanais", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "2" },
+    { key: "habilidades", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+  ],
+};
+
+function buildPrompt({ content, isHtml }: ExtractedContent): string {
+  const docTag = isHtml ? "documento_html" : "documento";
+  const instrucao = isHtml
+    ? `Analise o HTML em <documento_html>. O HTML foi gerado pelo Mammoth e preserva a estrutura de tabelas (<table><tr><td>) do documento Word. Para cada linha da tabela, identifique: qual <td> é o rótulo (label) e qual é o campo (geralmente a célula adjacente vazia ou com valor de exemplo). CRÍTICO: copie o label EXATAMENTE como aparece no texto HTML. O 'key' é o label em snake_case sem acentos. Se a célula contém texto, inclua como 'defaultValue'.`
+    : `Analise o texto em <documento>. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece. O 'key' é o label em snake_case sem acentos. Se o campo estiver preenchido, inclua o conteúdo como 'defaultValue'.`;
+
+  return [
+    `<instrucao>${instrucao}</instrucao>`,
+    `<exemplo>${JSON.stringify(fewShotExample)}</exemplo>`,
+    `<${docTag}>`,
+    content,
+    `</${docTag}>`,
+  ].join("\n");
+}
+
+// ── AI generation ───────────────────────────────────────────────────────────
 
 async function generateWithGemini(promptStr: string): Promise<string> {
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
@@ -198,17 +240,7 @@ function parseSchema(raw: string): unknown {
   return schema;
 }
 
-const fewShotExample = {
-  regra: "NUNCA invente labels. Se o documento diz 'Área/Componente:' o label é 'Área/Componente', NÃO 'Curso'.",
-  campos: [
-    { key: "professor", label: "Professor(a)", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "Luiz Carlos Covre" },
-    { key: "area_componente", label: "Área/Componente", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "5421 - PRÁTICAS EM D.S.I" },
-    { key: "turma", label: "Turma", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "2º EMIEP" },
-    { key: "habilidades", label: "Habilidades", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
-    { key: "objetivos_de_aprendizagem", label: "Objetivos de aprendizagem", type: "textarea", required: true, role: "ia_sugerida", group: "objetivos" },
-    { key: "avaliacao", label: "Avaliação", type: "textarea", required: true, role: "ia_sugerida", group: "avaliacao" },
-  ],
-};
+// ── Route handler ───────────────────────────────────────────────────────────
 
 export async function POST(
   _request: Request,
@@ -229,23 +261,16 @@ export async function POST(
       return NextResponse.json({ error: "Template não possui arquivo armazenado." }, { status: 400 });
     }
 
-    // Download from Vercel Blob (HTTP URL), not Firebase Storage
     const fileBuffer = await downloadFile(arquivoUrl);
-    const fileText = await extractText(fileBuffer, arquivoUrl);
 
-    const promptStr = [
-      `<instrucao>`,
-      `Analise o texto em <documento> e extraia TODOS os campos visíveis. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece (título da seção, rótulo da linha, cabeçalho). Não normalize, não traduza, não abrevia. O 'key' é o label em snake_case sem acentos. Se o documento estiver preenchido, inclua o conteúdo como 'defaultValue'. Retorne SOMENTE o array JSON.`,
-      `</instrucao>`,
-      `<exemplo>`,
-      JSON.stringify(fewShotExample),
-      `</exemplo>`,
-      `<documento>`,
-      fileText,
-      `</documento>`,
-    ].join("\n");
+    const lower = arquivoUrl.toLowerCase().split("?")[0];
+    const isDocx = lower.endsWith(".docx") || lower.endsWith(".doc");
 
-    const raw = await generateSchema(promptStr);
+    // Mammoth extracts semantic HTML for DOCX (preserves table topology)
+    // pdf-parse extracts flat text for PDF (best available without OCR)
+    const extracted = await extractContent(fileBuffer, arquivoUrl);
+
+    const raw = await generateSchema(buildPrompt(extracted));
 
     let schema: unknown;
     try {
@@ -258,20 +283,14 @@ export async function POST(
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
 
-    // Regenerate fillable DOCX synchronously so placeholders are ready immediately
-    const lower = arquivoUrl.toLowerCase().split("?")[0];
-    const isDocx = lower.endsWith(".docx") || lower.endsWith(".doc");
-
-    // Merge AI schema with any {{...}} patterns already in the DOCX
-    // Scanned keys take priority (explicit user intent); AI fills in the rest
+    // Merge: scanned {{key}} patterns in the DOCX take priority over AI inference
     const scannedKeys = isDocx ? scanPlaceholders(fileBuffer) : [];
     if (scannedKeys.length > 0) {
       const aiKeys = new Set((schema as TemplateFieldSchema[]).map((f) => f.key));
-      const fromScan = scannedKeys
-        .filter((k) => !aiKeys.has(k))
-        .map(keyToField);
+      const fromScan = scannedKeys.filter((k) => !aiKeys.has(k)).map(keyToField);
       (schema as TemplateFieldSchema[]).push(...fromScan);
     }
+
     let fillableUrl: string | null = null;
     if (isDocx) {
       try {
