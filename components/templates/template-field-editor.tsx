@@ -48,12 +48,13 @@ function newField(): TemplateFieldSchema {
 interface DocxInteractiveProps {
   templateId: string;
   fields: TemplateFieldSchema[];
+  fieldPositions: Record<string, { cellText: string; ordinal: number }>;
   activeKey: string | null;
   previewVersion?: number;
   onClickElement: (text: string, ordinal: number) => void;
 }
 
-function DocxInteractive({ templateId, fields, activeKey, previewVersion = 0, onClickElement }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previewVersion = 0, onClickElement }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
@@ -146,6 +147,38 @@ function DocxInteractive({ templateId, fields, activeKey, previewVersion = 0, on
       bestEl.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [activeKey, fields, phase]);
+
+  // Inject {{key}} chips into the DOM for click-added fields (immediate reactive feedback)
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    const els = Array.from(container.querySelectorAll("td, p")) as HTMLElement[];
+
+    for (const [key, pos] of Object.entries(fieldPositions)) {
+      if (container.querySelector(`[data-field-chip="${key}"]`)) continue;
+      const field = fields.find((f) => f.key === key);
+      if (!field) continue;
+
+      const { cellText, ordinal } = pos;
+      const matches = els.filter((el) => (el.textContent?.trim() ?? "") === cellText);
+      const targetEl = matches[ordinal];
+      if (!targetEl) continue;
+
+      const isIa = field.role === "ia_sugerida";
+      const chip = document.createElement("span");
+      chip.setAttribute("data-field-chip", key);
+      chip.style.cssText = [
+        "display:inline-block", "padding:2px 8px", "border-radius:6px",
+        "font-family:monospace", "font-size:10px", "font-weight:700",
+        "white-space:nowrap", "line-height:1.7", "margin-left:4px",
+        isIa
+          ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
+          : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
+      ].join(";");
+      chip.textContent = `{{${key}}}`;
+      targetEl.appendChild(chip);
+    }
+  }, [phase, fieldPositions, fields]);
 
   // Click-to-add listeners
   useEffect(() => {
@@ -277,6 +310,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Falha ao re-extrair campos.");
       setFields(Array.isArray(data.schema) ? data.schema : []);
       setReExtractMsg(`${data.totalCampos ?? 0} campos extraídos.`);
+      setPreviewVersion((v) => v + 1);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao re-extrair campos.");
@@ -875,6 +909,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                 <DocxInteractive
                   templateId={template.id}
                   fields={fields}
+                  fieldPositions={fieldPositions}
                   activeKey={expandedField}
                   previewVersion={previewVersion}
                   onClickElement={handleAddFromDoc}

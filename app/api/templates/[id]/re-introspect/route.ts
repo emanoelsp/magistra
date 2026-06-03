@@ -243,29 +243,33 @@ export async function POST(
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
 
-    await db.collection("magis_templates").doc(id).update({ schema_campos: schema });
-
-    // Regenerate fillable DOCX asynchronously
+    // Regenerate fillable DOCX synchronously so placeholders are ready immediately
     const lower = arquivoUrl.toLowerCase().split("?")[0];
     const isDocx = lower.endsWith(".docx") || lower.endsWith(".doc");
+    let fillableUrl: string | null = null;
     if (isDocx) {
-      void (async () => {
-        try {
-          const fillableBuffer = injectPlaceholders(fileBuffer, schema as TemplateFieldSchema[]);
-          const fillablePath = `templates/${id}/fillable.docx`;
-          const fillableUrl = await uploadFile({
-            path: fillablePath,
-            buffer: fillableBuffer,
-            contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          });
-          await db.collection("magis_templates").doc(id).update({ arquivo_fillable_url: fillableUrl });
-        } catch (e) {
-          console.warn("[re-introspect] Falha ao regenerar DOCX preenchível:", e);
-        }
-      })();
+      try {
+        const fillableBuffer = injectPlaceholders(fileBuffer, schema as TemplateFieldSchema[]);
+        const fillablePath = `templates/${id}/fillable.docx`;
+        fillableUrl = await uploadFile({
+          path: fillablePath,
+          buffer: fillableBuffer,
+          contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        });
+        await db.collection("magis_templates").doc(id).update({
+          schema_campos: schema,
+          arquivo_fillable_url: fillableUrl,
+          fillable_status: "pronto",
+        });
+      } catch (e) {
+        console.warn("[re-introspect] Falha ao regenerar DOCX preenchível:", e);
+        await db.collection("magis_templates").doc(id).update({ schema_campos: schema });
+      }
+    } else {
+      await db.collection("magis_templates").doc(id).update({ schema_campos: schema });
     }
 
-    return NextResponse.json({ ok: true, schema, totalCampos: (schema as unknown[]).length });
+    return NextResponse.json({ ok: true, schema, totalCampos: (schema as unknown[]).length, arquivo_fillable_url: fillableUrl });
   } catch (error) {
     console.error("[re-introspect] Erro:", error);
     const msg = (error as Error)?.message ?? "";
