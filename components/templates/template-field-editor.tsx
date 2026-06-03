@@ -93,8 +93,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     setPhase("loading");
     bufferRef.current = null;
     let cancelled = false;
-    fetch(`/api/templates/${templateId}/arquivo?fillable=1`)
-      .then((r) => r.ok ? r : fetch(`/api/templates/${templateId}/arquivo`))
+    fetch(`/api/templates/${templateId}/arquivo?fillable=1&v=${previewVersion}`)
+      .then((r) => r.ok ? r : fetch(`/api/templates/${templateId}/arquivo?v=${previewVersion}`))
       .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
       .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
       .catch(() => { if (!cancelled) setPhase("error"); });
@@ -158,6 +158,60 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
       bestEl.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [activeKey, fields, phase]);
+
+  // Colorize {{key}} patterns already in the rendered DOCX text (from re-extract or pre-annotated files)
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    const roleMap = new Map(fields.map((f) => [f.key, f.role]));
+
+    // Update color of spans already injected in a previous pass
+    container.querySelectorAll("[data-field-chip]").forEach((el) => {
+      const key = el.getAttribute("data-field-chip")!;
+      const isIa = (roleMap.get(key) ?? "manual") === "ia_sugerida";
+      (el as HTMLElement).style.background = isIa ? "rgba(139,92,246,.14)" : "rgba(245,158,11,.14)";
+      (el as HTMLElement).style.color = isIa ? "#6d28d9" : "#b45309";
+      (el as HTMLElement).style.borderColor = isIa ? "rgba(139,92,246,.35)" : "rgba(245,158,11,.35)";
+    });
+
+    // Walk text nodes and replace {{key}} patterns with colored chips
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const hits: Text[] = [];
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      if (/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test((node as Text).textContent ?? "")) {
+        hits.push(node as Text);
+      }
+    }
+    for (const textNode of hits) {
+      const text = textNode.textContent ?? "";
+      const parts = text.split(/(\{\{[A-Za-z_][A-Za-z0-9_]*\}\})/);
+      if (parts.length <= 1) continue;
+      const frag = document.createDocumentFragment();
+      for (const part of parts) {
+        const m = part.match(/^\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}$/);
+        if (m) {
+          const key = m[1];
+          const isIa = (roleMap.get(key) ?? "manual") === "ia_sugerida";
+          const span = document.createElement("span");
+          span.setAttribute("data-field-chip", key);
+          span.style.cssText = [
+            "display:inline-block", "padding:2px 8px", "border-radius:6px",
+            "font-family:monospace", "font-size:10px", "font-weight:700",
+            "white-space:nowrap", "line-height:1.7",
+            isIa
+              ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
+              : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
+          ].join(";");
+          span.textContent = part;
+          frag.appendChild(span);
+        } else {
+          frag.appendChild(document.createTextNode(part));
+        }
+      }
+      textNode.parentNode?.replaceChild(frag, textNode);
+    }
+  }, [phase, fields]);
 
   // Inject {{key}} chips immediately when fieldPositions changes
   useEffect(() => {
