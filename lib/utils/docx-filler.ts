@@ -492,6 +492,25 @@ export function injectColoredPlaceholders(
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
+// ── Scan existing {{...}} placeholders ──────────────────────────────────────
+
+/**
+ * Scans a DOCX for any {{key}} patterns already written in the document.
+ * Returns unique keys found. Useful when the user has pre-annotated the Word
+ * file locally with {{variable_name}} before uploading.
+ */
+export function scanPlaceholders(docxBuffer: Buffer): string[] {
+  const zip = new PizZip(docxBuffer);
+  const xml = zip.files["word/document.xml"]?.asText() ?? "";
+  const pattern = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+  const found = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(xml)) !== null) {
+    found.add(match[1].toLowerCase());
+  }
+  return [...found];
+}
+
 // ── Fill with docxtemplater ──────────────────────────────────────────────────
 
 /**

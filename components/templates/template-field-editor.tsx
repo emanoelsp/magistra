@@ -45,13 +45,20 @@ function newField(): TemplateFieldSchema {
 // ─── DocxInteractive ──────────────────────────────────────────────────────────
 // mammoth/docx-preview renderer with click-to-add-field support.
 
+interface AnnotationPopup {
+  text: string;
+  ordinal: number;
+  inputKey: string;
+  role: "manual" | "ia_sugerida";
+}
+
 interface DocxInteractiveProps {
   templateId: string;
   fields: TemplateFieldSchema[];
   fieldPositions: Record<string, { cellText: string; ordinal: number }>;
   activeKey: string | null;
   previewVersion?: number;
-  onClickElement: (text: string, ordinal: number) => void;
+  onClickElement: (text: string, ordinal: number, key: string, role: "manual" | "ia_sugerida") => void;
 }
 
 function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previewVersion = 0, onClickElement }: DocxInteractiveProps) {
@@ -59,6 +66,28 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
+  const [popup, setPopup] = useState<AnnotationPopup | null>(null);
+
+  // helper: derive a clean snake_case key from cell text
+  function deriveKey(text: string): string {
+    let label = text;
+    const colonIdx = label.indexOf(":");
+    if (colonIdx > 0 && colonIdx < label.length - 1) label = label.slice(0, colonIdx);
+    return label.replace(/:+$/, "").trim()
+      .toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  }
+
+  function deriveRole(key: string): "manual" | "ia_sugerida" {
+    return /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(key)
+      ? "ia_sugerida" : "manual";
+  }
+
+  function confirmPopup() {
+    if (!popup?.inputKey) return;
+    onClickElement(popup.text, popup.ordinal, popup.inputKey, popup.role);
+    setPopup(null);
+  }
 
   useEffect(() => {
     setPhase("loading");
@@ -77,7 +106,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     if (phase !== "rendering" || !bufferRef.current || !containerRef.current) return;
     let cancelled = false;
     const container = containerRef.current;
-    const scroller = scrollerRef.current;
     import("docx-preview")
       .then(({ renderAsync }) => {
         if (cancelled || !bufferRef.current) return;
@@ -88,23 +116,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
           renderEndnotes: true, renderFooters: true, renderFootnotes: true, renderHeaders: true,
         });
       })
-      .then(() => {
-        if (cancelled) return;
-        const wrapper = container.querySelector(".docx-wrapper") as HTMLElement | null;
-        const page = container.querySelector("section.docx") as HTMLElement | null;
-        if (wrapper && page && scroller) {
-          const availableW = scroller.clientWidth;
-          const naturalW = page.offsetWidth;
-          if (naturalW > 0 && availableW > 0 && naturalW > availableW) {
-            const scale = availableW / naturalW;
-            const naturalH = wrapper.offsetHeight;
-            wrapper.style.transformOrigin = "top left";
-            wrapper.style.transform = `scale(${scale})`;
-            container.style.height = `${naturalH * scale}px`;
-          }
-        }
-        setPhase("done");
-      })
+      .then(() => { if (!cancelled) setPhase("done"); })
       .catch(() => { if (!cancelled) setPhase("error"); });
     return () => { cancelled = true; };
   }, [phase]);
@@ -127,8 +139,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     );
     if (!terms.length) return;
     const candidates = Array.from(container.querySelectorAll("td, p"));
-    let bestEl: Element | null = null;
-    let bestScore = 0;
+    let bestEl: Element | null = null; let bestScore = 0;
     for (const el of candidates) {
       const text = (el.textContent ?? "").trim();
       if (!text) continue;
@@ -148,22 +159,18 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     }
   }, [activeKey, fields, phase]);
 
-  // Inject {{key}} chips into the DOM for click-added fields (immediate reactive feedback)
+  // Inject {{key}} chips immediately when fieldPositions changes
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
     const els = Array.from(container.querySelectorAll("td, p")) as HTMLElement[];
-
     for (const [key, pos] of Object.entries(fieldPositions)) {
       if (container.querySelector(`[data-field-chip="${key}"]`)) continue;
       const field = fields.find((f) => f.key === key);
       if (!field) continue;
-
-      const { cellText, ordinal } = pos;
-      const matches = els.filter((el) => (el.textContent?.trim() ?? "") === cellText);
-      const targetEl = matches[ordinal];
+      const matches = els.filter((el) => (el.textContent?.trim() ?? "") === pos.cellText);
+      const targetEl = matches[pos.ordinal];
       if (!targetEl) continue;
-
       const isIa = field.role === "ia_sugerida";
       const chip = document.createElement("span");
       chip.setAttribute("data-field-chip", key);
@@ -180,7 +187,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     }
   }, [phase, fieldPositions, fields]);
 
-  // Click-to-add listeners
+  // Click listeners — open annotation popup instead of direct add
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
@@ -205,10 +212,9 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
       e.stopPropagation();
       const el = e.currentTarget as HTMLElement;
       const text = el.textContent?.trim() ?? "";
-      const ordinal = els
-        .slice(0, els.indexOf(el))
-        .filter((t) => t.textContent?.trim() === text).length;
-      onClickElement(text, ordinal);
+      const ordinal = els.slice(0, els.indexOf(el)).filter((t) => t.textContent?.trim() === text).length;
+      const autoKey = deriveKey(text) || `campo_${Date.now()}`;
+      setPopup({ text, ordinal, inputKey: autoKey, role: deriveRole(autoKey) });
     };
     for (const el of els) {
       el.addEventListener("mouseenter", onEnter);
@@ -222,18 +228,20 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
         el.removeEventListener("click", onClick);
       }
     };
-  }, [phase, onClickElement]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
       <style>{`
-        .docx-html-preview { background: #f1f5f9; padding: 20px 12px; }
+        .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
         .docx-html-preview table { border-collapse: collapse; }
         .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; }
-        .docx-html-preview img { max-width: 100%; height: auto; }
+        .docx-html-preview img { max-width: none; height: auto; }
         .docx-html-preview p { margin: 0.2em 0; }
       `}</style>
-      <div ref={scrollerRef} className={`flex-1 overflow-y-auto ${phase === "error" ? "invisible absolute" : ""}`}>
+      {/* overflow-x-auto enables horizontal scroll for wide/landscape documents */}
+      <div ref={scrollerRef} className={`flex-1 overflow-y-auto overflow-x-auto ${phase === "error" ? "invisible absolute" : ""}`}>
         <div ref={containerRef} className="docx-html-preview" />
       </div>
       {phase === "loading" && (
@@ -247,6 +255,89 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
           <div className="space-y-2">
             <p className="text-sm font-medium text-slate-600">Pré-visualização indisponível.</p>
             <p className="text-xs text-slate-400">Configure os campos na lista à direita.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Annotation popup — slides up from bottom when a cell is clicked */}
+      {popup && (
+        <div
+          className="absolute bottom-0 left-0 right-0 z-20 border-t-2 border-violet-300 bg-white p-3 shadow-[0_-4px_20px_rgba(139,92,246,0.15)]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Context: cell text */}
+          <div className="mb-2 flex items-start gap-1.5">
+            <span className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Célula:</span>
+            <p className="truncate text-[11px] italic text-slate-600">
+              &ldquo;{popup.text.slice(0, 90)}{popup.text.length > 90 ? "…" : ""}&rdquo;
+            </p>
+          </div>
+
+          {/* Variable name input */}
+          <div className="mb-2.5 flex items-center gap-1">
+            <span className="select-none font-mono text-base font-bold text-slate-400">{"{"+"{"}</span>
+            <input
+              autoFocus
+              value={popup.inputKey}
+              onChange={(e) => {
+                const clean = e.target.value
+                  .replace(/^\{\{/, "").replace(/\}\}$/, "")
+                  .toLowerCase().replace(/[^a-z0-9_]/g, "_");
+                setPopup((p) => p ? { ...p, inputKey: clean } : null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmPopup();
+                if (e.key === "Escape") setPopup(null);
+              }}
+              placeholder="nome_da_variavel"
+              className="flex-1 rounded-xl border border-violet-300 px-3 py-1.5 font-mono text-sm text-violet-700 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+            />
+            <span className="select-none font-mono text-base font-bold text-slate-400">{"}"+"}"}</span>
+          </div>
+
+          {/* Role toggle */}
+          <div className="mb-2.5 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPopup((p) => p ? { ...p, role: "manual" } : null)}
+              className={`flex-1 rounded-xl border py-1.5 text-xs font-semibold transition ${
+                popup.role !== "ia_sugerida"
+                  ? "border-amber-400 bg-amber-50 text-amber-800"
+                  : "border-slate-200 text-slate-500 hover:border-slate-300"
+              }`}
+            >
+              Fixo / Manual
+            </button>
+            <button
+              type="button"
+              onClick={() => setPopup((p) => p ? { ...p, role: "ia_sugerida" } : null)}
+              className={`flex-1 rounded-xl border py-1.5 text-xs font-semibold transition ${
+                popup.role === "ia_sugerida"
+                  ? "border-violet-400 bg-violet-50 text-violet-800"
+                  : "border-slate-200 text-slate-500 hover:border-slate-300"
+              }`}
+            >
+              Sugestão / Magis
+            </button>
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPopup(null)}
+              className="flex-1 rounded-xl border border-slate-200 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-400"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={confirmPopup}
+              disabled={!popup.inputKey}
+              className="flex-1 rounded-xl bg-violet-600 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-40"
+            >
+              ✓ Adicionar campo
+            </button>
           </div>
         </div>
       )}
@@ -326,45 +417,26 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setActiveFieldKey(f.key);
   }
 
-  function handleAddFromDoc(rawText: string, clickOrdinal = 0) {
-    let label = rawText.trim();
-    let defaultValue: string | undefined;
+  function handleAddFromDoc(rawText: string, clickOrdinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida") {
+    const key = explicitKey || `campo_${Date.now()}`;
 
-    const colonIdx = label.indexOf(":");
-    if (colonIdx > 0 && colonIdx < label.length - 1) {
-      const before = label.slice(0, colonIdx).trim();
-      const after = label.slice(colonIdx + 1).trim();
-      if (before.length > 0 && before.length <= 80) {
-        label = before;
-        if (after.length > 0 && after.length < 300) defaultValue = after;
-      }
-    }
-
-    label = label.replace(/:+$/, "").trim();
-    if (!label || label.length > 80) return;
-
-    const toKey = (s: string) =>
-      s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-
-    const key = toKey(label) || `campo_${Date.now()}`;
-
-    const existing = fields.find((f) => f.key === key || f.label.toLowerCase() === label.toLowerCase());
+    const existing = fields.find((f) => f.key === key);
     if (existing) {
       setExpandedField(existing.key);
       setActiveFieldKey(existing.key);
       return;
     }
 
-    const lower = toKey(label);
-    let role: TemplateFieldSchema["role"] = "manual";
-    let group: TemplateFieldSchema["group"] = "dados_turma";
-    if (/habilidade|bncc|saeb|ctbc|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(lower)) {
-      role = "ia_sugerida";
-      if (/habilidade|bncc|saeb|ctbc/.test(lower)) group = "habilidades";
-      else if (/competencia/.test(lower)) group = "competencias";
-      else if (/objetivo/.test(lower)) group = "objetivos";
-      else if (/avaliacao/.test(lower)) group = "avaliacao";
-      else group = "conteudos";
+    const label = rawText
+      .replace(/:+$/, "").trim()
+      .slice(0, 80) || key.replace(/_/g, " ");
+
+    let group: TemplateFieldSchema["group"] = explicitRole === "ia_sugerida" ? "conteudos" : "dados_turma";
+    if (explicitRole === "ia_sugerida") {
+      if (/habilidade|bncc|saeb/.test(key)) group = "habilidades";
+      else if (/competencia/.test(key)) group = "competencias";
+      else if (/objetivo/.test(key)) group = "objetivos";
+      else if (/avaliacao/.test(key)) group = "avaliacao";
     }
 
     const f: TemplateFieldSchema = {
@@ -372,12 +444,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       label,
       type: "text",
       required: true,
-      role,
+      role: explicitRole,
       group,
       placeholder: "",
       helperText: "",
       aiInstructions: "",
-      ...(defaultValue !== undefined ? { defaultValue } : {}),
     };
 
     setFields((prev) => [...prev, f]);

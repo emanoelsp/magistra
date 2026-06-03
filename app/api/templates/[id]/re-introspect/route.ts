@@ -8,8 +8,23 @@ import PizZip from "pizzip";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
-import { injectPlaceholders } from "../../../../../lib/utils/docx-filler";
+import { injectPlaceholders, scanPlaceholders } from "../../../../../lib/utils/docx-filler";
 import type { TemplateFieldSchema, TemplateRecord } from "../../../../../lib/types/firestore";
+
+function keyToField(key: string): TemplateFieldSchema {
+  const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  let role: TemplateFieldSchema["role"] = "manual";
+  let group: TemplateFieldSchema["group"] = "dados_turma";
+  if (/habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(key)) {
+    role = "ia_sugerida";
+    if (/habilidade|bncc|saeb/.test(key)) group = "habilidades";
+    else if (/competencia/.test(key)) group = "competencias";
+    else if (/objetivo/.test(key)) group = "objetivos";
+    else if (/avaliacao/.test(key)) group = "avaliacao";
+    else group = "conteudos";
+  }
+  return { key, label, type: "text", required: true, role, group, placeholder: "", helperText: "", aiInstructions: "" };
+}
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -246,6 +261,17 @@ export async function POST(
     // Regenerate fillable DOCX synchronously so placeholders are ready immediately
     const lower = arquivoUrl.toLowerCase().split("?")[0];
     const isDocx = lower.endsWith(".docx") || lower.endsWith(".doc");
+
+    // Merge AI schema with any {{...}} patterns already in the DOCX
+    // Scanned keys take priority (explicit user intent); AI fills in the rest
+    const scannedKeys = isDocx ? scanPlaceholders(fileBuffer) : [];
+    if (scannedKeys.length > 0) {
+      const aiKeys = new Set((schema as TemplateFieldSchema[]).map((f) => f.key));
+      const fromScan = scannedKeys
+        .filter((k) => !aiKeys.has(k))
+        .map(keyToField);
+      (schema as TemplateFieldSchema[]).push(...fromScan);
+    }
     let fillableUrl: string | null = null;
     if (isDocx) {
       try {
