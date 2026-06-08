@@ -46,10 +46,11 @@ function newField(): TemplateFieldSchema {
 // mammoth/docx-preview renderer with inline-edit support.
 
 interface DocxEdit {
-  text: string;
-  ordinal: number;
-  key: string;
+  text: string;       // original cell text (for server-side injectAtCell)
+  ordinal: number;    // occurrence index among cells with same original text
+  key: string;        // variable name
   role: "manual" | "ia_sugerida";
+  label: string;      // human label (adjacent cell text or derived from key)
 }
 
 interface DocxInteractiveProps {
@@ -90,6 +91,27 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     const edits: DocxEdit[] = [];
     const processedKeys = new Set<string>();
 
+    // For cells the user typed into (empty originalText), try to infer a human
+    // label from the sibling/parent cell that describes the row.
+    function adjacentLabel(el: HTMLElement): string {
+      if (el.tagName !== "TD") return "";
+      const row = el.closest("tr");
+      if (!row) return "";
+      const rowTds = Array.from(row.querySelectorAll("td")) as HTMLElement[];
+      const idx = rowTds.indexOf(el);
+      if (idx > 0) {
+        const lbl = (rowTds[idx - 1]?.textContent ?? "").trim().slice(0, 80);
+        if (lbl) return lbl;
+      }
+      const prevRow = row.previousElementSibling as Element | null;
+      if (prevRow) {
+        const prevTds = Array.from(prevRow.querySelectorAll("td")) as HTMLElement[];
+        const lbl = (prevTds[idx]?.textContent ?? prevTds[0]?.textContent ?? "").trim().slice(0, 80);
+        if (lbl) return lbl;
+      }
+      return "";
+    }
+
     for (const el of els) {
       const originalText = originalTextsRef.current.get(el) ?? "";
       const ordinal = textOrdinalsMap.get(originalText) ?? 0;
@@ -101,7 +123,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
         const key = match[1];
         if (existingKeys.has(key) || processedKeys.has(key)) continue;
         processedKeys.add(key);
-        edits.push({ text: originalText, ordinal, key, role: deriveRole(key) });
+        const label = !originalText.trim()
+          ? (adjacentLabel(el) || key.replace(/_/g, " "))
+          : (originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " "));
+        edits.push({ text: originalText, ordinal, key, role: deriveRole(key), label });
       }
     }
 
@@ -446,15 +471,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setActiveFieldKey(f.key);
   }
 
-  function addFieldFromEdit(rawText: string, ordinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida") {
+  function addFieldFromEdit(rawText: string, ordinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida", explicitLabel?: string) {
     const key = explicitKey || `campo_${Date.now()}`;
 
     const existing = fields.find((f) => f.key === key);
     if (existing) return existing;
 
-    const label = rawText
-      .replace(/:+$/, "").trim()
-      .slice(0, 80) || key.replace(/_/g, " ");
+    const label = explicitLabel?.trim()
+      ? explicitLabel.trim().slice(0, 80)
+      : (rawText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " "));
 
     let group: TemplateFieldSchema["group"] = explicitRole === "ia_sugerida" ? "conteudos" : "dados_turma";
     if (explicitRole === "ia_sugerida") {
@@ -477,12 +502,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     };
   }
 
-  function handleSaveDocEdits(edits: Array<{ text: string; ordinal: number; key: string; role: "manual" | "ia_sugerida" }>) {
+  function handleSaveDocEdits(edits: DocxEdit[]) {
     const newFields: TemplateFieldSchema[] = [];
     const newPositions: Record<string, { cellText: string; ordinal: number }> = {};
 
     for (const edit of edits) {
-      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role);
+      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label);
       if (!fields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
         newFields.push(f);
         if (edit.text.trim()) {
@@ -493,11 +518,18 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
     if (newFields.length === 0) return;
 
-    setFields((prev) => [...prev, ...newFields]);
-    setFieldPositions((prev) => ({ ...prev, ...newPositions }));
-    // Expand and activate the first newly added field
+    // Compute merged values before any state update so handleSave sees the new data.
+    // (React state updates are async — calling handleSave after setFields would use stale state.)
+    const mergedFields = [...fields, ...newFields];
+    const mergedPositions = { ...fieldPositions, ...newPositions };
+
+    setFields(mergedFields);
+    setFieldPositions(mergedPositions);
     setExpandedField(newFields[0].key);
     setActiveFieldKey(newFields[0].key);
+
+    // Auto-save immediately and switch to Preview Word on success
+    handleSave(mergedFields, mergedPositions, true);
   }
 
   function removeField(index: number) {
@@ -527,11 +559,18 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     );
   }
 
-  function handleSave() {
+  function handleSave(
+    overrideFields?: TemplateFieldSchema[],
+    overridePositions?: Record<string, { cellText: string; ordinal: number }>,
+    switchToPreview = false,
+  ) {
+    const fieldsToSave = overrideFields ?? fields;
+    const positionsToSave = overridePositions ?? fieldPositions;
+
     setError(null);
     setSaved(false);
 
-    for (const f of fields) {
+    for (const f of fieldsToSave) {
       if (!f.label.trim()) {
         setError("Todos os campos precisam ter um nome.");
         return;
@@ -545,8 +584,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         body: JSON.stringify({
           nome: nome.trim() || template.nome,
           estado: estado || null,
-          schema_campos: fields,
-          field_positions: fieldPositions,
+          schema_campos: fieldsToSave,
+          field_positions: positionsToSave,
         }),
       })
         .then(async (res) => {
@@ -558,7 +597,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         })
         .then(() => {
           setFieldPositions({});
-          if (mode === "confirm") {
+          if (switchToPreview) {
+            // Auto-save triggered by "Salvar edições" in the interactive editor —
+            // bump the preview version and switch to the Preview Word tab.
+            setPreviewVersion((v) => v + 1);
+            setViewMode("preview");
+          } else if (mode === "confirm") {
             setShowConfirmSuccess(true);
             setTimeout(() => {
               setShowConfirmSuccess(false);
@@ -882,7 +926,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         </button>
         <button
           type="button"
-          onClick={handleSave}
+          onClick={() => handleSave()}
           disabled={isPending}
           className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
         >
