@@ -8,7 +8,13 @@ import pdf from "pdf-parse";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
-import { injectPlaceholders, scanPlaceholders } from "../../../../../lib/utils/docx-filler";
+import {
+  injectPlaceholders,
+  reportInjections,
+  scanDocxStructure,
+  scanPlaceholders,
+} from "../../../../../lib/utils/docx-filler";
+import type { StructuralPair } from "../../../../../lib/utils/docx-filler";
 import type { TemplateFieldSchema, TemplateRecord } from "../../../../../lib/types/firestore";
 
 function keyToField(key: string): TemplateFieldSchema {
@@ -61,10 +67,8 @@ function isQuotaError(err: unknown): boolean {
 async function extractDocxHtml(buffer: Buffer): Promise<string> {
   const result = await mammoth.convertToHtml(
     { buffer },
-    // Skip embedded images — reduces token count significantly
     { convertImage: mammoth.images.imgElement(() => Promise.resolve({ src: "" })) },
   );
-  // Remove empty img tags left by the converter
   return result.value.replace(/<img[^>]*>/gi, "");
 }
 
@@ -109,7 +113,7 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
   },
 };
 
-// ── System instruction (shared for both Gemini and Groq) ────────────────────
+// ── System instruction ──────────────────────────────────────────────────────
 
 const SYSTEM_INSTRUCTION = `<persona>
 Você é um analista de currículo escolar sênior especializado em documentos pedagógicos brasileiros (MEC/BNCC). Você recebe o HTML semântico gerado pelo Mammoth a partir de um arquivo Word (.docx). O HTML preserva toda a topologia do documento: tabelas (<table>/<tr>/<td>), parágrafos (<p>) e listas. Sua tarefa é mapear cada campo preenchível de forma geometricamente precisa.
@@ -128,12 +132,22 @@ Você é um analista de currículo escolar sênior especializado em documentos p
 6. type "textarea" para campos pedagógicos longos (objetivos, habilidades, conteúdos, avaliação); "text" para campos curtos (nome, turma, data).
 7. NÃO inclua células que são apenas títulos de seção ou decoração visual sem campo associado.
 </regras>
+<estrutura_pre_processada>
+Quando a mensagem contém <estrutura_detectada>, essa seção lista os pares rótulo→valor já extraídos automaticamente via análise XML do documento — use-a como FONTE PRIMÁRIA para labels e posições. Os padrões indicam onde o valor aparece:
+• "adjacent_right"  → célula imediatamente à direita do rótulo (mesma linha)
+• "adjacent_below"  → primeira célula da linha seguinte
+• "column_header"   → cabeçalho de coluna; valores ficam nas células abaixo
+• "inline_colon"    → valor após ":" na mesma célula ("Professor: João")
+O campo 'valuePreview' mostra o conteúdo atual da célula de valor (vazio em templates em branco).
+CRÍTICO: copie o 'label' de <estrutura_detectada> VERBATIM — não normalize, não traduza.
+Quando a mensagem contém <campos_confirmados>, esses campos foram confirmados pelo professor em uma extração anterior. MANTENHA seus 'key' e 'label' intactos; apenas adicione campos novos não listados.
+</estrutura_pre_processada>
 <raciocinio_obrigatorio>
 Antes de extrair, raciocine em "raciocinio":
-1. Mapeie a estrutura HTML: quantas tabelas existem, quantas colunas por tabela, quais são cabeçalhos vs. dados.
-2. Para cada <tr>: identifique quais <td> são rótulos (texto em negrito, geralmente à esquerda) e quais são campos (vazia ou com valor de exemplo à direita/abaixo).
-3. Classifique cada campo: identificação ou pedagógico? Qual group?
-4. Confirme que cada label será copiado EXATAMENTE do HTML, sem normalização.
+1. Quantas tabelas existem, quantas colunas por tabela.
+2. Para cada rótulo em <estrutura_detectada>: confirme o padrão e classifique (manual/ia_sugerida, grupo).
+3. Verifique campos que não aparecem em <estrutura_detectada> mas estão no HTML.
+4. Confirme que cada label será copiado EXATAMENTE de <estrutura_detectada> ou do HTML.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
@@ -144,28 +158,59 @@ Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
 const fewShotExample = {
   regra: "NUNCA invente labels. Se o HTML tem <td><strong>PROFESSOR (A):</strong></td><td>Luiz Carlos</td>, o label é 'PROFESSOR (A)' e o defaultValue é 'Luiz Carlos'.",
   html_input_example: "<table><tbody><tr><td><strong>PROFESSOR (A):</strong></td><td>Luiz Carlos Covre</td><td><strong>CURSO</strong></td><td>DSI</td></tr><tr><td><strong>Área(s) do Conhecimento:</strong></td><td>Práticas em DSI</td><td><strong>Nº aulas semanais:</strong></td><td>2</td></tr><tr><td colspan=\"4\"><strong>HABILIDADES</strong></td></tr><tr><td colspan=\"4\"></td></tr></tbody></table>",
+  estrutura_detectada_example: [
+    { label: "PROFESSOR (A)", valuePreview: "Luiz Carlos Covre", pattern: "adjacent_right" },
+    { label: "CURSO",         valuePreview: "DSI",               pattern: "adjacent_right" },
+    { label: "Área(s) do Conhecimento", valuePreview: "Práticas em DSI", pattern: "adjacent_right" },
+    { label: "Nº aulas semanais",       valuePreview: "2",              pattern: "adjacent_right" },
+    { label: "HABILIDADES",             valuePreview: "",               pattern: "column_header" },
+  ],
   campos: [
-    { key: "professor_a", label: "PROFESSOR (A)", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "Luiz Carlos Covre" },
-    { key: "curso", label: "CURSO", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "DSI" },
-    { key: "areas_do_conhecimento", label: "Área(s) do Conhecimento", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "Práticas em DSI" },
-    { key: "n_aulas_semanais", label: "Nº aulas semanais", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "2" },
-    { key: "habilidades", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+    { key: "professor_a",         label: "PROFESSOR (A)",          type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "Luiz Carlos Covre" },
+    { key: "curso",               label: "CURSO",                  type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "DSI" },
+    { key: "areas_do_conhecimento", label: "Área(s) do Conhecimento", type: "text",  required: true, role: "manual",      group: "dados_turma",  defaultValue: "Práticas em DSI" },
+    { key: "n_aulas_semanais",    label: "Nº aulas semanais",      type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "2" },
+    { key: "habilidades",         label: "HABILIDADES",            type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
   ],
 };
 
-function buildPrompt({ content, isHtml }: ExtractedContent): string {
+function buildPrompt(
+  { content, isHtml }: ExtractedContent,
+  structuralPairs: StructuralPair[],
+  confirmedFields?: TemplateFieldSchema[],
+): string {
   const docTag = isHtml ? "documento_html" : "documento";
   const instrucao = isHtml
-    ? `Analise o HTML em <documento_html>. O HTML foi gerado pelo Mammoth e preserva a estrutura de tabelas (<table><tr><td>) do documento Word. Para cada linha da tabela, identifique: qual <td> é o rótulo (label) e qual é o campo (geralmente a célula adjacente vazia ou com valor de exemplo). CRÍTICO: copie o label EXATAMENTE como aparece no texto HTML. O 'key' é o label em snake_case sem acentos. Se a célula contém texto, inclua como 'defaultValue'.`
-    : `Analise o texto em <documento>. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece. O 'key' é o label em snake_case sem acentos. Se o campo estiver preenchido, inclua o conteúdo como 'defaultValue'.`;
+    ? `Analise o HTML em <documento_html> e os pares rótulo→valor em <estrutura_detectada>. USE <estrutura_detectada> como FONTE PRIMÁRIA: cada item é um campo a extrair. O HTML serve como contexto complementar para classificação (manual vs ia_sugerida). CRÍTICO: copie o 'label' EXATAMENTE como aparece em <estrutura_detectada>. O 'key' é o label em snake_case sem acentos. Se 'valuePreview' não estiver vazio, inclua como 'defaultValue'.`
+    : `Analise o texto em <documento> e os pares em <estrutura_detectada>. CRÍTICO: o 'label' deve ser copiado EXATAMENTE. O 'key' é o label em snake_case sem acentos. Se o campo estiver preenchido, inclua o conteúdo como 'defaultValue'.`;
 
-  return [
+  const parts: string[] = [
     `<instrucao>${instrucao}</instrucao>`,
     `<exemplo>${JSON.stringify(fewShotExample)}</exemplo>`,
-    `<${docTag}>`,
-    content,
-    `</${docTag}>`,
-  ].join("\n");
+  ];
+
+  // Feature 1: structural pre-scan — give the AI the pre-detected pairs
+  if (structuralPairs.length > 0) {
+    parts.push(
+      `<estrutura_detectada>`,
+      JSON.stringify(structuralPairs, null, 2),
+      `</estrutura_detectada>`,
+    );
+  }
+
+  // Feature 3: dynamic few-shot — confirmed fields from a previous extraction
+  if (confirmedFields && confirmedFields.length > 0) {
+    const slim = confirmedFields.map(({ key, label, role, group }) => ({ key, label, role, group }));
+    parts.push(
+      `<campos_confirmados>`,
+      `Campos já confirmados pelo professor neste template — mantenha key/label intactos:`,
+      JSON.stringify(slim, null, 2),
+      `</campos_confirmados>`,
+    );
+  }
+
+  parts.push(`<${docTag}>`, content, `</${docTag}>`);
+  return parts.join("\n");
 }
 
 // ── AI generation ───────────────────────────────────────────────────────────
@@ -255,7 +300,7 @@ export async function POST(
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
     }
 
-    const tData = snap.data() as Omit<TemplateRecord, "id">;
+    const tData = snap.data() as Omit<TemplateRecord, "id"> & { estrutura_docx?: StructuralPair[] };
     const arquivoUrl = typeof tData.arquivo_url === "string" ? tData.arquivo_url : "";
     if (!arquivoUrl) {
       return NextResponse.json({ error: "Template não possui arquivo armazenado." }, { status: 400 });
@@ -266,11 +311,25 @@ export async function POST(
     const lower = arquivoUrl.toLowerCase().split("?")[0];
     const isDocx = lower.endsWith(".docx") || lower.endsWith(".doc");
 
-    // Mammoth extracts semantic HTML for DOCX (preserves table topology)
-    // pdf-parse extracts flat text for PDF (best available without OCR)
-    const extracted = await extractContent(fileBuffer, arquivoUrl);
+    // ── Feature 1: structural pre-scan ──────────────────────────────────────
+    // Parse the DOCX XML directly to extract label→value pairs BEFORE calling
+    // the AI. The AI receives this as structured context (not just raw HTML),
+    // dramatically reducing positional errors.
+    const structuralPairs = isDocx ? scanDocxStructure(fileBuffer) : [];
+    console.info(`[re-introspect] Estrutura detectada: ${structuralPairs.length} pares`);
 
-    const raw = await generateSchema(buildPrompt(extracted));
+    // ── Feature 3: dynamic few-shot ─────────────────────────────────────────
+    // If the professor has confirmed a schema before, use it as a few-shot
+    // reference so the AI keeps confirmed keys/labels stable.
+    const confirmedFields: TemplateFieldSchema[] | undefined =
+      Array.isArray(tData.schema_campos) && tData.schema_campos.length > 0
+        ? tData.schema_campos
+        : undefined;
+
+    // ── AI extraction ────────────────────────────────────────────────────────
+    const extracted = await extractContent(fileBuffer, arquivoUrl);
+    const prompt = buildPrompt(extracted, structuralPairs, confirmedFields);
+    const raw = await generateSchema(prompt);
 
     let schema: unknown;
     try {
@@ -283,7 +342,7 @@ export async function POST(
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
 
-    // Merge: scanned {{key}} patterns in the DOCX take priority over AI inference
+    // Merge: pre-annotated {{key}} patterns in the DOCX take priority over AI inference
     const scannedKeys = isDocx ? scanPlaceholders(fileBuffer) : [];
     if (scannedKeys.length > 0) {
       const aiKeys = new Set((schema as TemplateFieldSchema[]).map((f) => f.key));
@@ -291,30 +350,55 @@ export async function POST(
       (schema as TemplateFieldSchema[]).push(...fromScan);
     }
 
+    // ── Inject placeholders into DOCX ────────────────────────────────────────
     let fillableUrl: string | null = null;
+    let injectionReport: ReturnType<typeof reportInjections> | null = null;
+
     if (isDocx) {
       try {
         const fillableBuffer = injectPlaceholders(fileBuffer, schema as TemplateFieldSchema[]);
+
+        // Feature 2: post-injection validation
+        injectionReport = reportInjections(fillableBuffer, schema as TemplateFieldSchema[]);
+        if (injectionReport.missing.length > 0) {
+          console.info(
+            `[re-introspect] Campos sem placeholder automático: ${injectionReport.missing.join(", ")}`,
+          );
+        }
+
         const fillablePath = `templates/${id}/fillable.docx`;
         fillableUrl = await uploadFile({
           path: fillablePath,
           buffer: fillableBuffer,
           contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         });
+
         await db.collection("magis_templates").doc(id).update({
           schema_campos: schema,
           arquivo_fillable_url: fillableUrl,
           fillable_status: "pronto",
+          // Store structural pairs for use in future re-extractions (feature 3)
+          estrutura_docx: structuralPairs,
         });
       } catch (e) {
         console.warn("[re-introspect] Falha ao regenerar DOCX preenchível:", e);
-        await db.collection("magis_templates").doc(id).update({ schema_campos: schema });
+        await db.collection("magis_templates").doc(id).update({
+          schema_campos: schema,
+          estrutura_docx: structuralPairs,
+        });
       }
     } else {
       await db.collection("magis_templates").doc(id).update({ schema_campos: schema });
     }
 
-    return NextResponse.json({ ok: true, schema, totalCampos: (schema as unknown[]).length, arquivo_fillable_url: fillableUrl });
+    return NextResponse.json({
+      ok: true,
+      schema,
+      totalCampos: (schema as unknown[]).length,
+      arquivo_fillable_url: fillableUrl,
+      // Feature 2: surface which fields need manual placement to the UI
+      campos_sem_placeholder: injectionReport?.missing ?? [],
+    });
   } catch (error) {
     console.error("[re-introspect] Erro:", error);
     const msg = (error as Error)?.message ?? "";

@@ -102,7 +102,7 @@ export function OfficeInlineViewer({
           display: "block",
           minWidth: "1100px",
           width: "100%",
-          height: "calc(100% + 112px)",
+          height: "calc(100% + 56px)",
           border: "none",
         }}
       />

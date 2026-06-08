@@ -64,6 +64,29 @@ function parseRows(xml: string): Row[] {
   });
 }
 
+// ── Label detector ────────────────────────────────────────────────────────────
+
+/**
+ * Returns true when a cell text looks like a label/header rather than a value slot.
+ * Used to prevent the N-cell scan from overwriting label cells.
+ *
+ * Signals:
+ *   1. Ends with ":" — almost always a label ("Professor:", "Carga horária presencial:")
+ *   2. ALL-CAPS text longer than 5 chars with no lowercase — table header
+ *      ("HABILIDADES", "OBJETO DE CONHECIMENTO", "TRIMESTRE")
+ */
+function looksLikeLabel(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (t.endsWith(":")) return true;
+  // Strip diacritics for the uppercase test so accented letters (Á, Ã, É…) count
+  const stripped = t.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const hasLowercase = /[a-z]/.test(stripped);
+  const hasUppercase = /[A-Z]/.test(stripped);
+  if (!hasLowercase && hasUppercase && t.length > 5) return true;
+  return false;
+}
+
 // ── Field matcher ────────────────────────────────────────────────────────────
 
 function matchField(
@@ -342,8 +365,11 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       const field = matchField(cellTexts[ci], schema, used);
       if (!field) continue;
 
-      // Reject if the NEXT cell also matches a different field label —
-      // that means both cells are labels and there's no value cell between them.
+      // Reject if the next cell looks like a label — either by structural
+      // heuristics (ends with ":", ALL-CAPS header) or by schema matching.
+      // This prevents overwriting label cells like "Carga horária presencial:"
+      // or column headers like "OBJETO DE CONHECIMENTO".
+      if (looksLikeLabel(cellTexts[ci + 1])) continue;
       const excluded = new Set([...used, field.key]);
       const nextAlsoLabel = !!matchField(cellTexts[ci + 1], schema, excluded);
       if (nextAlsoLabel) continue;
@@ -380,8 +406,11 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       for (let ci = 0; ci < cells.length && ci < nextCells.length; ci++) {
         const field = matchField(cellTexts[ci], schema, used);
         if (!field) continue;
-        // Only inject when the target cell is genuinely empty (value slot)
-        if (nextCellTexts[ci].trim().length > 10) continue;
+        // Only inject into genuinely empty value slots — skip label-looking cells
+        // and cells with substantial content (likely a pre-filled value or sub-header)
+        const fallbackTarget = nextCellTexts[ci].trim();
+        if (looksLikeLabel(fallbackTarget)) continue;
+        if (fallbackTarget.length > 10) continue;
         const origCell = nextCells[ci];
         const newCell = setCellContent(origCell, `{{${field.key}}}`);
         nextRowXml = replaceFirst(nextRowXml, origCell, newCell);
@@ -490,6 +519,136 @@ export function injectColoredPlaceholders(
 
   zip.file(xmlPath, xml);
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
+// ── Structural pre-scan ──────────────────────────────────────────────────────
+
+/**
+ * Describes a single label→value pair detected in the DOCX structure.
+ * Used to pre-populate the AI prompt with accurate field positions before
+ * the model has to infer them from raw HTML.
+ */
+export interface StructuralPair {
+  label: string;
+  /** First 60 chars of the value cell (blank for empty template cells) */
+  valuePreview: string;
+  /** Positional relationship between the label cell and its value slot */
+  pattern: "adjacent_right" | "adjacent_below" | "column_header" | "inline_colon";
+}
+
+/**
+ * Walks every table in the DOCX and returns detected label→value pairs.
+ * The result is passed to the AI prompt so the model works from known
+ * structure rather than inferring it from raw HTML.
+ */
+export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return [];
+
+  const xml = stripChangeTracking(zip.files[xmlPath].asText());
+  const rows = parseRows(xml);
+  const pairs: StructuralPair[] = [];
+  const seenLabels = new Set<string>();
+
+  function addPair(pair: StructuralPair) {
+    const key = normText(pair.label);
+    if (!key || seenLabels.has(key)) return;
+    seenLabels.add(key);
+    pairs.push(pair);
+  }
+
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+
+    // ── Inline "Label: value" within a single cell ────────────────────────
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      const t = row.cellTexts[ci].trim();
+      const colonIdx = t.indexOf(":");
+      if (colonIdx <= 1 || colonIdx >= t.length - 1) continue;
+      const label = t.slice(0, colonIdx).trim();
+      const value = t.slice(colonIdx + 1).trim();
+      if (label.length < 2 || !value || value.length > 300) continue;
+      addPair({ label, valuePreview: value.slice(0, 60), pattern: "inline_colon" });
+    }
+
+    // ── All-label header row → column_header: inject into next row ────────
+    const nonEmpty = row.cellTexts.filter((t) => t.trim());
+    const allLabels = nonEmpty.length > 0 && nonEmpty.every((t) => looksLikeLabel(t.trim()));
+    if (allLabels && ri + 1 < rows.length) {
+      const nextRow = rows[ri + 1];
+      for (let ci = 0; ci < row.cellTexts.length && ci < nextRow.cellTexts.length; ci++) {
+        const label = row.cellTexts[ci].trim();
+        if (!label) continue;
+        const nextText = (nextRow.cellTexts[ci] ?? "").trim();
+        if (looksLikeLabel(nextText)) continue;
+        addPair({
+          label: label.replace(/:+$/, "").trim(),
+          valuePreview: nextText.slice(0, 60),
+          pattern: "column_header",
+        });
+      }
+      continue; // don't also run adjacent scan for this row
+    }
+
+    // ── 1-cell row → adjacent_below ───────────────────────────────────────
+    if (row.cells.length === 1) {
+      const t = row.cellTexts[0].trim();
+      if (looksLikeLabel(t) && ri + 1 < rows.length) {
+        const nextText = (rows[ri + 1].cellTexts[0] ?? "").trim();
+        if (!looksLikeLabel(nextText)) {
+          addPair({
+            label: t.replace(/:+$/, "").trim(),
+            valuePreview: nextText.slice(0, 60),
+            pattern: "adjacent_below",
+          });
+        }
+      }
+      continue;
+    }
+
+    // ── N-cell row: left-to-right label | value scan → adjacent_right ─────
+    let ci = 0;
+    while (ci < row.cells.length - 1) {
+      const t = row.cellTexts[ci].trim();
+      if (!looksLikeLabel(t)) { ci++; continue; }
+      const nextText = row.cellTexts[ci + 1].trim();
+      if (looksLikeLabel(nextText)) { ci++; continue; }
+      addPair({
+        label: t.replace(/:+$/, "").trim(),
+        valuePreview: nextText.slice(0, 60),
+        pattern: "adjacent_right",
+      });
+      ci += 2;
+    }
+  }
+
+  return pairs;
+}
+
+// ── Post-injection validation ────────────────────────────────────────────────
+
+export interface InjectionReport {
+  /** Schema keys that successfully received a {{key}} placeholder in the DOCX */
+  injected: string[];
+  /** Schema keys with no placeholder found — user must place them manually */
+  missing: string[];
+}
+
+/**
+ * After running injectPlaceholders, compares the schema against the
+ * placeholders actually present in the DOCX.  Returns which fields were
+ * placed automatically and which still need manual positioning.
+ */
+export function reportInjections(
+  docxBuffer: Buffer,
+  schema: TemplateFieldSchema[],
+): InjectionReport {
+  const placed = new Set(scanPlaceholders(docxBuffer));
+  return {
+    injected: schema.map((f) => f.key).filter((k) => placed.has(k)),
+    missing:  schema.map((f) => f.key).filter((k) => !placed.has(k)),
+  };
 }
 
 // ── Scan existing {{...}} placeholders ──────────────────────────────────────

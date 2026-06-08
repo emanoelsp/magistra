@@ -8,6 +8,7 @@ import {
   injectAtCell,
   injectPlaceholders,
   removePlaceholder,
+  reportInjections,
 } from "../../../../../lib/utils/docx-filler";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
 import type { TemplateFieldSchema } from "../../../../../lib/types/firestore";
@@ -100,7 +101,13 @@ export async function PATCH(
     // 3. Label-based injection for any remaining fields without placeholders
     buffer = injectPlaceholders(buffer, newSchema);
 
-    // 4. Upload as the new fillable DOCX
+    // 4. Post-injection validation: report which fields got placed and which didn't
+    const { missing: camposSemPlaceholder } = reportInjections(buffer, newSchema);
+    if (camposSemPlaceholder.length > 0) {
+      console.info(`[templates/schema] Campos sem placeholder automático: ${camposSemPlaceholder.join(", ")}`);
+    }
+
+    // 5. Upload as the new fillable DOCX
     const fillablePath = `templates/${id}/fillable.docx`;
     const newFillableUrl = await uploadFile({
       path: fillablePath,
@@ -109,7 +116,7 @@ export async function PATCH(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
 
-    // 5. Update Firestore
+    // 6. Update Firestore
     await db.collection("magis_templates").doc(id).update({
       nome,
       estado,
@@ -118,7 +125,11 @@ export async function PATCH(
       fillable_status: "pronto",
     });
 
-    return NextResponse.json({ ok: true, arquivo_fillable_url: newFillableUrl });
+    return NextResponse.json({
+      ok: true,
+      arquivo_fillable_url: newFillableUrl,
+      campos_sem_placeholder: camposSemPlaceholder,
+    });
   } catch (error) {
     console.error("[templates/schema] Erro:", error);
     return NextResponse.json(

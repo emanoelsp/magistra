@@ -414,6 +414,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [saved, setSaved] = useState(false);
   const [isReExtracting, setIsReExtracting] = useState(false);
   const [reExtractMsg, setReExtractMsg] = useState<string | null>(null);
+  const [camposSemPlaceholder, setCamposSemPlaceholder] = useState<string[]>([]);
   const [showHelp, setShowHelp] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
@@ -450,10 +451,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         ok?: boolean;
         schema?: TemplateFieldSchema[];
         totalCampos?: number;
+        campos_sem_placeholder?: string[];
         error?: string;
       } | null;
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Falha ao re-extrair campos.");
       setFields(Array.isArray(data.schema) ? data.schema : []);
+      setCamposSemPlaceholder(data.campos_sem_placeholder ?? []);
       setReExtractMsg(`${data.totalCampos ?? 0} campos extraídos.`);
       setPreviewVersion((v) => v + 1);
       router.refresh();
@@ -593,9 +596,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             const d = await res.json().catch(() => null) as { error?: string } | null;
             throw new Error(d?.error ?? "Falha ao salvar.");
           }
-          return res.json();
+          return res.json() as Promise<{ campos_sem_placeholder?: string[] }>;
         })
-        .then(() => {
+        .then((d) => {
+          setCamposSemPlaceholder(d.campos_sem_placeholder ?? []);
           setFieldPositions({});
           if (switchToPreview) {
             // Auto-save triggered by "Salvar edições" in the interactive editor —
@@ -909,6 +913,20 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         <p className="rounded-xl bg-violet-50 px-4 py-3 text-sm font-medium text-violet-700">
           {reExtractMsg} Salve para confirmar.
         </p>
+      )}
+      {camposSemPlaceholder.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p className="mb-1 font-semibold">
+            {camposSemPlaceholder.length} campo{camposSemPlaceholder.length !== 1 ? "s" : ""} sem posição no documento:
+          </p>
+          <p className="text-xs text-amber-700">
+            Use a aba <strong>Adicionar campos</strong> para posicioná-los manualmente digitando{" "}
+            <code className="rounded bg-amber-100 px-1 font-mono">
+              {`{{${camposSemPlaceholder[0]}}}`}
+            </code>
+            {camposSemPlaceholder.length > 1 && ` e mais ${camposSemPlaceholder.length - 1}`} na célula correta.
+          </p>
+        </div>
       )}
       {saved && (
         <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
