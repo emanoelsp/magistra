@@ -58,11 +58,11 @@ export function OfficeInlineViewer({
       .finally(() => setLoading(false));
   }, [tokenEndpoint, previewPublicoPath, extraParams]);
 
-  const base = `relative overflow-hidden ${className}`;
+  const centered = `relative overflow-hidden ${className} flex items-center justify-center`;
 
   if (!initialized || (!isLocalhost && (loading || !officeUrl))) {
     return (
-      <div className={`${base} flex items-center justify-center gap-3`}>
+      <div className={`${centered} gap-3`}>
         <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
         <span className="text-sm text-slate-500">Carregando visualizador Word…</span>
       </div>
@@ -72,39 +72,40 @@ export function OfficeInlineViewer({
   if (isLocalhost) {
     if (fallbackSrc) {
       return (
-        <div className={base}>
+        <div className={`relative overflow-hidden ${className}`}>
           <iframe src={fallbackSrc} className="h-full w-full border-0" title={title} />
         </div>
       );
     }
     return (
-      <div className={`${base} flex items-center justify-center`}>
+      <div className={centered}>
         <p className="text-sm text-slate-400">Visualização Word disponível apenas em produção.</p>
       </div>
     );
   }
 
-  // Production: clip the top toolbar (~56 px) and overlay the bottom-bar
-  // icons (book menu + fullscreen) so users cannot download/print from the viewer.
+  // Production: clip the top Office toolbar (~56 px) via overflow-y:hidden on the
+  // outer div while allowing horizontal scroll via overflow-x:auto + a min-width on
+  // the iframe that forces it to be wider than typical panel widths.
   return (
-    <div className={base}>
-      {/* Inner div is scrollable horizontally; outer keeps overflow:hidden for toolbar clip */}
-      <div style={{ position: "absolute", inset: 0, overflowX: "auto", overflowY: "hidden" }}>
-        <iframe
-          src={officeUrl!}
-          title={title}
-          allowFullScreen
-          style={{
-            position: "relative",
-            top: "-56px",
-            display: "block",
-            minWidth: "960px",
-            width: "100%",
-            height: "calc(100% + 100px)",
-            border: "none",
-          }}
-        />
-      </div>
+    <div
+      className={`relative ${className}`}
+      style={{ overflowX: "auto", overflowY: "hidden" }}
+    >
+      <iframe
+        src={officeUrl!}
+        title={title}
+        allowFullScreen
+        style={{
+          position: "relative",
+          top: "-56px",
+          display: "block",
+          minWidth: "1100px",
+          width: "100%",
+          height: "calc(100% + 112px)",
+          border: "none",
+        }}
+      />
     </div>
   );
 }
