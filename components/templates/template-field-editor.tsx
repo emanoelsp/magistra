@@ -43,12 +43,12 @@ function newField(): TemplateFieldSchema {
 }
 
 // ─── DocxInteractive ──────────────────────────────────────────────────────────
-// mammoth/docx-preview renderer with click-to-add-field support.
+// mammoth/docx-preview renderer with inline-edit support.
 
-interface AnnotationPopup {
+interface DocxEdit {
   text: string;
   ordinal: number;
-  inputKey: string;
+  key: string;
   role: "manual" | "ia_sugerida";
 }
 
@@ -58,35 +58,57 @@ interface DocxInteractiveProps {
   fieldPositions: Record<string, { cellText: string; ordinal: number }>;
   activeKey: string | null;
   previewVersion?: number;
-  onClickElement: (text: string, ordinal: number, key: string, role: "manual" | "ia_sugerida") => void;
+  onSaveEdits: (edits: DocxEdit[]) => void;
 }
 
-function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previewVersion = 0, onClickElement }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previewVersion = 0, onSaveEdits }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
+  const originalTextsRef = useRef<Map<HTMLElement, string>>(new Map());
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
-  const [popup, setPopup] = useState<AnnotationPopup | null>(null);
-
-  // helper: derive a clean snake_case key from cell text
-  function deriveKey(text: string): string {
-    let label = text;
-    const colonIdx = label.indexOf(":");
-    if (colonIdx > 0 && colonIdx < label.length - 1) label = label.slice(0, colonIdx);
-    return label.replace(/:+$/, "").trim()
-      .toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-  }
+  const [saveCount, setSaveCount] = useState(0);
 
   function deriveRole(key: string): "manual" | "ia_sugerida" {
     return /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(key)
       ? "ia_sugerida" : "manual";
   }
 
-  function confirmPopup() {
-    if (!popup?.inputKey) return;
-    onClickElement(popup.text, popup.ordinal, popup.inputKey, popup.role);
-    setPopup(null);
+  function handleSaveEdits() {
+    if (!containerRef.current) return;
+    const container = containerRef.current;
+
+    // Mirror the same selector logic used in the contenteditable setup effect
+    const tds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
+    const standaloneParagraphs = (
+      Array.from(container.querySelectorAll("p")) as HTMLElement[]
+    ).filter((p) => !p.closest("td"));
+    const els = [...tds, ...standaloneParagraphs];
+
+    const existingKeys = new Set(fields.map((f) => f.key));
+    const textOrdinalsMap = new Map<string, number>();
+    const edits: DocxEdit[] = [];
+    const processedKeys = new Set<string>();
+
+    for (const el of els) {
+      const originalText = originalTextsRef.current.get(el) ?? "";
+      const ordinal = textOrdinalsMap.get(originalText) ?? 0;
+      textOrdinalsMap.set(originalText, ordinal + 1);
+
+      const currentText = el.textContent ?? "";
+      const matches = [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)];
+      for (const match of matches) {
+        const key = match[1];
+        if (existingKeys.has(key) || processedKeys.has(key)) continue;
+        processedKeys.add(key);
+        edits.push({ text: originalText, ordinal, key, role: deriveRole(key) });
+      }
+    }
+
+    if (edits.length > 0) {
+      onSaveEdits(edits);
+      setSaveCount((n) => n + edits.length);
+    }
   }
 
   useEffect(() => {
@@ -165,20 +187,39 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     const container = containerRef.current;
     const roleMap = new Map(fields.map((f) => [f.key, f.role]));
 
-    // Update color of spans already injected in a previous pass
+    function chipCss(isIa: boolean) {
+      return [
+        "display:inline-block", "padding:2px 8px", "border-radius:6px",
+        "font-family:monospace", "font-size:10px", "font-weight:700",
+        "white-space:nowrap", "line-height:1.7",
+        isIa
+          ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
+          : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
+      ].join(";");
+    }
+
+    // Update color of existing chips — and remove chips for deleted fields
     container.querySelectorAll("[data-field-chip]").forEach((el) => {
       const key = el.getAttribute("data-field-chip")!;
-      const isIa = (roleMap.get(key) ?? "manual") === "ia_sugerida";
-      (el as HTMLElement).style.background = isIa ? "rgba(139,92,246,.14)" : "rgba(245,158,11,.14)";
-      (el as HTMLElement).style.color = isIa ? "#6d28d9" : "#b45309";
-      (el as HTMLElement).style.borderColor = isIa ? "rgba(139,92,246,.35)" : "rgba(245,158,11,.35)";
+      if (!roleMap.has(key)) {
+        // Field was deleted — restore plain text so the user sees it was removed
+        el.parentNode?.replaceChild(document.createTextNode(`{{${key}}}`), el);
+        return;
+      }
+      const isIa = roleMap.get(key) === "ia_sugerida";
+      (el as HTMLElement).style.cssText = chipCss(isIa);
     });
 
-    // Walk text nodes and replace {{key}} patterns with colored chips
+    // Walk text nodes and replace {{key}} patterns with colored chips.
+    // IMPORTANT: skip text nodes that are already inside a chip span — they are
+    // the span's own textContent, NOT document text, and re-processing them would
+    // create nested chips (the "duplication" visual artifact).
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
     const hits: Text[] = [];
     let node: Node | null;
     while ((node = walker.nextNode())) {
+      const parent = (node as Text).parentElement;
+      if (parent?.hasAttribute("data-field-chip")) continue; // already a chip — skip
       if (/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test((node as Text).textContent ?? "")) {
         hits.push(node as Text);
       }
@@ -195,14 +236,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
           const isIa = (roleMap.get(key) ?? "manual") === "ia_sugerida";
           const span = document.createElement("span");
           span.setAttribute("data-field-chip", key);
-          span.style.cssText = [
-            "display:inline-block", "padding:2px 8px", "border-radius:6px",
-            "font-family:monospace", "font-size:10px", "font-weight:700",
-            "white-space:nowrap", "line-height:1.7",
-            isIa
-              ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
-              : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
-          ].join(";");
+          span.style.cssText = chipCss(isIa);
           span.textContent = part;
           frag.appendChild(span);
         } else {
@@ -213,12 +247,15 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     }
   }, [phase, fields]);
 
-  // Inject {{key}} chips immediately when fieldPositions changes
+  // Inject {{key}} chips when fieldPositions changes (only for non-empty cellText
+  // positions — if cellText is empty the chip was typed directly and the
+  // colorization effect above already handles it)
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
     const els = Array.from(container.querySelectorAll("td, p")) as HTMLElement[];
     for (const [key, pos] of Object.entries(fieldPositions)) {
+      if (!pos.cellText.trim()) continue; // typed directly — colorization handles it
       if (container.querySelector(`[data-field-chip="${key}"]`)) continue;
       const field = fields.find((f) => f.key === key);
       if (!field) continue;
@@ -241,45 +278,35 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     }
   }, [phase, fieldPositions, fields]);
 
-  // Click listeners — open annotation popup instead of direct add
+  // Contenteditable — make cells editable, avoiding nested contenteditable
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
-    const els = Array.from(container.querySelectorAll("td, p")) as HTMLElement[];
-    const onEnter = (e: Event) => {
-      const el = e.currentTarget as HTMLElement;
-      if (!el.hasAttribute("data-mhl")) {
-        el.style.cursor = "pointer";
-        el.style.outline = "1.5px dashed rgba(139,92,246,0.4)";
-        el.style.borderRadius = "2px";
-      }
-    };
-    const onLeave = (e: Event) => {
-      const el = e.currentTarget as HTMLElement;
-      if (!el.hasAttribute("data-mhl")) {
-        el.style.removeProperty("cursor");
-        el.style.removeProperty("outline");
-        el.style.removeProperty("border-radius");
-      }
-    };
-    const onClick = (e: Event) => {
-      e.stopPropagation();
-      const el = e.currentTarget as HTMLElement;
-      const text = el.textContent?.trim() ?? "";
-      const ordinal = els.slice(0, els.indexOf(el)).filter((t) => t.textContent?.trim() === text).length;
-      const autoKey = deriveKey(text) || `campo_${Date.now()}`;
-      setPopup({ text, ordinal, inputKey: autoKey, role: deriveRole(autoKey) });
-    };
-    for (const el of els) {
-      el.addEventListener("mouseenter", onEnter);
-      el.addEventListener("mouseleave", onLeave);
-      el.addEventListener("click", onClick);
+
+    // Only td elements + standalone p elements (not inside td) become contenteditable.
+    // Nested contenteditable (td AND p inside td) causes browser to render stacked
+    // focus rings at every level, creating the "concentric rings" visual artifact.
+    const tds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
+    const standaloneParagraphs = (
+      Array.from(container.querySelectorAll("p")) as HTMLElement[]
+    ).filter((p) => !p.closest("td"));
+    const editableEls = [...tds, ...standaloneParagraphs];
+
+    // Store original text content BEFORE user edits
+    originalTextsRef.current = new Map();
+    for (const el of editableEls) {
+      originalTextsRef.current.set(el, el.textContent?.trim() ?? "");
     }
+
+    for (const el of editableEls) {
+      el.contentEditable = "true";
+      el.style.cursor = "text";
+    }
+
     return () => {
-      for (const el of els) {
-        el.removeEventListener("mouseenter", onEnter);
-        el.removeEventListener("mouseleave", onLeave);
-        el.removeEventListener("click", onClick);
+      for (const el of editableEls) {
+        el.contentEditable = "false";
+        el.style.removeProperty("cursor");
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -293,7 +320,38 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
         .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; }
         .docx-html-preview img { max-width: none; height: auto; }
         .docx-html-preview p { margin: 0.2em 0; }
+        .docx-html-preview td[contenteditable]:focus,
+        .docx-html-preview td[contenteditable]:focus-within,
+        .docx-html-preview p[contenteditable]:focus {
+          outline: 2px solid rgba(139,92,246,0.6) !important;
+          border-radius: 2px;
+        }
       `}</style>
+
+      {/* Edit-mode toolbar */}
+      {phase === "done" && (
+        <div className="flex shrink-0 items-center gap-3 border-b border-violet-100 bg-violet-50 px-3 py-2">
+          <p className="flex-1 text-[11px] text-violet-600">
+            Clique em qualquer célula e digite{" "}
+            <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{nome_campo}}`}</code>{" "}
+            para criar um campo.
+          </p>
+          {saveCount > 0 && (
+            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+              {saveCount} campo{saveCount !== 1 ? "s" : ""} adicionado{saveCount !== 1 ? "s" : ""}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleSaveEdits}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
+          >
+            <Save className="h-3 w-3" />
+            Salvar edições
+          </button>
+        </div>
+      )}
+
       {/* overflow-x-auto enables horizontal scroll for wide/landscape documents */}
       <div ref={scrollerRef} className={`flex-1 overflow-y-auto overflow-x-auto ${phase === "error" ? "invisible absolute" : ""}`}>
         <div ref={containerRef} className="docx-html-preview" />
@@ -309,89 +367,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
           <div className="space-y-2">
             <p className="text-sm font-medium text-slate-600">Pré-visualização indisponível.</p>
             <p className="text-xs text-slate-400">Configure os campos na lista à direita.</p>
-          </div>
-        </div>
-      )}
-
-      {/* Annotation popup — slides up from bottom when a cell is clicked */}
-      {popup && (
-        <div
-          className="absolute bottom-0 left-0 right-0 z-20 border-t-2 border-violet-300 bg-white p-3 shadow-[0_-4px_20px_rgba(139,92,246,0.15)]"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Context: cell text */}
-          <div className="mb-2 flex items-start gap-1.5">
-            <span className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Célula:</span>
-            <p className="truncate text-[11px] italic text-slate-600">
-              &ldquo;{popup.text.slice(0, 90)}{popup.text.length > 90 ? "…" : ""}&rdquo;
-            </p>
-          </div>
-
-          {/* Variable name input */}
-          <div className="mb-2.5 flex items-center gap-1">
-            <span className="select-none font-mono text-base font-bold text-slate-400">{"{"+"{"}</span>
-            <input
-              autoFocus
-              value={popup.inputKey}
-              onChange={(e) => {
-                const clean = e.target.value
-                  .replace(/^\{\{/, "").replace(/\}\}$/, "")
-                  .toLowerCase().replace(/[^a-z0-9_]/g, "_");
-                setPopup((p) => p ? { ...p, inputKey: clean } : null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") confirmPopup();
-                if (e.key === "Escape") setPopup(null);
-              }}
-              placeholder="nome_da_variavel"
-              className="flex-1 rounded-xl border border-violet-300 px-3 py-1.5 font-mono text-sm text-violet-700 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-            />
-            <span className="select-none font-mono text-base font-bold text-slate-400">{"}"+"}"}</span>
-          </div>
-
-          {/* Role toggle */}
-          <div className="mb-2.5 flex gap-2">
-            <button
-              type="button"
-              onClick={() => setPopup((p) => p ? { ...p, role: "manual" } : null)}
-              className={`flex-1 rounded-xl border py-1.5 text-xs font-semibold transition ${
-                popup.role !== "ia_sugerida"
-                  ? "border-amber-400 bg-amber-50 text-amber-800"
-                  : "border-slate-200 text-slate-500 hover:border-slate-300"
-              }`}
-            >
-              Fixo / Manual
-            </button>
-            <button
-              type="button"
-              onClick={() => setPopup((p) => p ? { ...p, role: "ia_sugerida" } : null)}
-              className={`flex-1 rounded-xl border py-1.5 text-xs font-semibold transition ${
-                popup.role === "ia_sugerida"
-                  ? "border-violet-400 bg-violet-50 text-violet-800"
-                  : "border-slate-200 text-slate-500 hover:border-slate-300"
-              }`}
-            >
-              Sugestão / Magis
-            </button>
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setPopup(null)}
-              className="flex-1 rounded-xl border border-slate-200 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-400"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={confirmPopup}
-              disabled={!popup.inputKey}
-              className="flex-1 rounded-xl bg-violet-600 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-40"
-            >
-              ✓ Adicionar campo
-            </button>
           </div>
         </div>
       )}
@@ -471,15 +446,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setActiveFieldKey(f.key);
   }
 
-  function handleAddFromDoc(rawText: string, clickOrdinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida") {
+  function addFieldFromEdit(rawText: string, ordinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida") {
     const key = explicitKey || `campo_${Date.now()}`;
 
     const existing = fields.find((f) => f.key === key);
-    if (existing) {
-      setExpandedField(existing.key);
-      setActiveFieldKey(existing.key);
-      return;
-    }
+    if (existing) return existing;
 
     const label = rawText
       .replace(/:+$/, "").trim()
@@ -493,10 +464,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       else if (/avaliacao/.test(key)) group = "avaliacao";
     }
 
-    const f: TemplateFieldSchema = {
+    return {
       key,
       label,
-      type: "text",
+      type: "text" as const,
       required: true,
       role: explicitRole,
       group,
@@ -504,13 +475,29 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       helperText: "",
       aiInstructions: "",
     };
+  }
 
-    setFields((prev) => [...prev, f]);
-    setExpandedField(f.key);
-    setActiveFieldKey(f.key);
-    if (rawText.trim()) {
-      setFieldPositions((prev) => ({ ...prev, [f.key]: { cellText: rawText.trim(), ordinal: clickOrdinal } }));
+  function handleSaveDocEdits(edits: Array<{ text: string; ordinal: number; key: string; role: "manual" | "ia_sugerida" }>) {
+    const newFields: TemplateFieldSchema[] = [];
+    const newPositions: Record<string, { cellText: string; ordinal: number }> = {};
+
+    for (const edit of edits) {
+      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role);
+      if (!fields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
+        newFields.push(f);
+        if (edit.text.trim()) {
+          newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal };
+        }
+      }
     }
+
+    if (newFields.length === 0) return;
+
+    setFields((prev) => [...prev, ...newFields]);
+    setFieldPositions((prev) => ({ ...prev, ...newPositions }));
+    // Expand and activate the first newly added field
+    setExpandedField(newFields[0].key);
+    setActiveFieldKey(newFields[0].key);
   }
 
   function removeField(index: number) {
@@ -1037,7 +1024,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   fieldPositions={fieldPositions}
                   activeKey={expandedField}
                   previewVersion={previewVersion}
-                  onClickElement={handleAddFromDoc}
+                  onSaveEdits={handleSaveDocEdits}
                 />
               )}
             </div>
