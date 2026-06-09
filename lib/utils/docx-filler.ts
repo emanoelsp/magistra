@@ -87,6 +87,28 @@ function looksLikeLabel(text: string): boolean {
   return false;
 }
 
+/**
+ * Returns true when a cell's raw XML contains bold formatting.
+ * Bold text without ":" or ALL-CAPS is a common label style in some school templates.
+ * Used alongside looksLikeLabel to improve label detection coverage.
+ */
+function hasBoldText(cellXml: string): boolean {
+  // Matches <w:b/>, <w:b w:val="true"/>, <w:b> but NOT <w:bCs> (complex script bold)
+  return /<w:b(?:\s(?!Cs)[^>]*)?\/>/.test(cellXml) || /<w:b(?:\s(?!Cs)[^>]*)?>/.test(cellXml);
+}
+
+/**
+ * Returns true when a cell text is a period/trimester marker rather than a content value.
+ * Used to prevent period markers ("1º", "2º", "3º") from being misidentified as field values
+ * in multi-period tables (annual plans with trimester/bimester columns).
+ */
+function looksLikePeriodMarker(text: string): boolean {
+  const t = text.trim();
+  return /^\d[ºoO°]?$/.test(t) ||
+    /^\d\.?\s*(°|º|tri|bim|sem)/i.test(t) ||
+    /^(primeiro|segundo|terceiro|quarto)\s*(trimestre|bimestre|semestre)/i.test(t);
+}
+
 // ── Field matcher ────────────────────────────────────────────────────────────
 
 function matchField(
@@ -533,7 +555,9 @@ export interface StructuralPair {
   /** First 60 chars of the value cell (blank for empty template cells) */
   valuePreview: string;
   /** Positional relationship between the label cell and its value slot */
-  pattern: "adjacent_right" | "adjacent_below" | "column_header" | "inline_colon";
+  pattern: "adjacent_right" | "adjacent_below" | "column_header" | "inline_colon" | "period_column";
+  /** For "period_column" pattern: the trimester/bimester suffix (e.g. "_tr1", "_tr2", "_tr3") */
+  periodSuffix?: string;
 }
 
 /**
@@ -552,7 +576,8 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
   const seenLabels = new Set<string>();
 
   function addPair(pair: StructuralPair) {
-    const key = normText(pair.label);
+    // Include periodSuffix in dedup key so _tr1/_tr2/_tr3 variants of the same label are all kept
+    const key = normText(pair.label) + (pair.periodSuffix ?? "");
     if (!key || seenLabels.has(key)) return;
     seenLabels.add(key);
     pairs.push(pair);
@@ -572,16 +597,49 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       addPair({ label, valuePreview: value.slice(0, 60), pattern: "inline_colon" });
     }
 
-    // ── All-label header row → column_header: inject into next row ────────
+    // ── All-label header row → column_header or period_column ────────────
     const nonEmpty = row.cellTexts.filter((t) => t.trim());
     const allLabels = nonEmpty.length > 0 && nonEmpty.every((t) => looksLikeLabel(t.trim()));
     if (allLabels && ri + 1 < rows.length) {
       const nextRow = rows[ri + 1];
+
+      // Multi-period detection: next row has 2+ period markers (e.g. "1º", "2º", "3º")
+      // → annual plan with trimester columns. Emit period_column pairs instead.
+      const periodCols = nextRow.cellTexts
+        .map((t, ci) => ({ ci, label: t.trim() }))
+        .filter(({ label }) => looksLikePeriodMarker(label));
+
+      if (periodCols.length >= 2) {
+        const periodColSet = new Set(periodCols.map((p) => p.ci));
+        const seenContent = new Set<string>();
+        // Content columns: all columns that are NOT period markers (unique by normalized label)
+        const contentCols = row.cellTexts
+          .map((t, ci) => ({ ci, label: t.replace(/:+$/, "").trim() }))
+          .filter(({ ci, label }) => label && !periodColSet.has(ci))
+          .filter(({ label }) => {
+            const n = normText(label);
+            if (seenContent.has(n)) return false;
+            seenContent.add(n);
+            return true;
+          });
+
+        periodCols.forEach((period, idx) => {
+          const suffix = `_tr${idx + 1}`;
+          for (const { label } of contentCols) {
+            addPair({ label, valuePreview: "", pattern: "period_column", periodSuffix: suffix });
+          }
+          // Period marker cell itself (checkbox/marking per trimester)
+          addPair({ label: period.label, valuePreview: period.label, pattern: "period_column", periodSuffix: suffix });
+        });
+        continue;
+      }
+
       for (let ci = 0; ci < row.cellTexts.length && ci < nextRow.cellTexts.length; ci++) {
         const label = row.cellTexts[ci].trim();
         if (!label) continue;
         const nextText = (nextRow.cellTexts[ci] ?? "").trim();
         if (looksLikeLabel(nextText)) continue;
+        if (looksLikePeriodMarker(nextText)) continue;
         addPair({
           label: label.replace(/:+$/, "").trim(),
           valuePreview: nextText.slice(0, 60),
@@ -611,9 +669,14 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
     let ci = 0;
     while (ci < row.cells.length - 1) {
       const t = row.cellTexts[ci].trim();
-      if (!looksLikeLabel(t)) { ci++; continue; }
+      // A cell is a label if it matches textual heuristics (ends with ":", ALL-CAPS)
+      // OR if the cell uses bold formatting (common in some school templates)
+      const cellIsLabel = looksLikeLabel(t) || (t.length > 1 && hasBoldText(row.cells[ci] ?? ""));
+      if (!cellIsLabel) { ci++; continue; }
       const nextText = row.cellTexts[ci + 1].trim();
-      if (looksLikeLabel(nextText)) { ci++; continue; }
+      if (looksLikeLabel(nextText) || hasBoldText(row.cells[ci + 1] ?? "")) { ci++; continue; }
+      // Period markers are column identifiers, not field values — skip
+      if (looksLikePeriodMarker(nextText)) { ci++; continue; }
       addPair({
         label: t.replace(/:+$/, "").trim(),
         valuePreview: nextText.slice(0, 60),

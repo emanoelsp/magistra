@@ -100,13 +100,14 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
         type: SchemaType.OBJECT,
         required: ["key", "label", "type", "required", "role", "group"],
         properties: {
-          key:          { type: SchemaType.STRING },
-          label:        { type: SchemaType.STRING },
-          type:         { type: SchemaType.STRING, format: "enum", enum: ["text", "textarea"] },
-          required:     { type: SchemaType.BOOLEAN },
-          role:         { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
-          group:        { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
-          defaultValue: { type: SchemaType.STRING, nullable: true },
+          key:            { type: SchemaType.STRING },
+          label:          { type: SchemaType.STRING },
+          type:           { type: SchemaType.STRING, format: "enum", enum: ["text", "textarea"] },
+          required:       { type: SchemaType.BOOLEAN },
+          role:           { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
+          group:          { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
+          defaultValue:   { type: SchemaType.STRING, nullable: true },
+          aiInstructions: { type: SchemaType.STRING, nullable: true },
         },
       },
     },
@@ -131,6 +132,20 @@ Você é um analista de currículo escolar sênior especializado em documentos p
 5. O 'key' é o label em snake_case sem acentos (ex: "professor_a", "area_componente", "n_aulas_semanais").
 6. type "textarea" para campos pedagógicos longos (objetivos, habilidades, conteúdos, avaliação); "text" para campos curtos (nome, turma, data).
 7. NÃO inclua células que são apenas títulos de seção ou decoração visual sem campo associado.
+8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" repetido em 9 colunas → um único campo {{turma}}.
+9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; ou bimestres) e MÚLTIPLAS LINHAS de dados — uma por período — crie chaves com sufixo _tr1/_tr2/_tr3 (ou _bim1/_bim2). Exemplo: coluna "HABILIDADES" com 3 linhas de dados → habilidades_tr1, habilidades_tr2, habilidades_tr3. Células de marcação de trimestre (✓, "x", texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}. Em <estrutura_detectada>, entradas com pattern "period_column" e 'periodSuffix' indicam exatamente isso — concatene o label ao sufixo para montar o key.
+10. RANGE DE DATAS: Se o valor de um campo contém um intervalo de datas ("13/07/2026 a 09/08/2026" ou similar), declare DOIS campos separados: {base}_inicio e {base}_fim. Exemplo: "Data ou período de realização: 13/07 a 09/08" → data_inicio + data_fim.
+11. ESCOPO DE BLOCO: Campos do tipo textarea têm conteúdo que se estende até o próximo título em caixa alta ou próxima seção. Marque esses campos com type "textarea" — nunca "text" para seções de conteúdo pedagógico (objetivos, habilidades, metodologia, avaliação, etc.).
+12. DEPENDÊNCIAS — aiInstructions: Para campos role "ia_sugerida", preencha 'aiInstructions' com 1 frase curta indicando quais outros campos do schema servem de contexto. Use o mapeamento:
+   • metodologia, atividade_metodologia → "Elabore considerando os objetivos de aprendizagem e as habilidades definidas neste plano."
+   • avaliacao, instrumentos_avaliativos → "Defina instrumentos alinhados às habilidades e objetivos do plano."
+   • habilidades (incluindo _tr1/_tr2/_tr3) → "Selecione habilidades BNCC alinhadas ao componente curricular e ao período letivo."
+   • objetivos, expectativa_aprendizagem, objetivos_aprendizagem → "Formule objetivos mensuráveis com verbos de ação no infinitivo, conectados às habilidades."
+   • competencias_gerais_bncc, competencias_especificas_area → "Parafraseie competências BNCC aplicadas ao componente e nível de ensino — nunca cópia literal."
+   • conteudos, conceitos_estruturantes, objeto_conhecimento, tematica_abordada → "Organize do mais básico ao mais complexo, alinhado ao período letivo e às habilidades selecionadas."
+   • recuperacao_paralela → "Proponha atividades diferenciadas baseadas nas dificuldades previstas pelos objetivos e avaliação."
+   • Outros campos ia_sugerida → "Seja específico ao contexto da turma, disciplina e período descritos no plano."
+   Campos role "manual" → aiInstructions = "".
 </regras>
 <estrutura_pre_processada>
 Quando a mensagem contém <estrutura_detectada>, essa seção lista os pares rótulo→valor já extraídos automaticamente via análise XML do documento — use-a como FONTE PRIMÁRIA para labels e posições. Os padrões indicam onde o valor aparece:
@@ -138,6 +153,7 @@ Quando a mensagem contém <estrutura_detectada>, essa seção lista os pares ró
 • "adjacent_below"  → primeira célula da linha seguinte
 • "column_header"   → cabeçalho de coluna; valores ficam nas células abaixo
 • "inline_colon"    → valor após ":" na mesma célula ("Professor: João")
+• "period_column"   → campo de tabela com múltiplos períodos; 'periodSuffix' indica o sufixo da chave (_tr1, _tr2, _tr3 para trimestres; _bim1, _bim2 para bimestres). Monte o key concatenando o label normalizado + periodSuffix.
 O campo 'valuePreview' mostra o conteúdo atual da célula de valor (vazio em templates em branco).
 CRÍTICO: copie o 'label' de <estrutura_detectada> VERBATIM — não normalize, não traduza.
 Quando a mensagem contém <campos_confirmados>, esses campos foram confirmados pelo professor em uma extração anterior. MANTENHA seus 'key' e 'label' intactos; apenas adicione campos novos não listados.
@@ -148,6 +164,7 @@ Antes de extrair, raciocine em "raciocinio":
 2. Para cada rótulo em <estrutura_detectada>: confirme o padrão e classifique (manual/ia_sugerida, grupo).
 3. Verifique campos que não aparecem em <estrutura_detectada> mas estão no HTML.
 4. Confirme que cada label será copiado EXATAMENTE de <estrutura_detectada> ou do HTML.
+5. Identifique colunas repetidas (→ mesmo campo único) e entradas "period_column" (→ sufixos _tr1/_tr2/_tr3). Verifique se há ranges de data para dividir em _inicio/_fim.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
@@ -155,24 +172,94 @@ Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
 
 // ── Prompt builder ──────────────────────────────────────────────────────────
 
-const fewShotExample = {
-  regra: "NUNCA invente labels. Se o HTML tem <td><strong>PROFESSOR (A):</strong></td><td>Luiz Carlos</td>, o label é 'PROFESSOR (A)' e o defaultValue é 'Luiz Carlos'.",
-  html_input_example: "<table><tbody><tr><td><strong>PROFESSOR (A):</strong></td><td>Luiz Carlos Covre</td><td><strong>CURSO</strong></td><td>DSI</td></tr><tr><td><strong>Área(s) do Conhecimento:</strong></td><td>Práticas em DSI</td><td><strong>Nº aulas semanais:</strong></td><td>2</td></tr><tr><td colspan=\"4\"><strong>HABILIDADES</strong></td></tr><tr><td colspan=\"4\"></td></tr></tbody></table>",
-  estrutura_detectada_example: [
-    { label: "PROFESSOR (A)", valuePreview: "Luiz Carlos Covre", pattern: "adjacent_right" },
-    { label: "CURSO",         valuePreview: "DSI",               pattern: "adjacent_right" },
-    { label: "Área(s) do Conhecimento", valuePreview: "Práticas em DSI", pattern: "adjacent_right" },
-    { label: "Nº aulas semanais",       valuePreview: "2",              pattern: "adjacent_right" },
-    { label: "HABILIDADES",             valuePreview: "",               pattern: "column_header" },
-  ],
-  campos: [
-    { key: "professor_a",         label: "PROFESSOR (A)",          type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "Luiz Carlos Covre" },
-    { key: "curso",               label: "CURSO",                  type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "DSI" },
-    { key: "areas_do_conhecimento", label: "Área(s) do Conhecimento", type: "text",  required: true, role: "manual",      group: "dados_turma",  defaultValue: "Práticas em DSI" },
-    { key: "n_aulas_semanais",    label: "Nº aulas semanais",      type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "2" },
-    { key: "habilidades",         label: "HABILIDADES",            type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
-  ],
-};
+const fewShotExamples = [
+  {
+    descricao: "Plano de 30 dias (CEDUP/SC) — template com campos preenchidos e inline colon. Aplica Regra 10: range de datas dividido em _inicio/_fim.",
+    regra: "NUNCA invente labels. Se o HTML tem <td><strong>PROFESSOR (A):</strong></td><td>Luiz Carlos</td>, o label é 'PROFESSOR (A)' e o defaultValue é 'Luiz Carlos'.",
+    html_input_example: "<table><tbody><tr><td>Professor(a): Luiz Carlos Covre</td></tr><tr><td>Área/Componente: 5421 - PRÁTICAS EM D.S.I</td></tr><tr><td>Turma: 2º EMIEP</td></tr><tr><td>- Carga horária prevista: 9 aulas</td></tr><tr><td>- Data ou período de realização: 13/07/2026 a 09/08/2026</td></tr></tbody></table><p><strong>HABILIDADES:</strong></p><p>- Refatorar CSS para facilitar manutenção</p>",
+    estrutura_detectada_example: [
+      { label: "Professor(a)", valuePreview: "Luiz Carlos Covre", pattern: "inline_colon" },
+      { label: "Área/Componente", valuePreview: "5421 - PRÁTICAS EM D.S.I", pattern: "inline_colon" },
+      { label: "Turma", valuePreview: "2º EMIEP", pattern: "inline_colon" },
+      { label: "Carga horária prevista", valuePreview: "9 aulas", pattern: "inline_colon" },
+      { label: "Data ou período de realização", valuePreview: "13/07/2026 a 09/08/2026", pattern: "inline_colon" },
+      { label: "HABILIDADES", valuePreview: "- Refatorar CSS...", pattern: "adjacent_below" },
+    ],
+    campos: [
+      { key: "professor",         label: "Professor(a)",          type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "Luiz Carlos Covre" },
+      { key: "area_componente",   label: "Área/Componente",       type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "5421 - PRÁTICAS EM D.S.I" },
+      { key: "turma",             label: "Turma",                 type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "2º EMIEP" },
+      { key: "ch_prevista",       label: "Carga horária prevista",type: "text",     required: true, role: "manual",      group: "dados_turma",  defaultValue: "9 aulas" },
+      { key: "data_inicio",       label: "Data ou período de realização", type: "text", required: true, role: "manual", group: "dados_turma" },
+      { key: "data_fim",          label: "Data ou período de realização", type: "text", required: true, role: "manual", group: "dados_turma" },
+      { key: "habilidades",       label: "HABILIDADES",           type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+    ],
+    nota: "Regra 10: 'Data ou período de realização' contém range '13/07/2026 a 09/08/2026' → declarar data_inicio + data_fim como campos separados.",
+  },
+  {
+    descricao: "Planejamento anual (EMIEP-2026) — tabela com colunas espelhadas e 3 trimestres. Aplica Regras 8 (colunas repetidas) e 9 (períodos).",
+    estrutura_detectada_example: [
+      { label: "PROFESSOR (A)", valuePreview: "", pattern: "adjacent_right" },
+      { label: "CURSO", valuePreview: "", pattern: "adjacent_right" },
+      { label: "Área(s) do Conhecimento", valuePreview: "", pattern: "adjacent_right" },
+      { label: "Turma(s)", valuePreview: "", pattern: "adjacent_right" },
+      { label: "Carga horária presencial", valuePreview: "", pattern: "adjacent_right" },
+      { label: "Carga horária não presencial", valuePreview: "", pattern: "adjacent_right" },
+      { label: "Componente Curricular", valuePreview: "", pattern: "adjacent_right" },
+      { label: "OBJETIVO GERAL DO COMPONENTE", valuePreview: "", pattern: "column_header" },
+      { label: "COMPETÊNCIAS GERAIS BNCC", valuePreview: "", pattern: "column_header" },
+      { label: "COMPETÊNCIAS ESPECÍFICAS DA ÁREA", valuePreview: "", pattern: "column_header" },
+      { label: "CONCEITOS ESTRUTURANTES DA ÁREA", valuePreview: "", pattern: "period_column", periodSuffix: "_tr1" },
+      { label: "HABILIDADES", valuePreview: "", pattern: "period_column", periodSuffix: "_tr1" },
+      { label: "OBJETO DE CONHECIMENTO", valuePreview: "", pattern: "period_column", periodSuffix: "_tr1" },
+      { label: "1º", valuePreview: "1º", pattern: "period_column", periodSuffix: "_tr1" },
+      { label: "CONCEITOS ESTRUTURANTES DA ÁREA", valuePreview: "", pattern: "period_column", periodSuffix: "_tr2" },
+      { label: "HABILIDADES", valuePreview: "", pattern: "period_column", periodSuffix: "_tr2" },
+      { label: "OBJETO DE CONHECIMENTO", valuePreview: "", pattern: "period_column", periodSuffix: "_tr2" },
+      { label: "2º", valuePreview: "2º", pattern: "period_column", periodSuffix: "_tr2" },
+      { label: "CONCEITOS ESTRUTURANTES DA ÁREA", valuePreview: "", pattern: "period_column", periodSuffix: "_tr3" },
+      { label: "HABILIDADES", valuePreview: "", pattern: "period_column", periodSuffix: "_tr3" },
+      { label: "OBJETO DE CONHECIMENTO", valuePreview: "", pattern: "period_column", periodSuffix: "_tr3" },
+      { label: "3º", valuePreview: "3º", pattern: "period_column", periodSuffix: "_tr3" },
+    ],
+    campos: [
+      { key: "professor_a",                  label: "PROFESSOR (A)",                  type: "text",     required: true,  role: "manual",      group: "dados_turma" },
+      { key: "nome_curso",                   label: "CURSO",                          type: "text",     required: true,  role: "manual",      group: "dados_turma" },
+      { key: "area_conhecimento",            label: "Área(s) do Conhecimento",        type: "text",     required: true,  role: "manual",      group: "dados_turma" },
+      { key: "turma",                        label: "Turma(s)",                       type: "text",     required: true,  role: "manual",      group: "dados_turma" },
+      { key: "n_aulas_semanais",             label: "Nº aulas semanais",              type: "text",     required: false, role: "manual",      group: "dados_turma" },
+      { key: "chpresencial",                 label: "Carga horária presencial",       type: "text",     required: false, role: "manual",      group: "dados_turma" },
+      { key: "chnpresencial",                label: "Carga horária não presencial",   type: "text",     required: false, role: "manual",      group: "dados_turma" },
+      { key: "componente_curricular",        label: "Componente Curricular",          type: "text",     required: true,  role: "manual",      group: "dados_turma" },
+      { key: "objetivo_geral_componente",    label: "OBJETIVO GERAL DO COMPONENTE",   type: "textarea", required: true,  role: "ia_sugerida", group: "objetivos" },
+      { key: "competencias_gerais_bncc",     label: "COMPETÊNCIAS GERAIS BNCC",       type: "textarea", required: true,  role: "ia_sugerida", group: "competencias" },
+      { key: "competencias_especificas_area",label: "COMPETÊNCIAS ESPECÍFICAS DA ÁREA",type: "textarea",required: true,  role: "ia_sugerida", group: "competencias" },
+      { key: "conceitos_estruturantes_tr1",  label: "CONCEITOS ESTRUTURANTES DA ÁREA",type: "textarea", required: true,  role: "ia_sugerida", group: "conteudos" },
+      { key: "habilidades_tr1",              label: "HABILIDADES",                   type: "textarea", required: true,  role: "ia_sugerida", group: "habilidades" },
+      { key: "objeto_conhecimento_tr1",      label: "OBJETO DE CONHECIMENTO",         type: "textarea", required: true,  role: "ia_sugerida", group: "conteudos" },
+      { key: "tr1",                          label: "1º Trimestre",                   type: "text",     required: false, role: "manual",      group: "dados_turma" },
+      { key: "conceitos_estruturantes_tr2",  label: "CONCEITOS ESTRUTURANTES DA ÁREA",type: "textarea", required: true,  role: "ia_sugerida", group: "conteudos" },
+      { key: "habilidades_tr2",              label: "HABILIDADES",                   type: "textarea", required: true,  role: "ia_sugerida", group: "habilidades" },
+      { key: "objeto_conhecimento_tr2",      label: "OBJETO DE CONHECIMENTO",         type: "textarea", required: true,  role: "ia_sugerida", group: "conteudos" },
+      { key: "tr2",                          label: "2º Trimestre",                   type: "text",     required: false, role: "manual",      group: "dados_turma" },
+      { key: "conceitos_estruturantes_tr3",  label: "CONCEITOS ESTRUTURANTES DA ÁREA",type: "textarea", required: true,  role: "ia_sugerida", group: "conteudos" },
+      { key: "habilidades_tr3",              label: "HABILIDADES",                   type: "textarea", required: true,  role: "ia_sugerida", group: "habilidades" },
+      { key: "objeto_conhecimento_tr3",      label: "OBJETO DE CONHECIMENTO",         type: "textarea", required: true,  role: "ia_sugerida", group: "conteudos" },
+      { key: "tr3",                          label: "3º Trimestre",                   type: "text",     required: false, role: "manual",      group: "dados_turma" },
+      { key: "articulacao_2professor",       label: "PLANO DE ARTICULAÇÃO COM 2º PROFESSORES, ADAPTAÇÕES/ADEQUAÇÕES CURRICULARES", type: "textarea", required: false, role: "manual", group: "outros" },
+      { key: "projeto_integrador",           label: "PROJETOS INTEGRADORES",          type: "textarea", required: false, role: "ia_sugerida", group: "conteudos" },
+      { key: "metodologia",                  label: "METODOLOGIA",                    type: "textarea", required: true,  role: "ia_sugerida", group: "conteudos" },
+      { key: "avaliacao",                    label: "AVALIAÇÃO",                      type: "textarea", required: true,  role: "ia_sugerida", group: "avaliacao" },
+      { key: "referencias_bibliograficas",   label: "REFERÊNCIAS BIBLIOGRÁFICAS",     type: "textarea", required: false, role: "manual",      group: "outros" },
+      { key: "data_atual",                   label: "Data",                           type: "text",     required: false, role: "manual",      group: "dados_turma" },
+    ],
+    notas: [
+      "Regra 8: PROFESSOR (A), Turma(s), Componente Curricular etc. repetem em até 10 colunas → 1 campo cada.",
+      "Regra 9: period_column com periodSuffix _tr1/_tr2/_tr3 → chaves com sufixo. Ex: habilidades_tr1, habilidades_tr2, habilidades_tr3.",
+      "Regra 9: marcadores de período '1º', '2º', '3º' → campos tr1, tr2, tr3 (checkbox/marcação por linha).",
+    ],
+  },
+];
 
 function buildPrompt(
   { content, isHtml }: ExtractedContent,
@@ -186,7 +273,7 @@ function buildPrompt(
 
   const parts: string[] = [
     `<instrucao>${instrucao}</instrucao>`,
-    `<exemplo>${JSON.stringify(fewShotExample)}</exemplo>`,
+    `<exemplos>${JSON.stringify(fewShotExamples)}</exemplos>`,
   ];
 
   // Feature 1: structural pre-scan — give the AI the pre-detected pairs

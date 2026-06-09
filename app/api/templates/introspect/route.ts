@@ -79,13 +79,14 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
         type: SchemaType.OBJECT,
         required: ["key", "label", "type", "required", "role", "group"],
         properties: {
-          key:          { type: SchemaType.STRING },
-          label:        { type: SchemaType.STRING },
-          type:         { type: SchemaType.STRING, format: "enum", enum: ["text", "textarea"] },
-          required:     { type: SchemaType.BOOLEAN },
-          role:         { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
-          group:        { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
-          defaultValue: { type: SchemaType.STRING, nullable: true },
+          key:            { type: SchemaType.STRING },
+          label:          { type: SchemaType.STRING },
+          type:           { type: SchemaType.STRING, format: "enum", enum: ["text", "textarea"] },
+          required:       { type: SchemaType.BOOLEAN },
+          role:           { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
+          group:          { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
+          defaultValue:   { type: SchemaType.STRING, nullable: true },
+          aiInstructions: { type: SchemaType.STRING, nullable: true },
         },
       },
     },
@@ -97,12 +98,28 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
 </persona>
 <regras>
 1. REGRA CRÍTICA: O campo 'label' DEVE ser copiado EXATAMENTE como aparece no documento — sem tradução, normalização, abreviação ou substituição.
-   Exemplos: 'Área/Componente:' → label 'Área/Componente' | 'HABILIDADES:' → label 'Habilidades' | 'Professor(a):' → label 'Professor(a)'.
+   Exemplos: 'Área/Componente:' → label 'Área/Componente' | 'HABILIDADES:' → label 'HABILIDADES' | 'Professor(a):' → label 'Professor(a)'.
    NUNCA invente labels.
 2. Campos de identificação (professor, curso/área, turma, componente etc.) → role 'manual', group 'dados_turma'.
 3. Campos pedagógicos (objetivos, competências, habilidades, BNCC, SAEB, conteúdos, avaliação) → role 'ia_sugerida'.
 4. Grupos válidos: dados_turma | objetivos | competencias | habilidades | conteudos | avaliacao | outros.
 5. O 'key' é o label em snake_case sem acentos (ex: 'area_componente', 'numero_de_aulas').
+6. type "textarea" para campos pedagógicos longos; "text" para campos curtos (nome, turma, data, número).
+7. NÃO inclua linhas que são apenas títulos de seção sem campo associado.
+8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" em 9 colunas → um único campo {{turma}}.
+9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; bimestres) e MÚLTIPLAS LINHAS de dados — uma por período — crie chaves com sufixo _tr1/_tr2/_tr3 (ou _bim1/_bim2). Exemplo: coluna "HABILIDADES" com 3 linhas de dados → habilidades_tr1, habilidades_tr2, habilidades_tr3. Células de marcação de trimestre (✓, "x", texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}.
+10. RANGE DE DATAS: Se o valor de um campo contém um intervalo ("13/07/2026 a 09/08/2026" ou "DD/MM - DD/MM"), declare DOIS campos separados: {base}_inicio e {base}_fim.
+11. ESCOPO DE BLOCO: Campos do tipo textarea têm conteúdo que se estende até o próximo título em caixa alta ou próxima seção. Marque esses campos com type "textarea" — nunca "text" para seções de conteúdo pedagógico.
+12. DEPENDÊNCIAS — aiInstructions: Para campos role "ia_sugerida", preencha 'aiInstructions' com 1 frase curta indicando quais outros campos servem de contexto. Use o mapeamento:
+   • metodologia, atividade → "Elabore considerando os objetivos de aprendizagem e as habilidades definidas neste plano."
+   • avaliacao, instrumentos_avaliativos → "Defina instrumentos alinhados às habilidades e objetivos do plano."
+   • habilidades (incluindo _tr1/_tr2/_tr3) → "Selecione habilidades BNCC alinhadas ao componente curricular e ao período letivo."
+   • objetivos, expectativa_aprendizagem → "Formule objetivos mensuráveis com verbos de ação no infinitivo, conectados às habilidades."
+   • competencias → "Parafraseie competências BNCC aplicadas ao componente e nível de ensino — nunca cópia literal."
+   • conteudos, conceitos_estruturantes, objeto_conhecimento, tematica → "Organize do mais básico ao mais complexo, alinhado ao período letivo e às habilidades."
+   • recuperacao_paralela → "Proponha atividades diferenciadas baseadas nas dificuldades previstas pelos objetivos e avaliação."
+   • Outros campos ia_sugerida → "Seja específico ao contexto da turma, disciplina e período descritos no plano."
+   Campos role "manual" → aiInstructions = "".
 </regras>
 <raciocinio_obrigatorio>
 Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
@@ -110,6 +127,7 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
 2. Classifique cada campo: é de identificação (professor, turma, escola, data) ou pedagógico (objetivos, habilidades, conteúdos, avaliação)?
 3. Para cada campo pedagógico, determine o group correto: objetivos | competencias | habilidades | conteudos | avaliacao | outros.
 4. Confirme que cada label será copiado EXATAMENTE como aparece no documento, sem normalização.
+5. Identifique colunas repetidas (→ mesmo campo único), estruturas de período (→ sufixos _tr1/_tr2/_tr3) e ranges de data (→ _inicio/_fim).
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
@@ -230,35 +248,71 @@ export async function POST(request: Request) {
 
     const pdfText = await extractFileText(file);
 
-    // Few-shot: labels MUST be copied verbatim from the document text.
-    // This example shows how the CEDUP template would be extracted.
-    const fewShotExample = {
-      descricao:
-        "Extração de um plano de 30 dias (CEDUP/SC). " +
-        "Observe: os labels são cópias EXATAS dos rótulos do documento.",
-      regra:
-        "NUNCA invente ou normalize labels. " +
-        "Se o documento diz 'Área/Componente:' o label é 'Área/Componente', NÃO 'Curso' nem 'Componente curricular'.",
-      campos: [
-        { key: "professor", label: "Professor(a)", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "Luiz Carlos Covre" },
-        { key: "area_componente", label: "Área/Componente", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "5421 - PRÁTICAS EM D.S.I - HTML, CSS, PHP" },
-        { key: "turma", label: "Turma", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "2º EMIEP" },
-        { key: "tematica_abordada", label: "Temática abordada", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
-        { key: "conceitos_estruturantes", label: "Conceitos estruturantes e objetos do conhecimento", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
-        { key: "habilidades", label: "Habilidades", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
-        { key: "objetivos_de_aprendizagem", label: "Objetivos de aprendizagem", type: "textarea", required: true, role: "ia_sugerida", group: "objetivos" },
-        { key: "atividade_metodologia", label: "Atividade proposta/ Metodologia", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
-        { key: "avaliacao", label: "Avaliação", type: "textarea", required: true, role: "ia_sugerida", group: "avaliacao" },
-      ],
-    };
+    // Few-shot: two examples covering the main structural patterns found in Brazilian school templates.
+    const fewShotExamples = [
+      {
+        descricao: "Plano de 30 dias (CEDUP/SC) — template com campos preenchidos. Regra 10: range de datas → _inicio/_fim.",
+        regra: "NUNCA invente ou normalize labels. Se o documento diz 'Área/Componente:' o label é 'Área/Componente', NÃO 'Curso' nem 'Componente curricular'.",
+        campos: [
+          { key: "professor", label: "Professor(a)", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "Luiz Carlos Covre" },
+          { key: "area_componente", label: "Área/Componente", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "5421 - PRÁTICAS EM D.S.I - HTML, CSS, PHP" },
+          { key: "turma", label: "Turma", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "2º EMIEP" },
+          { key: "ch_prevista", label: "Carga horária prevista", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "data_inicio", label: "Data ou período de realização", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "data_fim", label: "Data ou período de realização", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "tematica_abordada", label: "TEMÁTICA ABORDADA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "conceitos_estruturantes_e_objetos_conhecimento", label: "CONCEITOS ESTRUTURANTES E OBJETOS DO CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "habilidades", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+          { key: "objetivos_aprendizagem", label: "OBJETIVOS DE APRENDIZAGEM", type: "textarea", required: true, role: "ia_sugerida", group: "objetivos" },
+          { key: "atividade_proposta_metodologia", label: "ATIVIDADE PROPOSTA/ METODOLOGIA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "avaliacao", label: "AVALIAÇÃO", type: "textarea", required: true, role: "ia_sugerida", group: "avaliacao" },
+          { key: "recuperacao_paralela", label: "Recuperação paralela", type: "textarea", required: false, role: "manual", group: "outros" },
+        ],
+        nota: "Regra 10: 'Data ou período de realização: 13/07/2026 a 09/08/2026' → dois campos data_inicio + data_fim.",
+      },
+      {
+        descricao: "Planejamento anual com 3 trimestres (EMIEP-2026). Regra 8: colunas repetidas → 1 campo. Regra 9: 3 linhas de dados → sufixos _tr1/_tr2/_tr3.",
+        campos: [
+          { key: "professor_a", label: "PROFESSOR (A)", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "nome_curso", label: "CURSO", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "area_conhecimento", label: "Área(s) do Conhecimento", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "turma", label: "Turma(s)", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "componente_curricular", label: "Componente Curricular", type: "text", required: true, role: "manual", group: "dados_turma" },
+          { key: "chpresencial", label: "Carga horária presencial", type: "text", required: false, role: "manual", group: "dados_turma" },
+          { key: "chnpresencial", label: "Carga horária não presencial", type: "text", required: false, role: "manual", group: "dados_turma" },
+          { key: "objetivo_geral_componente", label: "OBJETIVO GERAL DO COMPONENTE", type: "textarea", required: true, role: "ia_sugerida", group: "objetivos" },
+          { key: "competencias_gerais_bncc", label: "COMPETÊNCIAS GERAIS BNCC", type: "textarea", required: true, role: "ia_sugerida", group: "competencias" },
+          { key: "competencias_especificas_area", label: "COMPETÊNCIAS ESPECÍFICAS DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "competencias" },
+          { key: "conceitos_estruturantes_tr1", label: "CONCEITOS ESTRUTURANTES DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "habilidades_tr1", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+          { key: "objeto_conhecimento_tr1", label: "OBJETO DE CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "tr1", label: "1º Trimestre", type: "text", required: false, role: "manual", group: "dados_turma" },
+          { key: "conceitos_estruturantes_tr2", label: "CONCEITOS ESTRUTURANTES DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "habilidades_tr2", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+          { key: "objeto_conhecimento_tr2", label: "OBJETO DE CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "tr2", label: "2º Trimestre", type: "text", required: false, role: "manual", group: "dados_turma" },
+          { key: "conceitos_estruturantes_tr3", label: "CONCEITOS ESTRUTURANTES DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "habilidades_tr3", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+          { key: "objeto_conhecimento_tr3", label: "OBJETO DE CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "tr3", label: "3º Trimestre", type: "text", required: false, role: "manual", group: "dados_turma" },
+          { key: "metodologia", label: "METODOLOGIA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "avaliacao", label: "AVALIAÇÃO", type: "textarea", required: true, role: "ia_sugerida", group: "avaliacao" },
+          { key: "referencias_bibliograficas", label: "REFERÊNCIAS BIBLIOGRÁFICAS", type: "textarea", required: false, role: "manual", group: "outros" },
+        ],
+        notas: [
+          "Regra 8: PROFESSOR (A), Turma(s) etc. repetem em 9-10 colunas → 1 campo cada.",
+          "Regra 9: HABILIDADES/CONCEITOS/OBJETO aparecem em 3 linhas (uma por trimestre) → sufixos _tr1/_tr2/_tr3.",
+        ],
+      },
+    ];
 
     const promptStr = [
       `<instrucao>`,
-      `Analise o texto em <documento> e extraia TODOS os campos visíveis. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece (título da seção, rótulo da linha, cabeçalho). Não normalize, não traduza, não abrevia. O 'key' é o label em snake_case sem acentos. Se o documento estiver preenchido, inclua o conteúdo como 'defaultValue'. Retorne SOMENTE o array JSON.`,
+      `Analise o texto em <documento> e extraia TODOS os campos visíveis. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece (título da seção, rótulo da linha, cabeçalho). Não normalize, não traduza, não abrevia. O 'key' é o label em snake_case sem acentos. Se o documento estiver preenchido, inclua o conteúdo como 'defaultValue'. Aplique as Regras 8 (colunas repetidas), 9 (períodos/trimestres) e 10 (range de datas).`,
       `</instrucao>`,
-      `<exemplo>`,
-      JSON.stringify(fewShotExample),
-      `</exemplo>`,
+      `<exemplos>`,
+      JSON.stringify(fewShotExamples),
+      `</exemplos>`,
       `<documento>`,
       pdfText,
       `</documento>`,
