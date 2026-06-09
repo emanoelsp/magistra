@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlignCenter,
@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Eye,
+  ClipboardCopy,
+  Clock,
+  Crosshair,
   GripVertical,
   HelpCircle,
   Italic,
@@ -19,12 +21,15 @@ import {
   ListOrdered,
   Loader2,
   MousePointer2,
-  Plus,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCw,
+  RotateCcw,
   Save,
   Sparkles,
   Trash2,
   X,
+  ZoomIn,
 } from "lucide-react";
 
 import type { TemplateFieldSchema, TemplateRecord } from "../../lib/types/firestore";
@@ -34,6 +39,21 @@ import { OfficeInlineViewer } from "../shared/office-inline-viewer";
 interface TemplateFieldEditorProps {
   template: TemplateRecord;
   mode?: "edit" | "confirm";
+}
+
+interface ReExtractResult {
+  schema: TemplateFieldSchema[];
+  campos_sem_placeholder: string[];
+  campos_baixa_confianca: string[];
+  diff: { mantidos: string[]; adicionados: string[]; removidos: string[] };
+  arquivo_fillable_url?: string;
+}
+
+interface SchemaVersion {
+  id: string;
+  schema_campos: TemplateFieldSchema[];
+  salvo_em: string;
+  tipo: string;
 }
 
 function newField(): TemplateFieldSchema {
@@ -66,14 +86,17 @@ interface DocxInteractiveProps {
   fields: TemplateFieldSchema[];
   fieldPositions: Record<string, { cellText: string; ordinal: number }>;
   activeKey: string | null;
+  locateKey?: string | null;
   previewVersion?: number;
+  zoom?: number;
+  onZoomChange?: (z: number) => void;
   onSaveEdits: (edits: DocxEdit[], scanOrder: string[], removedKeys: string[]) => void;
 }
 
 const TOOLBAR_FONTS = ["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"];
 const TOOLBAR_SIZES = ["8", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36"];
 
-function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previewVersion = 0, onSaveEdits }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
@@ -233,9 +256,9 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     return () => { cancelled = true; };
   }, [phase]);
 
-  // Highlight the active field
-  useEffect(() => {
-    if (phase !== "done" || !containerRef.current) return;
+  // Item 8: locate helper — finds and scrolls to the cell containing the key's placeholder or label
+  const locateFieldInDoc = useCallback((key: string) => {
+    if (!containerRef.current) return;
     const container = containerRef.current;
     container.querySelectorAll("[data-mhl]").forEach((el) => {
       (el as HTMLElement).style.removeProperty("background");
@@ -243,9 +266,20 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
       (el as HTMLElement).style.removeProperty("border-radius");
       el.removeAttribute("data-mhl");
     });
-    if (!activeKey) return;
-    const field = fields.find((f) => f.key === activeKey);
+    const field = fields.find((f) => f.key === key);
     if (!field) return;
+    // First try to find the {{key}} chip
+    const chip = container.querySelector(`[data-field-chip="${key}"]`);
+    const chipEl = chip?.closest("td") ?? chip?.closest("p") ?? chip as HTMLElement | null;
+    if (chipEl) {
+      (chipEl as HTMLElement).style.background = "rgba(139,92,246,0.15)";
+      (chipEl as HTMLElement).style.outline = "2px solid rgba(139,92,246,0.5)";
+      (chipEl as HTMLElement).style.borderRadius = "2px";
+      chipEl.setAttribute("data-mhl", "true");
+      chipEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    // Fall back to label matching
     const terms = [field.label, field.defaultValue].filter(
       (t): t is string => typeof t === "string" && t.trim().length > 2,
     );
@@ -269,7 +303,21 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
       bestEl.setAttribute("data-mhl", "true");
       bestEl.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [activeKey, fields, phase]);
+  }, [fields]);
+
+  // Highlight the active field
+  useEffect(() => {
+    if (phase !== "done" || !activeKey) return;
+    locateFieldInDoc(activeKey);
+  }, [activeKey, phase, locateFieldInDoc]);
+
+  // Item 8: explicit locate trigger (fires even when key doesn't change)
+  // locateKey format: "fieldKey:timestamp" so changing timestamp re-triggers effect
+  useEffect(() => {
+    if (phase !== "done" || !locateKey) return;
+    const key = locateKey.split(":")[0];
+    if (key) locateFieldInDoc(key);
+  }, [locateKey, phase, locateFieldInDoc]);
 
   // Colorize {{key}} patterns already in the rendered DOCX text (from re-extract or pre-annotated files)
   useEffect(() => {
@@ -439,6 +487,23 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
         </button>
       </div>
 
+      {/* Item 15: zoom slider */}
+      {phase === "done" && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-white px-3 py-1">
+          <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
+          <input
+            type="range"
+            min={70}
+            max={150}
+            step={5}
+            value={zoom}
+            onChange={(e) => onZoomChange?.(Number(e.target.value))}
+            className="h-1 w-24 accent-violet-600"
+          />
+          <span className="w-8 text-[10px] text-slate-500">{zoom}%</span>
+        </div>
+      )}
+
       {/* Rich-text formatting toolbar */}
       {phase === "done" && (
         <div
@@ -513,7 +578,15 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
 
       {/* overflow-x-auto enables horizontal scroll for wide/landscape documents */}
       <div ref={scrollerRef} className={`flex-1 overflow-y-auto overflow-x-auto ${phase === "error" ? "invisible absolute" : ""}`}>
-        <div ref={containerRef} className="docx-html-preview" />
+        <div
+          ref={containerRef}
+          className="docx-html-preview"
+          style={zoom !== 100 ? {
+            transform: `scale(${zoom / 100})`,
+            transformOrigin: "top left",
+            width: `${Math.round(10000 / zoom)}%`,
+          } : undefined}
+        />
       </div>
       {phase === "loading" && (
         <div className="flex h-full items-center justify-center gap-3 text-slate-500">
@@ -549,14 +622,50 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [isReExtracting, setIsReExtracting] = useState(false);
   const [reExtractMsg, setReExtractMsg] = useState<string | null>(null);
   const [camposSemPlaceholder, setCamposSemPlaceholder] = useState<string[]>([]);
+  const [camposBaixaConfianca, setCamposBaixaConfianca] = useState<string[]>([]);
   const [showHelp, setShowHelp] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
+  const [locateKey, setLocateKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
   const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
   const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number }>>({});
   const [previewVersion, setPreviewVersion] = useState(0);
   const [viewMode, setViewMode] = useState<"preview" | "interactive">("interactive");
   const [roleFilter, setRoleFilter] = useState<"manual" | "ia_sugerida" | null>(null);
+
+  // Item 5: diff modal state
+  const [pendingExtract, setPendingExtract] = useState<ReExtractResult | null>(null);
+
+  // Item 7: undo last save
+  const prevFieldsRef = useRef<TemplateFieldSchema[] | null>(null);
+  const [showUndoToast, setShowUndoToast] = useState(false);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Item 6: drag-and-drop
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+
+  // Item 12: auto-save debounce
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+
+  // Item 13: schema version history
+  const [showVersions, setShowVersions] = useState(false);
+  const [versions, setVersions] = useState<SchemaVersion[]>([]);
+  const [isLoadingVersions, setIsLoadingVersions] = useState(false);
+  const [isRestoringVersion, setIsRestoringVersion] = useState(false);
+
+  // Item 14: mobile tab
+  const [mobileTab, setMobileTab] = useState<"document" | "campos">("campos");
+
+  // Item 15: zoom
+  const [zoom, setZoom] = useState(100);
+
+  // Item 16: collapsible panel
+  const [panelCollapsed, setPanelCollapsed] = useState(() => {
+    try { return localStorage.getItem("magis_panel_collapsed") === "1"; } catch { return false; }
+  });
 
   const fieldListRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
@@ -568,7 +677,89 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     requestAnimationFrame(() => { if (el) el.scrollTop = top; });
   }
 
+  // Item 12: auto-save with 3s debounce (only triggers after first render)
+  useEffect(() => {
+    if (!isMountedRef.current) { isMountedRef.current = true; return; }
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      setAutoSaving(true);
+      void fetch(`/api/templates/${template.id}/schema`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome: nome.trim() || template.nome,
+          estado: estado || null,
+          schema_campos: fields,
+          field_positions: fieldPositions,
+        }),
+      })
+        .then((r) => r.json())
+        .then((d: { campos_sem_placeholder?: string[] }) => {
+          if (d.campos_sem_placeholder) setCamposSemPlaceholder(d.campos_sem_placeholder);
+        })
+        .catch(() => { /* silent auto-save fail */ })
+        .finally(() => setAutoSaving(false));
+    }, 3000);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields]);
+
+  // Item 13: load schema versions
+  async function loadVersions() {
+    setIsLoadingVersions(true);
+    try {
+      const res = await fetch(`/api/templates/${template.id}/schema-versions`);
+      const d = await res.json() as { ok?: boolean; versions?: SchemaVersion[] };
+      if (d.ok) setVersions(d.versions ?? []);
+    } catch { /* ignore */ }
+    finally { setIsLoadingVersions(false); }
+  }
+
+  async function restoreVersion(versionId: string) {
+    setIsRestoringVersion(true);
+    try {
+      const res = await fetch(`/api/templates/${template.id}/schema-versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version_id: versionId }),
+      });
+      const d = await res.json() as { ok?: boolean; schema_campos?: TemplateFieldSchema[] };
+      if (d.ok && d.schema_campos) {
+        setFields(d.schema_campos);
+        setShowVersions(false);
+        setPreviewVersion((v) => v + 1);
+        router.refresh();
+      }
+    } catch { /* ignore */ }
+    finally { setIsRestoringVersion(false); }
+  }
+
+  // Item 16: persist panel collapse state
+  useEffect(() => {
+    try { localStorage.setItem("magis_panel_collapsed", panelCollapsed ? "1" : "0"); } catch { /* ignore */ }
+  }, [panelCollapsed]);
+
   const isDocx = (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
+
+  // Item 6: drag-and-drop reordering
+  function handleDragStart(key: string) { setDraggingKey(key); }
+  function handleDragOver(e: React.DragEvent, key: string) {
+    e.preventDefault();
+    if (key !== draggingKey) setDragOverKey(key);
+  }
+  function handleDrop(targetKey: string) {
+    if (!draggingKey || draggingKey === targetKey) { setDraggingKey(null); setDragOverKey(null); return; }
+    const from = fields.findIndex((f) => f.key === draggingKey);
+    const to = fields.findIndex((f) => f.key === targetKey);
+    if (from === -1 || to === -1) { setDraggingKey(null); setDragOverKey(null); return; }
+    const next = [...fields];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setFields(next);
+    setDraggingKey(null);
+    setDragOverKey(null);
+  }
+  function handleDragEnd() { setDraggingKey(null); setDragOverKey(null); }
 
   useEffect(() => {
     if (!activeFieldKey || !fieldListRef.current) return;
@@ -587,19 +778,36 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         schema?: TemplateFieldSchema[];
         totalCampos?: number;
         campos_sem_placeholder?: string[];
+        campos_baixa_confianca?: string[];
+        diff?: { mantidos: string[]; adicionados: string[]; removidos: string[] };
+        arquivo_fillable_url?: string;
         error?: string;
       } | null;
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Falha ao re-extrair campos.");
-      setFields(Array.isArray(data.schema) ? data.schema : []);
-      setCamposSemPlaceholder(data.campos_sem_placeholder ?? []);
-      setReExtractMsg(`${data.totalCampos ?? 0} campos extraídos.`);
-      setPreviewVersion((v) => v + 1);
-      router.refresh();
+      // Item 5: show diff modal before applying
+      const result: ReExtractResult = {
+        schema: Array.isArray(data.schema) ? data.schema : [],
+        campos_sem_placeholder: data.campos_sem_placeholder ?? [],
+        campos_baixa_confianca: data.campos_baixa_confianca ?? [],
+        diff: data.diff ?? { mantidos: [], adicionados: [], removidos: [] },
+        arquivo_fillable_url: data.arquivo_fillable_url,
+      };
+      setPendingExtract(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao re-extrair campos.");
     } finally {
       setIsReExtracting(false);
     }
+  }
+
+  function applyExtractResult(result: ReExtractResult) {
+    setFields(result.schema);
+    setCamposSemPlaceholder(result.campos_sem_placeholder);
+    setCamposBaixaConfianca(result.campos_baixa_confianca);
+    setReExtractMsg(`${result.schema.length} campos extraídos.`);
+    setPreviewVersion((v) => v + 1);
+    setPendingExtract(null);
+    router.refresh();
   }
 
   function addField() {
@@ -723,12 +931,17 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setError(null);
     setSaved(false);
 
+    // Item 11: validation
+    const emptyLabel = fieldsToSave.find((f) => !f.label.trim());
+    if (emptyLabel) { setError("Todos os campos precisam ter um nome."); return; }
+    const keysSeen = new Set<string>();
     for (const f of fieldsToSave) {
-      if (!f.label.trim()) {
-        setError("Todos os campos precisam ter um nome.");
-        return;
-      }
+      if (keysSeen.has(f.key)) { setError(`Chave duplicada: {{${f.key}}}. Renomeie um dos campos.`); return; }
+      keysSeen.add(f.key);
     }
+
+    // Item 7: save previous state for undo
+    prevFieldsRef.current = [...fields];
 
     startTransition(() => {
       void fetch(`/api/templates/${template.id}/schema`, {
@@ -764,6 +977,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             setPreviewVersion((v) => v + 1);
             setTimeout(() => setSaved(false), 2500);
             router.refresh();
+            // Item 7: show undo toast
+            setShowUndoToast(true);
+            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+            undoTimerRef.current = setTimeout(() => setShowUndoToast(false), 5000);
           }
         })
         .catch((err) => {
@@ -771,6 +988,141 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         });
     });
   }
+
+  function handleUndo() {
+    if (!prevFieldsRef.current) return;
+    setShowUndoToast(false);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    const prev = prevFieldsRef.current;
+    prevFieldsRef.current = null;
+    setFields(prev);
+    handleSave(prev, undefined, true);
+  }
+
+  // Item 5: diff modal
+  const diffModal = pendingExtract && (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm">
+      <div className="relative flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-950">Resultado da re-extração</h2>
+            <p className="mt-0.5 text-xs text-slate-400">Revise as mudanças antes de aplicar</p>
+          </div>
+          <button type="button" onClick={() => setPendingExtract(null)} className="rounded-xl border border-slate-200 p-1.5 text-slate-400 hover:border-slate-950 hover:text-slate-950">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="grid grid-cols-3 gap-4">
+            {/* Mantidos */}
+            <div>
+              <p className="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Mantidos ({pendingExtract.diff.mantidos.length})</p>
+              <div className="space-y-1">
+                {pendingExtract.diff.mantidos.map((k) => {
+                  const f = pendingExtract.schema.find((s) => s.key === k);
+                  return (
+                    <div key={k} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-1.5">
+                      <p className="text-xs font-medium text-slate-700 truncate">{f?.label ?? k}</p>
+                      <code className="text-[10px] text-slate-400">{`{{${k}}}`}</code>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Adicionados */}
+            <div>
+              <p className="mb-2 text-xs font-bold text-emerald-600 uppercase tracking-wide">Adicionados ({pendingExtract.diff.adicionados.length})</p>
+              <div className="space-y-1">
+                {pendingExtract.diff.adicionados.map((k) => {
+                  const f = pendingExtract.schema.find((s) => s.key === k);
+                  return (
+                    <div key={k} className={`rounded-xl border px-3 py-1.5 ${camposBaixaConfianca.includes(k) ? "border-amber-200 bg-amber-50" : "border-emerald-100 bg-emerald-50"}`}>
+                      <p className="text-xs font-medium text-slate-700 truncate">{f?.label ?? k}</p>
+                      <div className="flex items-center gap-1">
+                        <code className="text-[10px] text-emerald-600">{`{{${k}}}`}</code>
+                        {camposBaixaConfianca.includes(k) && <span className="text-[9px] text-amber-600 font-semibold">⚠ baixa confiança</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+                {pendingExtract.diff.adicionados.length === 0 && <p className="text-xs text-slate-400 italic">Nenhum novo campo</p>}
+              </div>
+            </div>
+            {/* Removidos */}
+            <div>
+              <p className="mb-2 text-xs font-bold text-rose-500 uppercase tracking-wide">Removidos ({pendingExtract.diff.removidos.length})</p>
+              <div className="space-y-1">
+                {pendingExtract.diff.removidos.map((k) => {
+                  const f = fields.find((s) => s.key === k);
+                  return (
+                    <div key={k} className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-1.5">
+                      <p className="text-xs font-medium text-slate-700 truncate line-through opacity-60">{f?.label ?? k}</p>
+                      <code className="text-[10px] text-rose-400">{`{{${k}}}`}</code>
+                    </div>
+                  );
+                })}
+                {pendingExtract.diff.removidos.length === 0 && <p className="text-xs text-slate-400 italic">Nenhum campo removido</p>}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 px-6 py-4">
+          <button type="button" onClick={() => setPendingExtract(null)} className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:border-slate-950">
+            Cancelar
+          </button>
+          <button type="button" onClick={() => applyExtractResult(pendingExtract)}
+            className="flex items-center gap-2 rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-violet-500">
+            <CheckCircle2 className="h-4 w-4" />
+            Aplicar ({pendingExtract.schema.length} campos)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Item 13: versions modal
+  const versionsModal = showVersions && (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm" onClick={() => setShowVersions(false)}>
+      <div className="relative flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h2 className="text-base font-bold text-slate-950">Histórico de versões</h2>
+          <button type="button" onClick={() => setShowVersions(false)} className="rounded-xl border border-slate-200 p-1.5 text-slate-400 hover:border-slate-950 hover:text-slate-950">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          {isLoadingVersions ? (
+            <div className="flex items-center justify-center py-8 gap-2 text-slate-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm">Carregando versões…</span>
+            </div>
+          ) : versions.length === 0 ? (
+            <p className="text-center text-sm text-slate-400 py-8">Nenhuma versão salva ainda. Versões são criadas automaticamente antes de cada re-extração.</p>
+          ) : (
+            <div className="space-y-2">
+              {versions.map((v) => (
+                <div key={v.id} className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-700">{v.schema_campos.length} campos</p>
+                    <p className="text-[11px] text-slate-400">{new Date(v.salvo_em).toLocaleString("pt-BR")} · {v.tipo === "pre_re_introspect" ? "antes da re-extração" : v.tipo}</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isRestoringVersion}
+                    onClick={() => void restoreVersion(v.id)}
+                    className="flex items-center gap-1 rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-50"
+                  >
+                    {isRestoringVersion ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                    Restaurar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   // Help modal
   const helpModal = showHelp && (
@@ -847,16 +1199,46 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     </div>
   );
 
+  // Item 10: progress bar
+  const progressSteps = [
+    { label: "Upload", done: !!template.arquivo_url },
+    { label: "Extração", done: fields.length > 0 },
+    { label: "Revisão", done: mode === "confirm" },
+    { label: "Confirmado", done: false },
+  ];
+  const currentStep = progressSteps.findLastIndex((s) => s.done) + 1;
+  const progressBar = (
+    <div className="mb-4 flex items-center gap-0">
+      {progressSteps.map((step, i) => (
+        <div key={step.label} className="flex flex-1 items-center">
+          <div className="flex flex-col items-center gap-0.5">
+            <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+              i < currentStep ? "bg-violet-600 text-white" : i === currentStep ? "bg-violet-100 text-violet-600 ring-2 ring-violet-400" : "bg-slate-100 text-slate-400"
+            }`}>
+              {i < currentStep ? "✓" : i + 1}
+            </div>
+            <span className={`text-[9px] font-medium whitespace-nowrap ${i <= currentStep ? "text-violet-600" : "text-slate-400"}`}>{step.label}</span>
+          </div>
+          {i < progressSteps.length - 1 && (
+            <div className={`mx-1 h-0.5 flex-1 ${i < currentStep ? "bg-violet-500" : "bg-slate-200"}`} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
   // Fields-only panel (no nome/estado — those live in the header bar for DOCX mode)
   const fieldsPanel = (
     <div className="flex flex-col gap-4" ref={fieldListRef}>
       {helpModal}
 
       <div>
+        {progressBar}
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-slate-900">
               Campos detectados ({fields.length})
+              {autoSaving && <span className="ml-2 text-[10px] font-normal text-slate-400">salvando…</span>}
             </h2>
             <p className="text-xs text-slate-500">
               {mode === "confirm"
@@ -865,6 +1247,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setShowVersions(true); void loadVersions(); }}
+              className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+              title="Histórico de versões"
+            >
+              <Clock className="h-3.5 w-3.5" />
+            </button>
             <button
               type="button"
               onClick={() => setShowHelp(true)}
@@ -943,12 +1333,32 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               const index = fields.indexOf(field);
               const isExpanded = expandedField === field.key;
               const isActive = activeFieldKey === field.key;
+              // Item 17: status badge
+              const hasEmptyLabel = !field.label.trim();
+              const isPlaceholderMissing = camposSemPlaceholder.includes(field.key);
+              const isLowConfidence = camposBaixaConfianca.includes(field.key);
+              const statusDot = hasEmptyLabel
+                ? "bg-rose-500"
+                : isPlaceholderMissing
+                ? "bg-amber-400"
+                : "bg-emerald-400";
+              const statusTitle = hasEmptyLabel ? "Campo sem nome" : isPlaceholderMissing ? "Sem placeholder no documento" : "Placeholder encontrado no documento";
+
+              // Item 6: drag-and-drop
+              const isDragging = draggingKey === field.key;
+              const isDragOver = dragOverKey === field.key;
+
               return (
                 <div
                   key={field.key}
                   data-field-card={field.key}
+                  draggable
+                  onDragStart={() => handleDragStart(field.key)}
+                  onDragOver={(e) => handleDragOver(e, field.key)}
+                  onDrop={() => handleDrop(field.key)}
+                  onDragEnd={handleDragEnd}
                   className={`rounded-2xl border bg-white transition-all ${
-                    isActive ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"
+                    isDragging ? "opacity-40 scale-95" : isDragOver ? "border-violet-400 ring-2 ring-violet-200" : isActive ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"
                   }`}
                 >
                   <div
@@ -958,7 +1368,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                       setExpandedField(isExpanded ? null : field.key);
                     }}
                   >
-                    <GripVertical className="h-4 w-4 shrink-0 text-slate-300" />
+                    <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-slate-300 active:cursor-grabbing" />
+                    {/* Item 17: status dot */}
+                    <div className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} title={statusTitle} />
+                    {isLowConfidence && (
+                      <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-700" title="Sem respaldo estrutural — verifique">⚠</span>
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="line-clamp-2 break-words text-sm font-medium leading-snug text-slate-900">
                         {field.label || <span className="italic text-slate-400">sem nome</span>}
@@ -972,6 +1387,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                     }`}>
                       {field.role === "ia_sugerida" ? "IA" : "Fixo"}
                     </span>
+                    {/* Item 8: locate in document */}
+                    <button
+                      type="button"
+                      title="Localizar no documento"
+                      onClick={(e) => { e.stopPropagation(); setActiveFieldKey(field.key); setLocateKey(`${field.key}:${Date.now()}`); }}
+                      className="rounded-lg p-1 text-slate-300 transition hover:bg-violet-50 hover:text-violet-500"
+                    >
+                      <Crosshair className="h-3.5 w-3.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); removeField(index); }}
@@ -1083,16 +1507,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       )}
       {camposSemPlaceholder.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <p className="mb-1 font-semibold">
-            {camposSemPlaceholder.length} campo{camposSemPlaceholder.length !== 1 ? "s" : ""} sem posição no documento:
+          <p className="mb-2 font-semibold">
+            {camposSemPlaceholder.length} campo{camposSemPlaceholder.length !== 1 ? "s" : ""} sem placeholder no documento:
           </p>
-          <p className="text-xs text-amber-700">
-            Use a aba <strong>Adicionar campos</strong> para posicioná-los manualmente digitando{" "}
-            <code className="rounded bg-amber-100 px-1 font-mono">
-              {`{{${camposSemPlaceholder[0]}}}`}
-            </code>
-            {camposSemPlaceholder.length > 1 && ` e mais ${camposSemPlaceholder.length - 1}`} na célula correta.
+          <p className="mb-2 text-xs text-amber-700">
+            Clique em uma variável abaixo para copiar e cole na célula correta do documento.
           </p>
+          {/* Item 9: clickable copy buttons */}
+          <div className="flex flex-wrap gap-1.5">
+            {camposSemPlaceholder.map((k) => (
+              <button
+                key={k}
+                type="button"
+                title="Clique para copiar"
+                onClick={() => { void navigator.clipboard.writeText(`{{${k}}}`); }}
+                className="flex items-center gap-1 rounded-lg bg-amber-100 px-2 py-1 font-mono text-[11px] text-amber-800 hover:bg-amber-200 transition"
+              >
+                <ClipboardCopy className="h-2.5 w-2.5" />
+                {`{{${k}}}`}
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {saved && (
@@ -1168,6 +1603,22 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     return (
       <>
         {confirmSuccessModal}
+        {diffModal}
+        {versionsModal}
+
+        {/* Item 7: undo toast */}
+        {showUndoToast && (
+          <div className="fixed bottom-6 left-1/2 z-[9998] flex -translate-x-1/2 items-center gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl">
+            <span>Salvo com sucesso.</span>
+            <button type="button" onClick={handleUndo}
+              className="flex items-center gap-1 rounded-xl bg-white/10 px-3 py-1 text-xs font-semibold hover:bg-white/20">
+              <RotateCcw className="h-3 w-3" /> Desfazer
+            </button>
+            <button type="button" onClick={() => setShowUndoToast(false)} className="text-white/50 hover:text-white">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Header bar: nome + estado */}
         <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-end sm:gap-4">
@@ -1200,10 +1651,24 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
         </div>
 
+        {/* Item 14: mobile tab switcher (visible only on < xl) */}
+        <div className="flex xl:hidden rounded-2xl border border-slate-200 bg-white p-1 gap-1">
+          <button type="button" onClick={() => setMobileTab("document")}
+            className={`flex-1 rounded-xl py-2 text-xs font-semibold transition ${mobileTab === "document" ? "bg-violet-600 text-white" : "text-slate-500 hover:text-slate-800"}`}>
+            Documento
+          </button>
+          <button type="button" onClick={() => setMobileTab("campos")}
+            className={`flex-1 rounded-xl py-2 text-xs font-semibold transition ${mobileTab === "campos" ? "bg-violet-600 text-white" : "text-slate-500 hover:text-slate-800"}`}>
+            Campos ({fields.length})
+          </button>
+        </div>
+
         {/* Split view */}
         <div className="flex gap-6" style={{ minHeight: "calc(100vh - 320px)" }}>
-          {/* Left: editor — only on xl+ */}
-          <div className="hidden w-[70%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 xl:flex xl:flex-col">
+          {/* Left: editor — hidden on mobile, shown on xl+ (or when mobile tab = document) */}
+          <div className={`overflow-hidden rounded-3xl border border-slate-200 ${
+            mobileTab === "document" ? "flex flex-col w-full xl:w-auto" : "hidden xl:flex xl:flex-col"
+          } ${panelCollapsed ? "xl:flex-1" : "xl:w-[70%] xl:shrink-0"}`}>
             {/* Viewer content */}
             <div className="flex flex-1 flex-col overflow-hidden">
               {viewMode === "preview" ? (
@@ -1221,17 +1686,41 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   fields={fields}
                   fieldPositions={fieldPositions}
                   activeKey={expandedField}
+                  locateKey={locateKey}
                   previewVersion={previewVersion}
+                  zoom={zoom}
+                  onZoomChange={setZoom}
                   onSaveEdits={handleSaveDocEdits}
                 />
               )}
             </div>
           </div>
 
-          {/* Right: fields panel */}
-          <div ref={panelScrollRef} className="flex-1 min-w-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none]">
-            {fieldsPanel}
-          </div>
+          {/* Item 16: collapsible right panel */}
+          {!panelCollapsed ? (
+            <div ref={panelScrollRef} className={`min-w-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none] ${
+              mobileTab === "campos" ? "flex-1 flex flex-col" : "hidden xl:flex xl:flex-col xl:flex-1"
+            }`}>
+              {/* Collapse button */}
+              <div className="flex justify-end mb-2">
+                <button type="button" onClick={() => setPanelCollapsed(true)} title="Recolher painel"
+                  className="flex items-center gap-1 rounded-xl border border-slate-200 px-2 py-1 text-[10px] text-slate-400 hover:border-slate-400 hover:text-slate-700">
+                  <PanelRightClose className="h-3 w-3" />
+                  Recolher
+                </button>
+              </div>
+              {fieldsPanel}
+            </div>
+          ) : (
+            /* Collapsed: just show expand button */
+            <div className="hidden xl:flex xl:flex-col xl:items-center xl:pt-4">
+              <button type="button" onClick={() => setPanelCollapsed(false)} title="Expandir painel de campos"
+                className="flex flex-col items-center gap-1 rounded-2xl border border-slate-200 bg-white p-3 text-slate-400 hover:border-violet-400 hover:text-violet-600 transition">
+                <PanelRightOpen className="h-4 w-4" />
+                <span className="text-[9px] font-medium writing-mode-vertical" style={{ writingMode: "vertical-rl" }}>Campos</span>
+              </button>
+            </div>
+          )}
         </div>
       </>
     );
@@ -1241,6 +1730,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   return (
     <>
       {confirmSuccessModal}
+      {diffModal}
+      {versionsModal}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:gap-6">
           <div className="flex-1">

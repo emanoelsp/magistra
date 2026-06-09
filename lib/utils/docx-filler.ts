@@ -356,11 +356,15 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 
     // ── 1-cell row: label → next row content ──────────────────────────────
     if (row.cells.length === 1) {
-      // Skip section titles: text has lowercase (mixed case) AND no trailing ":"
-      // e.g. "Sequência didática", "Habilidades selecionadas" → titles, not field labels
       const singleCellText = row.cellTexts[0].trim();
       const hasMixedCase = /[a-z]/.test(singleCellText.normalize("NFD").replace(/[̀-ͯ]/g, ""));
-      const isTitle = hasMixedCase && !singleCellText.endsWith(":");
+      const hasColon = singleCellText.endsWith(":");
+      // Check whether the next row's first cell is empty (= value slot).
+      // "Objeto(s) de conhecimento em estudo" with a blank row below IS a label.
+      const nextRowText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "x";
+      const hasEmptyBelow = nextRowText === "";
+      // Title = mixed-case text WITHOUT ":" AND NO empty cell below (both conditions required)
+      const isTitle = hasMixedCase && !hasColon && !hasEmptyBelow;
       const field = isTitle ? null : matchField(singleCellText, schema, used);
       if (field && ri + 1 < rows.length) {
         const nextRow = rows[ri + 1];
@@ -548,6 +552,14 @@ export function injectColoredPlaceholders(
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
+// ── Cell helpers ─────────────────────────────────────────────────────────────
+
+/** Returns the number of grid columns a cell spans (1 = no merge). */
+function getCellGridSpan(cellXml: string): number {
+  const m = cellXml.match(/<w:gridSpan\s+w:val="(\d+)"/);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
 // ── Structural pre-scan ──────────────────────────────────────────────────────
 
 /**
@@ -657,9 +669,14 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
     // ── 1-cell row → adjacent_below ───────────────────────────────────────
     if (row.cells.length === 1) {
       const t = row.cellTexts[0].trim();
-      if (looksLikeLabel(t) && ri + 1 < rows.length) {
+      if (ri + 1 < rows.length) {
         const nextText = (rows[ri + 1].cellTexts[0] ?? "").trim();
-        if (!looksLikeLabel(nextText)) {
+        const hasEmptyBelow = nextText === "";
+        const hasMixedCase = /[a-z]/.test(t.normalize("NFD").replace(/[̀-ͯ]/g, ""));
+        // Classic label heuristic (ends with ":" or ALL-CAPS), OR mixed-case text with
+        // an empty cell below (Rule 13: needs empty adjacent cell to qualify as a field label)
+        const isFieldLabel = looksLikeLabel(t) || (hasMixedCase && !t.endsWith(":") && hasEmptyBelow);
+        if (isFieldLabel && !looksLikeLabel(nextText)) {
           addPair({
             label: t.replace(/:+$/, "").trim(),
             valuePreview: nextText.slice(0, 60),
@@ -671,6 +688,11 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
     }
 
     // ── N-cell row: left-to-right label | value scan → adjacent_right ─────
+    // Compute gridSpan for each cell to detect merged-cell labels that span
+    // most of the row width (≥60%) — those need adjacent_below, not adjacent_right.
+    const cellSpans = row.cells.map((c) => getCellGridSpan(c ?? ""));
+    const totalSpan = cellSpans.reduce((a, b) => a + b, 0);
+
     let ci = 0;
     while (ci < row.cells.length - 1) {
       const t = row.cellTexts[ci].trim();
@@ -678,6 +700,23 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       // OR if the cell uses bold formatting (common in some school templates)
       const cellIsLabel = looksLikeLabel(t) || (t.length > 1 && hasBoldText(row.cells[ci] ?? ""));
       if (!cellIsLabel) { ci++; continue; }
+
+      // Item 3: if label cell spans ≥60% of the row, it's likely a section header
+      // whose value is in the next row (adjacent_below), not the cell to the right.
+      const labelSpanRatio = totalSpan > 0 ? (cellSpans[ci] ?? 1) / totalSpan : 0;
+      if (labelSpanRatio >= 0.6 && ri + 1 < rows.length) {
+        const belowText = (rows[ri + 1].cellTexts[0] ?? "").trim();
+        if (!looksLikeLabel(belowText) && !looksLikePeriodMarker(belowText)) {
+          addPair({
+            label: t.replace(/:+$/, "").trim(),
+            valuePreview: belowText.slice(0, 60),
+            pattern: "adjacent_below",
+          });
+        }
+        ci++;
+        continue;
+      }
+
       const nextText = row.cellTexts[ci + 1].trim();
       if (looksLikeLabel(nextText) || hasBoldText(row.cells[ci + 1] ?? "")) { ci++; continue; }
       // Period markers are column identifiers, not field values — skip

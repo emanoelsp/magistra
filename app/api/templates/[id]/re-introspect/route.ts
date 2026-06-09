@@ -132,12 +132,21 @@ Você é um analista de currículo escolar sênior especializado em documentos p
 5. O 'key' é o label em snake_case sem acentos (ex: "professor_a", "area_componente", "n_aulas_semanais").
 6. type "textarea" para campos pedagógicos longos (objetivos, habilidades, conteúdos, avaliação); "text" para campos curtos (nome, turma, data).
 7. NÃO inclua células que são apenas títulos de seção ou decoração visual sem campo associado.
-13. TÍTULO vs. CAMPO PREENCHÍVEL — regra obrigatória: uma célula é APENAS UM TÍTULO (não gera variável) quando satisfaz AMBAS as condições simultaneamente:
+13. TÍTULO vs. CAMPO PREENCHÍVEL — regra obrigatória:
+   Uma célula é TÍTULO (sem variável) SOMENTE quando satisfaz AS TRÊS condições ao mesmo tempo:
    a) O texto NÃO termina com ":" (dois pontos), E
-   b) NÃO existe uma célula vazia ou preenchível imediatamente à direita NEM imediatamente abaixo dela.
-   Exemplos de títulos (NÃO geram variável): "Sequência didática", "Habilidades selecionadas", "PLANO DE AULA", "Objeto(s) de conhecimento em estudo", "Recuperação paralela da aprendizagem".
-   Exemplos de campos (GERAM variável): "Professor(a):" (tem ":"), "Turma(s):" (tem ":"), célula com célula vazia adjacente à direita ou abaixo.
-   ATENÇÃO: aplique esta regra ANTES de criar qualquer campo. Se a célula é título, pule-a completamente — não crie nenhuma chave para ela.
+   b) NÃO existe célula vazia imediatamente à DIREITA, E
+   c) NÃO existe célula vazia imediatamente ABAIXO.
+   Se QUALQUER UMA dessas condições for falsa (tem ":", OU há célula vazia à direita, OU há célula vazia abaixo), a célula É um campo e GERA variável.
+   Exemplos de TÍTULOS (NÃO geram variável — sem ":" e sem célula vazia adjacente em nenhuma direção):
+     "PLANO DE AULA" (sem célula vazia adjacente), "Sequência didática" (seguida por outra linha de cabeçalho, não por célula vazia).
+   Exemplos de CAMPOS (GERAM variável):
+     "Professor(a):" → tem ":", gera variável na célula à direita.
+     "Objeto(s) de conhecimento em estudo" → sem ":", MAS tem célula vazia imediatamente abaixo → GERA variável nessa célula abaixo.
+     "Habilidade(s) selecionada(s)" → sem ":", MAS tem célula vazia abaixo → GERA variável.
+     "Expectativas de aprendizagem (objetivos)" → sem ":", MAS tem célula vazia abaixo → GERA variável.
+     "Recuperação paralela da aprendizagem" → sem ":", MAS tem célula vazia abaixo → GERA variável.
+   ATENÇÃO: aplique esta regra ANTES de criar qualquer campo. A presença de célula vazia abaixo ou à direita é suficiente para gerar variável.
 8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" repetido em 9 colunas → um único campo {{turma}}.
 9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; ou bimestres) e MÚLTIPLAS LINHAS de dados — uma por período — crie chaves com sufixo _tr1/_tr2/_tr3 (ou _bim1/_bim2). Exemplo: coluna "HABILIDADES" com 3 linhas de dados → habilidades_tr1, habilidades_tr2, habilidades_tr3. Células de marcação de trimestre (✓, "x", texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}. Em <estrutura_detectada>, entradas com pattern "period_column" e 'periodSuffix' indicam exatamente isso — concatene o label ao sufixo para montar o key.
 10. RANGE DE DATAS: Se o valor de um campo contém um intervalo de datas ("13/07/2026 a 09/08/2026" ou similar), declare DOIS campos separados: {base}_inicio e {base}_fim. Exemplo: "Data ou período de realização: 13/07 a 09/08" → data_inicio + data_fim.
@@ -171,7 +180,7 @@ Antes de extrair, raciocine em "raciocinio":
 3. Verifique campos que não aparecem em <estrutura_detectada> mas estão no HTML.
 4. Confirme que cada label será copiado EXATAMENTE de <estrutura_detectada> ou do HTML.
 5. Identifique colunas repetidas (→ mesmo campo único) e entradas "period_column" (→ sufixos _tr1/_tr2/_tr3). Verifique se há ranges de data para dividir em _inicio/_fim.
-6. Para CADA célula candidata, aplique a Regra 13: o texto termina com ":"? Existe célula vazia à direita ou abaixo (conforme <estrutura_detectada>)? Se NENHUMA das duas → é título, descarte.
+6. Para CADA célula candidata, aplique a Regra 13: o texto termina com ":"? SE SIM → é campo. SE NÃO: existe célula vazia à direita OU abaixo (conforme <estrutura_detectada>)? SE SIM → é campo (gera variável nessa célula vazia). SE NÃO (sem ":" E sem vazia em NENHUMA direção) → é título, descarte.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
@@ -268,10 +277,17 @@ const fewShotExamples = [
   },
 ];
 
+interface FieldCorrection {
+  label: string;
+  extracted_key: string;
+  correct_key: string;
+}
+
 function buildPrompt(
   { content, isHtml }: ExtractedContent,
   structuralPairs: StructuralPair[],
   confirmedFields?: TemplateFieldSchema[],
+  corrections?: FieldCorrection[],
 ): string {
   const docTag = isHtml ? "documento_html" : "documento";
   const instrucao = isHtml
@@ -300,6 +316,16 @@ function buildPrompt(
       `Campos já confirmados pelo professor neste template — mantenha key/label intactos:`,
       JSON.stringify(slim, null, 2),
       `</campos_confirmados>`,
+    );
+  }
+
+  // Feature 1: feedback loop — inject corrections the professor made previously
+  if (corrections && corrections.length > 0) {
+    parts.push(
+      `<correcoes_anteriores>`,
+      `O professor corrigiu as seguintes chaves geradas incorretamente pela IA — use SEMPRE as chaves corretas:`,
+      corrections.map((c) => `- Rótulo "${c.label}": chave ERRADA="${c.extracted_key}", chave CORRETA="${c.correct_key}"`).join("\n"),
+      `</correcoes_anteriores>`,
     );
   }
 
@@ -394,10 +420,27 @@ export async function POST(
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
     }
 
-    const tData = snap.data() as Omit<TemplateRecord, "id"> & { estrutura_docx?: StructuralPair[] };
+    const tData = snap.data() as Omit<TemplateRecord, "id"> & {
+      estrutura_docx?: StructuralPair[];
+      campo_corrections?: FieldCorrection[];
+    };
     const arquivoUrl = typeof tData.arquivo_url === "string" ? tData.arquivo_url : "";
     if (!arquivoUrl) {
       return NextResponse.json({ error: "Template não possui arquivo armazenado." }, { status: 400 });
+    }
+
+    // ── Item 13: schema version history — save current schema before re-extraction ──
+    const currentSchema = Array.isArray(tData.schema_campos) ? tData.schema_campos : [];
+    if (currentSchema.length > 0) {
+      try {
+        await db.collection("magis_templates").doc(id).collection("schema_versions").add({
+          schema_campos: currentSchema,
+          salvo_em: new Date().toISOString(),
+          tipo: "pre_re_introspect",
+        });
+      } catch {
+        // non-critical — continue even if version save fails
+      }
     }
 
     const fileBuffer = await downloadFile(arquivoUrl);
@@ -420,9 +463,12 @@ export async function POST(
         ? tData.schema_campos
         : undefined;
 
+    // ── Item 1: feedback loop — inject previous corrections ──────────────────
+    const corrections = Array.isArray(tData.campo_corrections) ? tData.campo_corrections : [];
+
     // ── AI extraction ────────────────────────────────────────────────────────
     const extracted = await extractContent(fileBuffer, arquivoUrl);
-    const prompt = buildPrompt(extracted, structuralPairs, confirmedFields);
+    const prompt = buildPrompt(extracted, structuralPairs, confirmedFields, corrections);
     const raw = await generateSchema(prompt);
 
     let schema: unknown;
@@ -485,6 +531,29 @@ export async function POST(
       await db.collection("magis_templates").doc(id).update({ schema_campos: schema });
     }
 
+    // ── Item 2: structural × AI cross-validation ────────────────────────────
+    // Flag fields whose label doesn't appear in any structural pair — they were
+    // inferred from HTML alone and may be positionally wrong.
+    function normLabel(s: string) {
+      return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").trim();
+    }
+    const camposBaixaConfianca: string[] = [];
+    if (structuralPairs.length > 0) {
+      const pairNorms = structuralPairs.map((p) => normLabel(p.label));
+      for (const f of schema as TemplateFieldSchema[]) {
+        const fn = normLabel(f.label);
+        const found = pairNorms.some((pn) => pn.includes(fn) || fn.includes(pn));
+        if (!found) camposBaixaConfianca.push(f.key);
+      }
+    }
+
+    // ── Item 4: track which confirmed fields were kept vs replaced ──────────
+    const oldKeys = new Set(currentSchema.map((f) => f.key));
+    const newKeys = new Set((schema as TemplateFieldSchema[]).map((f) => f.key));
+    const camposConfirmadosMantidos = [...oldKeys].filter((k) => newKeys.has(k));
+    const camposAdicionados = [...newKeys].filter((k) => !oldKeys.has(k));
+    const camposRemovidos = [...oldKeys].filter((k) => !newKeys.has(k));
+
     return NextResponse.json({
       ok: true,
       schema,
@@ -492,6 +561,10 @@ export async function POST(
       arquivo_fillable_url: fillableUrl,
       // Feature 2: surface which fields need manual placement to the UI
       campos_sem_placeholder: injectionReport?.missing ?? [],
+      // Item 2: fields with no structural backing
+      campos_baixa_confianca: camposBaixaConfianca,
+      // Item 4: incremental diff
+      diff: { mantidos: camposConfirmadosMantidos, adicionados: camposAdicionados, removidos: camposRemovidos },
     });
   } catch (error) {
     console.error("[re-introspect] Erro:", error);

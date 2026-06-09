@@ -2,6 +2,8 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
+import { FieldValue } from "firebase-admin/firestore";
+
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
@@ -63,13 +65,22 @@ export async function PATCH(
     const fieldPositions: Record<string, FieldPosition> = body.field_positions ?? {};
 
     // Identify deleted keys (were in old schema, not in new)
-    const oldKeys = new Set<string>(
-      Array.isArray(data.schema_campos)
-        ? (data.schema_campos as TemplateFieldSchema[]).map((f) => f.key)
-        : [],
-    );
+    const oldSchema: TemplateFieldSchema[] = Array.isArray(data.schema_campos)
+      ? (data.schema_campos as TemplateFieldSchema[])
+      : [];
+    const oldKeys = new Set<string>(oldSchema.map((f) => f.key));
     const newKeys = new Set(newSchema.map((f) => f.key));
     const deletedKeys = [...oldKeys].filter((k) => !newKeys.has(k));
+
+    // Item 1: detect key renames (same label, different key) → log as corrections
+    const oldLabelToKey = new Map(oldSchema.map((f) => [f.label, f.key]));
+    const corrections: { label: string; extracted_key: string; correct_key: string }[] = [];
+    for (const f of newSchema) {
+      const prevKey = oldLabelToKey.get(f.label);
+      if (prevKey && prevKey !== f.key && !newKeys.has(prevKey)) {
+        corrections.push({ label: f.label, extracted_key: prevKey, correct_key: f.key });
+      }
+    }
 
     // Download current DOCX (fillable if available, else original)
     const arquivoUrl = typeof data.arquivo_url === "string" ? data.arquivo_url : "";
@@ -116,14 +127,18 @@ export async function PATCH(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
 
-    // 6. Update Firestore
-    await db.collection("magis_templates").doc(id).update({
+    // 6. Update Firestore (include corrections if any were detected)
+    const firestoreUpdate: Record<string, unknown> = {
       nome,
       estado,
       schema_campos: newSchema,
       arquivo_fillable_url: newFillableUrl,
       fillable_status: "pronto",
-    });
+    };
+    if (corrections.length > 0) {
+      firestoreUpdate.campo_corrections = FieldValue.arrayUnion(...corrections);
+    }
+    await db.collection("magis_templates").doc(id).update(firestoreUpdate);
 
     return NextResponse.json({
       ok: true,

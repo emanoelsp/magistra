@@ -106,12 +106,21 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
 5. O 'key' é o label em snake_case sem acentos (ex: 'area_componente', 'numero_de_aulas').
 6. type "textarea" para campos pedagógicos longos; "text" para campos curtos (nome, turma, data, número).
 7. NÃO inclua linhas que são apenas títulos de seção sem campo associado.
-13. TÍTULO vs. CAMPO PREENCHÍVEL — regra obrigatória: uma célula é APENAS UM TÍTULO (não gera variável) quando satisfaz AMBAS as condições simultaneamente:
+13. TÍTULO vs. CAMPO PREENCHÍVEL — regra obrigatória:
+   Uma célula é TÍTULO (sem variável) SOMENTE quando satisfaz AS TRÊS condições ao mesmo tempo:
    a) O texto NÃO termina com ":" (dois pontos), E
-   b) NÃO existe uma célula vazia ou preenchível imediatamente à direita NEM imediatamente abaixo dela.
-   Exemplos de títulos (NÃO geram variável): "Sequência didática", "Habilidades selecionadas", "PLANO DE AULA", "Objeto(s) de conhecimento em estudo".
-   Exemplos de campos (GERAM variável): "Professor(a):" (tem ":"), "Turma(s):" (tem ":"), qualquer célula com célula vazia ao lado/abaixo.
-   ATENÇÃO: aplique esta regra ANTES de criar qualquer campo. Se a célula é título, pule-a completamente.
+   b) NÃO existe célula vazia imediatamente à DIREITA, E
+   c) NÃO existe célula vazia imediatamente ABAIXO.
+   Se QUALQUER UMA dessas condições for falsa (tem ":", OU há célula vazia à direita, OU há célula vazia abaixo), a célula É um campo e GERA variável.
+   Exemplos de TÍTULOS (NÃO geram variável — sem ":" e sem célula vazia adjacente em nenhuma direção):
+     "PLANO DE AULA" (sem célula vazia adjacente), "Sequência didática" (seguida por outra linha de cabeçalho, não por célula vazia).
+   Exemplos de CAMPOS (GERAM variável):
+     "Professor(a):" → tem ":", gera variável na célula à direita.
+     "Objeto(s) de conhecimento em estudo" → sem ":", MAS tem célula vazia imediatamente abaixo → GERA variável nessa célula.
+     "Habilidade(s) selecionada(s)" → sem ":", MAS tem célula vazia abaixo → GERA variável.
+     "Expectativas de aprendizagem (objetivos)" → sem ":", MAS tem célula vazia abaixo → GERA variável.
+     "Recuperação paralela da aprendizagem" → sem ":", MAS tem célula vazia abaixo → GERA variável.
+   ATENÇÃO: aplique esta regra ANTES de criar qualquer campo. A presença de célula vazia abaixo ou à direita é suficiente para gerar variável.
 8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" em 9 colunas → um único campo {{turma}}.
 9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; bimestres) e MÚLTIPLAS LINHAS de dados — uma por período — crie chaves com sufixo _tr1/_tr2/_tr3 (ou _bim1/_bim2). Exemplo: coluna "HABILIDADES" com 3 linhas de dados → habilidades_tr1, habilidades_tr2, habilidades_tr3. Células de marcação de trimestre (✓, "x", texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}.
 10. RANGE DE DATAS: Se o valor de um campo contém um intervalo ("13/07/2026 a 09/08/2026" ou "DD/MM - DD/MM"), declare DOIS campos separados: {base}_inicio e {base}_fim.
@@ -134,7 +143,7 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
 3. Para cada campo pedagógico, determine o group correto: objetivos | competencias | habilidades | conteudos | avaliacao | outros.
 4. Confirme que cada label será copiado EXATAMENTE como aparece no documento, sem normalização.
 5. Identifique colunas repetidas (→ mesmo campo único), estruturas de período (→ sufixos _tr1/_tr2/_tr3) e ranges de data (→ _inicio/_fim).
-6. Para CADA célula candidata, verifique a Regra 13: o texto termina com ":"? Existe célula vazia à direita ou abaixo? Se NENHUMA das duas → é título, descarte-a.
+6. Para CADA célula candidata, aplique a Regra 13: o texto termina com ":"? SE SIM → é campo. SE NÃO: existe célula vazia à direita OU abaixo? SE SIM → é campo (gera variável nessa célula vazia). SE NÃO (sem ":" E sem vazia em NENHUMA direção) → é título, descarte.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
