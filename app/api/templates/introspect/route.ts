@@ -338,23 +338,17 @@ export async function POST(request: Request) {
 
     console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: (schema as unknown[]).length });
 
-    void (async () => {
-      try {
-        const { downloadFile, uploadFile } = await import("../../../../lib/storage/blob");
-        const { injectPlaceholders } = await import("../../../../lib/utils/docx-filler");
-        const templateSnapFill = await db.collection("magis_templates").doc(templateId).get();
-        const tData = templateSnapFill.data();
-        const originalUrl = typeof tData?.arquivo_url === "string" ? tData.arquivo_url : null;
-        if (!originalUrl) {
-          await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" });
-          return;
-        }
-        const isDocx = /\.(docx|doc)(\?|$)/i.test(originalUrl);
-        if (!isDocx) {
-          await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" });
-          return;
-        }
+    // Generate fillable DOCX synchronously before responding so the editor
+    // shows placeholders immediately when the user lands on the config page.
+    try {
+      const { downloadFile, uploadFile } = await import("../../../../lib/storage/blob");
+      const { injectPlaceholders } = await import("../../../../lib/utils/docx-filler");
+      const templateSnapFill = await db.collection("magis_templates").doc(templateId).get();
+      const tData = templateSnapFill.data();
+      const originalUrl = typeof tData?.arquivo_url === "string" ? tData.arquivo_url : null;
+      const isDocx = originalUrl && /\.(docx|doc)(\?|$)/i.test(originalUrl);
 
+      if (isDocx && originalUrl) {
         const rawBuffer = await downloadFile(originalUrl);
         const fillableBuffer = injectPlaceholders(
           rawBuffer,
@@ -370,11 +364,13 @@ export async function POST(request: Request) {
           arquivo_fillable_url: fillableUrl,
           fillable_status: "pronto",
         });
-      } catch (e) {
-        console.warn("[PlanoMagistra/introspect] Falha ao regenerar DOCX preenchível:", e);
-        await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" }).catch(() => {});
+      } else {
+        await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" });
       }
-    })();
+    } catch (e) {
+      console.warn("[PlanoMagistra/introspect] Falha ao gerar DOCX preenchível:", e);
+      await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" }).catch(() => {});
+    }
 
     return NextResponse.json({ ok: true, schema });
   } catch (error) {
