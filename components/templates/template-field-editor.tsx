@@ -3,12 +3,20 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
+  Bold,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   Eye,
   GripVertical,
   HelpCircle,
+  Italic,
+  List,
+  ListOrdered,
   Loader2,
   MousePointer2,
   Plus,
@@ -59,16 +67,53 @@ interface DocxInteractiveProps {
   fieldPositions: Record<string, { cellText: string; ordinal: number }>;
   activeKey: string | null;
   previewVersion?: number;
-  onSaveEdits: (edits: DocxEdit[], scanOrder: string[]) => void;
+  onSaveEdits: (edits: DocxEdit[], scanOrder: string[], removedKeys: string[]) => void;
 }
+
+const TOOLBAR_FONTS = ["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"];
+const TOOLBAR_SIZES = ["8", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36"];
 
 function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previewVersion = 0, onSaveEdits }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
   const originalTextsRef = useRef<Map<HTMLElement, string>>(new Map());
+  const savedSelRef = useRef<Range | null>(null);
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
   const [saveCount, setSaveCount] = useState(0);
+
+  function saveSelection() {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) savedSelRef.current = sel.getRangeAt(0).cloneRange();
+  }
+
+  function restoreSelection() {
+    const sel = window.getSelection();
+    if (sel && savedSelRef.current) { sel.removeAllRanges(); sel.addRange(savedSelRef.current); }
+  }
+
+  function fmt(cmd: string, val?: string) {
+    restoreSelection();
+    document.execCommand(cmd, false, val ?? "");
+  }
+
+  function fmtSize(pt: string) {
+    restoreSelection();
+    // Use styleWithCSS + fontSize maps to avoid the 1-7 limitation
+    document.execCommand("styleWithCSS", false, "true");
+    document.execCommand("fontSize", false, "7");
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll("font[size='7']").forEach((el) => {
+      (el as HTMLElement).removeAttribute("size");
+      (el as HTMLElement).style.fontSize = `${pt}pt`;
+    });
+  }
+
+  function fmtFont(name: string) {
+    restoreSelection();
+    document.execCommand("fontName", false, name);
+  }
 
   function deriveRole(key: string): "manual" | "ia_sugerida" {
     return /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(key)
@@ -149,7 +194,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
       }
     }
 
-    onSaveEdits(edits, scanOrder);
+    // Fields that existed before but are no longer found anywhere in the document
+    const removedKeys = [...existingKeys].filter((k) => !seenInScan.has(k));
+
+    onSaveEdits(edits, scanOrder, removedKeys);
     if (edits.length > 0) setSaveCount((n) => n + edits.length);
   }
 
@@ -370,26 +418,95 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
         }
       `}</style>
 
-      {/* Edit-mode toolbar */}
+      {/* Header line */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-violet-100 bg-violet-50 px-3 py-2">
+        <p className="flex-1 text-[11px] text-violet-600">
+          <span className="font-semibold">Editor de campos:</span> clique em qualquer célula, insira valor ou{" "}
+          <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{variavel}}`}</code>
+        </p>
+        {saveCount > 0 && (
+          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+            {saveCount} campo{saveCount !== 1 ? "s" : ""} adicionado{saveCount !== 1 ? "s" : ""}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={handleSaveEdits}
+          className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
+        >
+          <Save className="h-3 w-3" />
+          Salvar edições
+        </button>
+      </div>
+
+      {/* Rich-text formatting toolbar */}
       {phase === "done" && (
-        <div className="flex shrink-0 items-center gap-3 border-b border-violet-100 bg-violet-50 px-3 py-2">
-          <p className="flex-1 text-[11px] text-violet-600">
-            Clique em qualquer célula e digite{" "}
-            <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{nome_campo}}`}</code>{" "}
-            para criar um campo.
-          </p>
-          {saveCount > 0 && (
-            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-              {saveCount} campo{saveCount !== 1 ? "s" : ""} adicionado{saveCount !== 1 ? "s" : ""}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={handleSaveEdits}
-            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-slate-100 bg-white px-2 py-1"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {/* Font family */}
+          <select
+            className="h-6 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-700 focus:outline-none"
+            defaultValue="Arial"
+            onFocus={saveSelection}
+            onChange={(e) => fmtFont(e.target.value)}
           >
-            <Save className="h-3 w-3" />
-            Salvar edições
+            {TOOLBAR_FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+
+          {/* Font size */}
+          <select
+            className="h-6 w-14 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-700 focus:outline-none"
+            defaultValue="12"
+            onFocus={saveSelection}
+            onChange={(e) => fmtSize(e.target.value)}
+          >
+            {TOOLBAR_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <div className="mx-0.5 h-4 w-px bg-slate-200" />
+
+          {/* Bold / Italic */}
+          <button type="button" title="Negrito" onClick={() => fmt("bold")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <Bold className="h-3.5 w-3.5 text-slate-700" />
+          </button>
+          <button type="button" title="Itálico" onClick={() => fmt("italic")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <Italic className="h-3.5 w-3.5 text-slate-700" />
+          </button>
+
+          <div className="mx-0.5 h-4 w-px bg-slate-200" />
+
+          {/* Alignment */}
+          <button type="button" title="Alinhar à esquerda" onClick={() => fmt("justifyLeft")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <AlignLeft className="h-3.5 w-3.5 text-slate-700" />
+          </button>
+          <button type="button" title="Centralizar" onClick={() => fmt("justifyCenter")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <AlignCenter className="h-3.5 w-3.5 text-slate-700" />
+          </button>
+          <button type="button" title="Alinhar à direita" onClick={() => fmt("justifyRight")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <AlignRight className="h-3.5 w-3.5 text-slate-700" />
+          </button>
+          <button type="button" title="Justificar" onClick={() => fmt("justifyFull")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <AlignJustify className="h-3.5 w-3.5 text-slate-700" />
+          </button>
+
+          <div className="mx-0.5 h-4 w-px bg-slate-200" />
+
+          {/* Lists */}
+          <button type="button" title="Lista com marcadores" onClick={() => fmt("insertUnorderedList")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <List className="h-3.5 w-3.5 text-slate-700" />
+          </button>
+          <button type="button" title="Lista numerada" onClick={() => fmt("insertOrderedList")}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
+            <ListOrdered className="h-3.5 w-3.5 text-slate-700" />
           </button>
         </div>
       )}
@@ -523,7 +640,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     };
   }
 
-  function handleSaveDocEdits(edits: DocxEdit[], scanOrder: string[]) {
+  function handleSaveDocEdits(edits: DocxEdit[], scanOrder: string[], removedKeys: string[]) {
     const newFields: TemplateFieldSchema[] = [];
     const newPositions: Record<string, { cellText: string; ordinal: number }> = {};
 
@@ -531,22 +648,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label);
       if (!fields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
         newFields.push(f);
-        if (edit.text.trim()) {
-          newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal };
-        }
+        // Store position using cell text as anchor; for empty cells use ordinal alone
+        newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal };
       }
     }
 
-    if (newFields.length === 0) {
-      // No new fields — force save + reload to reflect panel edits/deletions
+    // Remove fields that are no longer present in the document (user deleted their {{placeholder}})
+    const removedSet = new Set(removedKeys);
+    const baseFields = fields.filter((f) => !removedSet.has(f.key));
+    const basePositions: Record<string, { cellText: string; ordinal: number }> = {};
+    for (const [k, v] of Object.entries(fieldPositions)) {
+      if (!removedSet.has(k)) basePositions[k] = v;
+    }
+
+    if (newFields.length === 0 && removedKeys.length === 0) {
       handleSave(undefined, undefined, true);
       return;
     }
 
-    const mergedPositions = { ...fieldPositions, ...newPositions };
+    const mergedPositions = { ...basePositions, ...newPositions };
 
-    // Sort merged fields by document scan order; fields not seen in scan go at the end
-    const allFields = [...fields, ...newFields];
+    const allFields = [...baseFields, ...newFields];
     const scanIndexOf = (key: string) => {
       const i = scanOrder.indexOf(key);
       return i === -1 ? Infinity : i;
@@ -555,8 +677,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
     setFields(mergedFields);
     setFieldPositions(mergedPositions);
-    setExpandedField(newFields[0].key);
-    setActiveFieldKey(newFields[0].key);
+    if (newFields.length > 0) {
+      setExpandedField(newFields[0].key);
+      setActiveFieldKey(newFields[0].key);
+    }
 
     handleSave(mergedFields, mergedPositions, true);
   }
@@ -748,14 +872,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               title="Ajuda"
             >
               <HelpCircle className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={addField}
-              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Adicionar
             </button>
           </div>
         </div>
@@ -1086,21 +1202,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
         {/* Split view */}
         <div className="flex gap-6" style={{ minHeight: "calc(100vh - 320px)" }}>
-          {/* Left: tabbed viewer — only on xl+ */}
+          {/* Left: editor — only on xl+ */}
           <div className="hidden w-[70%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 xl:flex xl:flex-col">
-            {/* Tab bar */}
-            <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 bg-white px-3 py-2">
-              <button
-                type="button"
-                onClick={() => setViewMode("interactive")}
-                className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white"
-              >
-                <MousePointer2 className="h-3.5 w-3.5" />
-                Editar campos
-              </button>
-              <p className="ml-2 text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
-            </div>
-
             {/* Viewer content */}
             <div className="flex flex-1 flex-col overflow-hidden">
               {viewMode === "preview" ? (
