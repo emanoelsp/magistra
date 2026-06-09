@@ -59,7 +59,7 @@ interface DocxInteractiveProps {
   fieldPositions: Record<string, { cellText: string; ordinal: number }>;
   activeKey: string | null;
   previewVersion?: number;
-  onSaveEdits: (edits: DocxEdit[]) => void;
+  onSaveEdits: (edits: DocxEdit[], scanOrder: string[]) => void;
 }
 
 function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previewVersion = 0, onSaveEdits }: DocxInteractiveProps) {
@@ -90,6 +90,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
     const textOrdinalsMap = new Map<string, number>();
     const edits: DocxEdit[] = [];
     const processedKeys = new Set<string>();
+    const scanOrder: string[] = [];
+    const seenInScan = new Set<string>();
 
     // For cells the user typed into (empty originalText), try to infer a human
     // label from the sibling/parent cell that describes the row.
@@ -118,9 +120,12 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
       textOrdinalsMap.set(originalText, ordinal + 1);
 
       const currentText = el.textContent ?? "";
+
+      // Detect {{key}} patterns
       const matches = [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)];
       for (const match of matches) {
         const key = match[1];
+        if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
         if (existingKeys.has(key) || processedKeys.has(key)) continue;
         processedKeys.add(key);
         const label = !originalText.trim()
@@ -128,12 +133,24 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, previe
           : (originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " "));
         edits.push({ text: originalText, ordinal, key, role: deriveRole(key), label });
       }
+
+      // Detect bare snake_case identifiers typed without {{ }} (must contain underscore)
+      if (matches.length === 0) {
+        const bare = currentText.trim().match(/^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/);
+        if (bare) {
+          const key = bare[1];
+          if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
+          if (!existingKeys.has(key) && !processedKeys.has(key)) {
+            processedKeys.add(key);
+            const label = adjacentLabel(el) || key.replace(/_/g, " ");
+            edits.push({ text: originalText, ordinal, key, role: deriveRole(key), label });
+          }
+        }
+      }
     }
 
-    if (edits.length > 0) {
-      onSaveEdits(edits);
-      setSaveCount((n) => n + edits.length);
-    }
+    onSaveEdits(edits, scanOrder);
+    if (edits.length > 0) setSaveCount((n) => n + edits.length);
   }
 
   useEffect(() => {
@@ -421,7 +438,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
   const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number }>>({});
   const [previewVersion, setPreviewVersion] = useState(0);
-  const [viewMode, setViewMode] = useState<"preview" | "interactive">("preview");
+  const [viewMode, setViewMode] = useState<"preview" | "interactive">("interactive");
+  const [roleFilter, setRoleFilter] = useState<"manual" | "ia_sugerida" | null>(null);
 
   const fieldListRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
@@ -505,7 +523,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     };
   }
 
-  function handleSaveDocEdits(edits: DocxEdit[]) {
+  function handleSaveDocEdits(edits: DocxEdit[], scanOrder: string[]) {
     const newFields: TemplateFieldSchema[] = [];
     const newPositions: Record<string, { cellText: string; ordinal: number }> = {};
 
@@ -519,19 +537,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       }
     }
 
-    if (newFields.length === 0) return;
+    if (newFields.length === 0) {
+      // No new fields — force save + reload to reflect panel edits/deletions
+      handleSave(undefined, undefined, true);
+      return;
+    }
 
-    // Compute merged values before any state update so handleSave sees the new data.
-    // (React state updates are async — calling handleSave after setFields would use stale state.)
-    const mergedFields = [...fields, ...newFields];
     const mergedPositions = { ...fieldPositions, ...newPositions };
+
+    // Sort merged fields by document scan order; fields not seen in scan go at the end
+    const allFields = [...fields, ...newFields];
+    const scanIndexOf = (key: string) => {
+      const i = scanOrder.indexOf(key);
+      return i === -1 ? Infinity : i;
+    };
+    const mergedFields = [...allFields].sort((a, b) => scanIndexOf(a.key) - scanIndexOf(b.key));
 
     setFields(mergedFields);
     setFieldPositions(mergedPositions);
     setExpandedField(newFields[0].key);
     setActiveFieldKey(newFields[0].key);
 
-    // Auto-save immediately and switch to Preview Word on success
     handleSave(mergedFields, mergedPositions, true);
   }
 
@@ -602,10 +628,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           setCamposSemPlaceholder(d.campos_sem_placeholder ?? []);
           setFieldPositions({});
           if (switchToPreview) {
-            // Auto-save triggered by "Salvar edições" in the interactive editor —
-            // bump the preview version and switch to the Preview Word tab.
             setPreviewVersion((v) => v + 1);
-            setViewMode("preview");
           } else if (mode === "confirm") {
             setShowConfirmSuccess(true);
             setTimeout(() => {
@@ -759,8 +782,35 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
         ) : (
           <div className="space-y-2">
-            {template.arquivo_url && (
-              <div className="flex justify-end">
+            <div className="flex items-center justify-between gap-2">
+              {/* Filter chips */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-medium text-slate-400">Campos:</span>
+                <button
+                  type="button"
+                  onClick={() => setRoleFilter(roleFilter === "manual" ? null : "manual")}
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition ${
+                    roleFilter === "manual"
+                      ? "bg-amber-400 text-white"
+                      : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                  }`}
+                >
+                  Fixo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRoleFilter(roleFilter === "ia_sugerida" ? null : "ia_sugerida")}
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition ${
+                    roleFilter === "ia_sugerida"
+                      ? "bg-violet-600 text-white"
+                      : "bg-violet-100 text-violet-700 hover:bg-violet-200"
+                  }`}
+                >
+                  Magis
+                </button>
+              </div>
+
+              {template.arquivo_url && (
                 <button
                   type="button"
                   onClick={() => void handleReExtract()}
@@ -770,10 +820,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   {isReExtracting ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                   Re-extrair
                 </button>
-              </div>
-            )}
+              )}
+            </div>
 
-            {fields.map((field, index) => {
+            {fields.filter((f) => !roleFilter || f.role === roleFilter).map((field) => {
+              const index = fields.indexOf(field);
               const isExpanded = expandedField === field.key;
               const isActive = activeFieldKey === field.key;
               return (
@@ -793,7 +844,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   >
                     <GripVertical className="h-4 w-4 shrink-0 text-slate-300" />
                     <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-900">
+                      <p className="line-clamp-2 break-words text-sm font-medium leading-snug text-slate-900">
                         {field.label || <span className="italic text-slate-400">sem nome</span>}
                       </p>
                       <p className="text-xs text-slate-400">
@@ -1036,36 +1087,18 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         {/* Split view */}
         <div className="flex gap-6" style={{ minHeight: "calc(100vh - 320px)" }}>
           {/* Left: tabbed viewer — only on xl+ */}
-          <div className="hidden w-[65%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 xl:flex xl:flex-col">
+          <div className="hidden w-[70%] shrink-0 overflow-hidden rounded-3xl border border-slate-200 xl:flex xl:flex-col">
             {/* Tab bar */}
             <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 bg-white px-3 py-2">
               <button
                 type="button"
-                onClick={() => setViewMode("preview")}
-                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-semibold transition ${
-                  viewMode === "preview"
-                    ? "bg-slate-950 text-white"
-                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                }`}
-              >
-                <Eye className="h-3.5 w-3.5" />
-                Preview Word
-              </button>
-              <button
-                type="button"
                 onClick={() => setViewMode("interactive")}
-                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-semibold transition ${
-                  viewMode === "interactive"
-                    ? "bg-violet-600 text-white"
-                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                }`}
+                className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white"
               >
                 <MousePointer2 className="h-3.5 w-3.5" />
-                Adicionar campos
+                Editar campos
               </button>
-              {viewMode === "interactive" && (
-                <p className="ml-2 text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
-              )}
+              <p className="ml-2 text-[10px] text-violet-500">Clique no texto para adicionar campo</p>
             </div>
 
             {/* Viewer content */}
