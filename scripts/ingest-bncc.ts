@@ -148,6 +148,7 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
   const requests = texts.map((text) => ({
     model: `models/${EMBEDDING_MODEL}`,
     content: { parts: [{ text }] },
+    taskType: "RETRIEVAL_DOCUMENT",
   }));
   const res = await fetch(
     `https://generativelanguage.googleapis.com/${EMBEDDING_API_VER}/models/${EMBEDDING_MODEL}:batchEmbedContents?key=${apiKey}`,

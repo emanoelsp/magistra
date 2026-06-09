@@ -68,7 +68,12 @@ function getIndex() {
   return getPinecone().index(indexName);
 }
 
-export async function embedText(text: string): Promise<number[]> {
+type EmbedTaskType = "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" | "SEMANTIC_SIMILARITY";
+
+export async function embedText(
+  text: string,
+  taskType: EmbedTaskType = "RETRIEVAL_QUERY",
+): Promise<number[]> {
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
   const res = await fetch(
@@ -76,7 +81,11 @@ export async function embedText(text: string): Promise<number[]> {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: { parts: [{ text }] } }),
+      body: JSON.stringify({
+        model: `models/${EMBEDDING_MODEL}`,
+        content: { parts: [{ text }] },
+        taskType,
+      }),
     },
   );
   if (!res.ok) throw new Error(`Embed error ${res.status}: ${await res.text()}`);
@@ -96,6 +105,15 @@ function normComp(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z\s]/g, "").trim();
 }
 
+// ── BNCC code exact-match ────────────────────────────────────────────────────
+
+const BNCC_CODE_RE = /\b(EF|EM)\d{2}[A-Z]{2}\d{2,3}\b/g;
+
+function extractBnccCodes(query: string): string[] {
+  return [...new Set(query.match(BNCC_CODE_RE) ?? [])];
+}
+
+// ── Componente fuzzy match ────────────────────────────────────────────────────
 function matchComponente(raw: string): string | undefined {
   if (!raw) return undefined;
   const needle = normComp(raw);
@@ -122,9 +140,28 @@ export async function retrieveBnccContext(
   if (!apiKey) return [];
 
   try {
-    const vector = await embedText(query);
     const index = getIndex();
+    const codes = extractBnccCodes(query);
 
+    // Fast path: exact fetch by BNCC code IDs — no embedding needed
+    if (codes.length > 0) {
+      const fetched = await index.fetch({ ids: codes }).catch(() => null);
+      if (fetched) {
+        const exact = Object.values(fetched.records ?? {})
+          .filter((r) => r.metadata)
+          .map((r) => ({
+            codigo: String(r.metadata!["codigo"] ?? ""),
+            texto: String(r.metadata!["texto"] ?? ""),
+            area: String(r.metadata!["area"] ?? ""),
+            componente: String(r.metadata!["componente"] ?? ""),
+            etapa: String(r.metadata!["etapa"] ?? ""),
+            ano: String(r.metadata!["ano"] ?? ""),
+          }));
+        if (exact.length > 0) return exact;
+      }
+    }
+
+    const vector = await embedText(query);
     const pineconeFilter: Record<string, unknown> = {};
     if (filters.etapa) pineconeFilter["etapa"] = { $eq: filters.etapa };
     const comp = matchComponente(filters.componente ?? "");
@@ -307,22 +344,43 @@ export async function retrieveAllCurriculumContext(
   if (!apiKey) return { bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] };
 
   try {
-    // Single embed call shared across all three sources
-    const vector = await embedText(query);
     const index = getIndex();
+    const codes = extractBnccCodes(query);
 
     const pineconeFilter: Record<string, unknown> = {};
     if (filters.etapa) pineconeFilter["etapa"] = { $eq: filters.etapa };
     const comp = matchComponente(filters.componente ?? "");
     if (comp) pineconeFilter["componente"] = { $eq: comp };
+    const hasFilter = Object.keys(pineconeFilter).length > 0;
+
+    // Embed query and exact-fetch BNCC codes in parallel
+    const [vector, exactFetch] = await Promise.all([
+      embedText(query),
+      codes.length > 0 ? index.fetch({ ids: codes }).catch(() => null) : Promise.resolve(null),
+    ]);
+
+    const bnccExact: BnccChunk[] = exactFetch
+      ? Object.values(exactFetch.records ?? {})
+          .filter((r) => r.metadata)
+          .map((r) => ({
+            codigo: String(r.metadata!["codigo"] ?? ""),
+            texto: String(r.metadata!["texto"] ?? ""),
+            area: String(r.metadata!["area"] ?? ""),
+            componente: String(r.metadata!["componente"] ?? ""),
+            etapa: String(r.metadata!["etapa"] ?? ""),
+            ano: String(r.metadata!["ano"] ?? ""),
+          }))
+      : [];
 
     const [bnccResult, ctbcResult, saebResult, estadualResult, cnctResult] = await Promise.all([
-      // BNCC — default namespace
-      index.query({
-        vector, topK: TOP_K,
-        filter: Object.keys(pineconeFilter).length > 0 ? pineconeFilter : undefined,
-        includeMetadata: true,
-      }).catch(() => ({ matches: [] })),
+      // BNCC vector query — skipped when exact codes found
+      bnccExact.length > 0
+        ? Promise.resolve({ matches: [] as { score?: number; metadata?: Record<string, unknown> }[] })
+        : index.query({
+            vector, topK: TOP_K,
+            filter: hasFilter ? pineconeFilter : undefined,
+            includeMetadata: true,
+          }).catch(() => ({ matches: [] as { score?: number; metadata?: Record<string, unknown> }[] })),
 
       // Currículo Territorial
       options?.skipCtbc
@@ -345,16 +403,19 @@ export async function retrieveAllCurriculumContext(
         : retrieveCnct(vector, { componente: filters.componente }).then((r) => ({ _cnct: r })).catch(() => ({ _cnct: [] as CnctChunk[] })),
     ]);
 
-    const bncc = (bnccResult.matches ?? [])
-      .filter((m) => (m.score ?? 0) > 0.5)
-      .map((m) => ({
-        codigo: String(m.metadata?.["codigo"] ?? ""),
-        texto: String(m.metadata?.["texto"] ?? ""),
-        area: String(m.metadata?.["area"] ?? ""),
-        componente: String(m.metadata?.["componente"] ?? ""),
-        etapa: String(m.metadata?.["etapa"] ?? ""),
-        ano: String(m.metadata?.["ano"] ?? ""),
-      }));
+    // Prefer exact matches; fall back to vector search results
+    const bncc = bnccExact.length > 0
+      ? bnccExact
+      : (bnccResult.matches ?? [])
+          .filter((m) => (m.score ?? 0) > 0.5)
+          .map((m) => ({
+            codigo: String(m.metadata?.["codigo"] ?? ""),
+            texto: String(m.metadata?.["texto"] ?? ""),
+            area: String(m.metadata?.["area"] ?? ""),
+            componente: String(m.metadata?.["componente"] ?? ""),
+            etapa: String(m.metadata?.["etapa"] ?? ""),
+            ano: String(m.metadata?.["ano"] ?? ""),
+          }));
 
     const ctbc = "_ctbc" in ctbcResult ? ctbcResult._ctbc : [];
     const saeb = "_saeb" in saebResult ? saebResult._saeb : [];
