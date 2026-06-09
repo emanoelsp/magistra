@@ -356,7 +356,12 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 
     // ── 1-cell row: label → next row content ──────────────────────────────
     if (row.cells.length === 1) {
-      const field = matchField(row.cellTexts[0], schema, used);
+      // Skip section titles: text has lowercase (mixed case) AND no trailing ":"
+      // e.g. "Sequência didática", "Habilidades selecionadas" → titles, not field labels
+      const singleCellText = row.cellTexts[0].trim();
+      const hasMixedCase = /[a-z]/.test(singleCellText.normalize("NFD").replace(/[̀-ͯ]/g, ""));
+      const isTitle = hasMixedCase && !singleCellText.endsWith(":");
+      const field = isTitle ? null : matchField(singleCellText, schema, used);
       if (field && ri + 1 < rows.length) {
         const nextRow = rows[ri + 1];
         if (nextRow.cells.length >= 1) {

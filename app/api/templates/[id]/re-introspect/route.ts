@@ -132,6 +132,12 @@ Você é um analista de currículo escolar sênior especializado em documentos p
 5. O 'key' é o label em snake_case sem acentos (ex: "professor_a", "area_componente", "n_aulas_semanais").
 6. type "textarea" para campos pedagógicos longos (objetivos, habilidades, conteúdos, avaliação); "text" para campos curtos (nome, turma, data).
 7. NÃO inclua células que são apenas títulos de seção ou decoração visual sem campo associado.
+13. TÍTULO vs. CAMPO PREENCHÍVEL — regra obrigatória: uma célula é APENAS UM TÍTULO (não gera variável) quando satisfaz AMBAS as condições simultaneamente:
+   a) O texto NÃO termina com ":" (dois pontos), E
+   b) NÃO existe uma célula vazia ou preenchível imediatamente à direita NEM imediatamente abaixo dela.
+   Exemplos de títulos (NÃO geram variável): "Sequência didática", "Habilidades selecionadas", "PLANO DE AULA", "Objeto(s) de conhecimento em estudo", "Recuperação paralela da aprendizagem".
+   Exemplos de campos (GERAM variável): "Professor(a):" (tem ":"), "Turma(s):" (tem ":"), célula com célula vazia adjacente à direita ou abaixo.
+   ATENÇÃO: aplique esta regra ANTES de criar qualquer campo. Se a célula é título, pule-a completamente — não crie nenhuma chave para ela.
 8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" repetido em 9 colunas → um único campo {{turma}}.
 9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; ou bimestres) e MÚLTIPLAS LINHAS de dados — uma por período — crie chaves com sufixo _tr1/_tr2/_tr3 (ou _bim1/_bim2). Exemplo: coluna "HABILIDADES" com 3 linhas de dados → habilidades_tr1, habilidades_tr2, habilidades_tr3. Células de marcação de trimestre (✓, "x", texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}. Em <estrutura_detectada>, entradas com pattern "period_column" e 'periodSuffix' indicam exatamente isso — concatene o label ao sufixo para montar o key.
 10. RANGE DE DATAS: Se o valor de um campo contém um intervalo de datas ("13/07/2026 a 09/08/2026" ou similar), declare DOIS campos separados: {base}_inicio e {base}_fim. Exemplo: "Data ou período de realização: 13/07 a 09/08" → data_inicio + data_fim.
@@ -165,6 +171,7 @@ Antes de extrair, raciocine em "raciocinio":
 3. Verifique campos que não aparecem em <estrutura_detectada> mas estão no HTML.
 4. Confirme que cada label será copiado EXATAMENTE de <estrutura_detectada> ou do HTML.
 5. Identifique colunas repetidas (→ mesmo campo único) e entradas "period_column" (→ sufixos _tr1/_tr2/_tr3). Verifique se há ranges de data para dividir em _inicio/_fim.
+6. Para CADA célula candidata, aplique a Regra 13: o texto termina com ":"? Existe célula vazia à direita ou abaixo (conforme <estrutura_detectada>)? Se NENHUMA das duas → é título, descarte.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }

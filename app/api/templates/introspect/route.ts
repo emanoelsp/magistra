@@ -106,6 +106,12 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
 5. O 'key' é o label em snake_case sem acentos (ex: 'area_componente', 'numero_de_aulas').
 6. type "textarea" para campos pedagógicos longos; "text" para campos curtos (nome, turma, data, número).
 7. NÃO inclua linhas que são apenas títulos de seção sem campo associado.
+13. TÍTULO vs. CAMPO PREENCHÍVEL — regra obrigatória: uma célula é APENAS UM TÍTULO (não gera variável) quando satisfaz AMBAS as condições simultaneamente:
+   a) O texto NÃO termina com ":" (dois pontos), E
+   b) NÃO existe uma célula vazia ou preenchível imediatamente à direita NEM imediatamente abaixo dela.
+   Exemplos de títulos (NÃO geram variável): "Sequência didática", "Habilidades selecionadas", "PLANO DE AULA", "Objeto(s) de conhecimento em estudo".
+   Exemplos de campos (GERAM variável): "Professor(a):" (tem ":"), "Turma(s):" (tem ":"), qualquer célula com célula vazia ao lado/abaixo.
+   ATENÇÃO: aplique esta regra ANTES de criar qualquer campo. Se a célula é título, pule-a completamente.
 8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" em 9 colunas → um único campo {{turma}}.
 9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; bimestres) e MÚLTIPLAS LINHAS de dados — uma por período — crie chaves com sufixo _tr1/_tr2/_tr3 (ou _bim1/_bim2). Exemplo: coluna "HABILIDADES" com 3 linhas de dados → habilidades_tr1, habilidades_tr2, habilidades_tr3. Células de marcação de trimestre (✓, "x", texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}.
 10. RANGE DE DATAS: Se o valor de um campo contém um intervalo ("13/07/2026 a 09/08/2026" ou "DD/MM - DD/MM"), declare DOIS campos separados: {base}_inicio e {base}_fim.
@@ -128,6 +134,7 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
 3. Para cada campo pedagógico, determine o group correto: objetivos | competencias | habilidades | conteudos | avaliacao | outros.
 4. Confirme que cada label será copiado EXATAMENTE como aparece no documento, sem normalização.
 5. Identifique colunas repetidas (→ mesmo campo único), estruturas de período (→ sufixos _tr1/_tr2/_tr3) e ranges de data (→ _inicio/_fim).
+6. Para CADA célula candidata, verifique a Regra 13: o texto termina com ":"? Existe célula vazia à direita ou abaixo? Se NENHUMA das duas → é título, descarte-a.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
