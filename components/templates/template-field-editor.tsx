@@ -7,6 +7,8 @@ import {
   AlignJustify,
   AlignLeft,
   AlignRight,
+  ArrowLeft,
+  ArrowRight,
   Bold,
   CheckCircle2,
   ChevronDown,
@@ -487,27 +489,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         </button>
       </div>
 
-      {/* Item 15: zoom slider */}
-      {phase === "done" && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-white px-3 py-1">
-          <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
-          <input
-            type="range"
-            min={70}
-            max={150}
-            step={5}
-            value={zoom}
-            onChange={(e) => onZoomChange?.(Number(e.target.value))}
-            className="h-1 w-24 accent-violet-600"
-          />
-          <span className="w-8 text-[10px] text-slate-500">{zoom}%</span>
-        </div>
-      )}
-
-      {/* Rich-text formatting toolbar */}
+      {/* Rich-text formatting toolbar + zoom (single row) */}
       {phase === "done" && (
         <div
-          className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-slate-100 bg-white px-2 py-1"
+          className="flex shrink-0 items-center gap-0.5 border-b border-slate-100 bg-white px-2 py-1"
           onMouseDown={(e) => e.preventDefault()}
         >
           {/* Font family */}
@@ -573,6 +558,22 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
             <ListOrdered className="h-3.5 w-3.5 text-slate-700" />
           </button>
+
+          {/* Item 15: zoom — right-aligned in the same toolbar row */}
+          <div className="ml-auto flex items-center gap-1.5">
+            <div className="mr-0.5 h-4 w-px bg-slate-200" />
+            <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
+            <input
+              type="range"
+              min={70}
+              max={150}
+              step={5}
+              value={zoom}
+              onChange={(e) => onZoomChange?.(Number(e.target.value))}
+              className="h-1 w-20 accent-violet-600"
+            />
+            <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>
+          </div>
         </div>
       )}
 
@@ -666,6 +667,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try { return localStorage.getItem("magis_panel_collapsed") === "1"; } catch { return false; }
   });
+
+  // Review flow
+  const [reviewMode, setReviewMode] = useState(mode === "confirm");
+  const [isAdvancing, setIsAdvancing] = useState(false);
 
   const fieldListRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
@@ -1621,32 +1626,49 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         )}
 
         {/* Header bar: nome + estado */}
-        <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-end sm:gap-4">
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600">Nome do template</label>
-            <input
-              type="text"
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              className="mt-1 w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-            />
+        <div className="rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50 to-slate-50 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">1</span>
+            <p className="text-xs font-semibold text-violet-700">Preencha os dados do template antes de configurar os campos</p>
           </div>
-          <div className="sm:w-56">
-            <label className="block text-xs font-medium text-slate-600">
-              Estado <span className="text-violet-600">(currículo regional)</span>
-            </label>
-            <div className="relative mt-1">
-              <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value)}
-                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-2.5 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-              >
-                <option value="">Não especificado</option>
-                {ESTADOS_BRASIL.map((e) => (
-                  <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-slate-700">
+                Nome do template <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={nome}
+                onChange={(e) => setNome(e.target.value)}
+                placeholder="Ex.: Plano de aula semanal — Ensino Médio"
+                className={`mt-1.5 w-full rounded-2xl border px-4 py-2.5 text-sm text-slate-950 outline-none transition focus:ring-2 focus:ring-violet-100 ${
+                  !nome.trim()
+                    ? "border-amber-300 bg-amber-50 placeholder:text-amber-400 focus:border-violet-400"
+                    : "border-slate-300 bg-white focus:border-violet-400"
+                }`}
+              />
+            </div>
+            <div className="sm:w-60">
+              <label className="block text-xs font-bold text-slate-700">
+                Estado <span className="text-xs font-normal text-violet-600">(currículo regional da IA)</span>
+              </label>
+              <div className="relative mt-1.5">
+                <select
+                  value={estado}
+                  onChange={(e) => setEstado(e.target.value)}
+                  className={`w-full appearance-none rounded-2xl border px-4 py-2.5 pr-10 text-sm outline-none transition focus:ring-2 focus:ring-violet-100 ${
+                    !estado
+                      ? "border-amber-300 bg-amber-50 text-slate-500 focus:border-violet-400"
+                      : "border-slate-300 bg-white text-slate-950 focus:border-violet-400"
+                  }`}
+                >
+                  <option value="">— Selecione o estado —</option>
+                  {ESTADOS_BRASIL.map((e) => (
+                    <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </div>
             </div>
           </div>
         </div>
@@ -1668,7 +1690,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           {/* Left: editor — hidden on mobile, shown on xl+ (or when mobile tab = document) */}
           <div className={`overflow-hidden rounded-3xl border border-slate-200 ${
             mobileTab === "document" ? "flex flex-col w-full xl:w-auto" : "hidden xl:flex xl:flex-col"
-          } ${panelCollapsed ? "xl:flex-1" : "xl:w-[70%] xl:shrink-0"}`}>
+          } ${panelCollapsed ? "xl:flex-1" : "xl:w-[62%] xl:shrink-0"}`}>
             {/* Viewer content */}
             <div className="flex flex-1 flex-col overflow-hidden">
               {viewMode === "preview" ? (
