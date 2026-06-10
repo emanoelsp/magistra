@@ -539,20 +539,46 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     let rowXml = row.xml;
     let rowModified = false;
 
-    for (let ci = 0; ci < cells.length - 1; ci++) {
+    for (let ci = 0; ci < cells.length; ci++) {
       const field = matchField(cellTexts[ci], schema, used);
       if (!field) continue;
 
-      // Reject if the next cell looks like a label — either by structural
-      // heuristics (ends with ":", ALL-CAPS header) or by schema matching.
-      // This prevents overwriting label cells like "Carga horária presencial:"
-      // or column headers like "OBJETO DE CONHECIMENTO".
-      if (looksLikeLabel(cellTexts[ci + 1])) continue;
+      const hasNextCell = ci + 1 < cells.length;
+
+      // When next cell is also a label (structural or schema match), or there is
+      // no next cell at all, inject the placeholder inline in the current cell.
+      // This handles rows like [Professor(a): | Área/Componente: | Turma:] where
+      // every cell is a label with the value expected after the colon in the same cell.
+      if (!hasNextCell || looksLikeLabel(cellTexts[ci + 1])) {
+        const origCell = cells[ci];
+        const newCell = appendToParagraph(origCell, normText(cellTexts[ci]), field.key);
+        if (newCell !== origCell) {
+          rowXml = replaceFirst(rowXml, origCell, newCell);
+          cells[ci] = newCell;
+          cellTexts[ci] = extractText(newCell);
+          used.add(field.key);
+          rowModified = true;
+        }
+        continue;
+      }
+
       const excluded = new Set([...used, field.key]);
       const nextAlsoLabel = !!matchField(cellTexts[ci + 1], schema, excluded);
-      if (nextAlsoLabel) continue;
+      if (nextAlsoLabel) {
+        // Next cell matches a schema field — inject inline rather than overwriting it
+        const origCell = cells[ci];
+        const newCell = appendToParagraph(origCell, normText(cellTexts[ci]), field.key);
+        if (newCell !== origCell) {
+          rowXml = replaceFirst(rowXml, origCell, newCell);
+          cells[ci] = newCell;
+          cellTexts[ci] = extractText(newCell);
+          used.add(field.key);
+          rowModified = true;
+        }
+        continue;
+      }
 
-      // Inject into cell[ci + 1]
+      // Standard case: inject into cell[ci + 1]
       const origValueCell = cells[ci + 1];
       const newCell = setCellContent(origValueCell, `{{${field.key}}}`);
       // replaceFirst on the *running* rowXml: replaces the first (leftmost) occurrence
