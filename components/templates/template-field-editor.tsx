@@ -457,8 +457,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       <style>{`
         .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
         .docx-html-preview table { border-collapse: collapse; }
-        .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; }
-        .docx-html-preview img { max-width: none; height: auto; }
+        .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; vertical-align: top; position: relative; }
+        .docx-html-preview img { max-width: 100%; height: auto; display: block; }
         .docx-html-preview p { margin: 0.2em 0; }
         .docx-html-preview td[contenteditable]:focus,
         .docx-html-preview td[contenteditable]:focus-within,
@@ -1004,6 +1004,52 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     handleSave(prev, undefined, true);
   }
 
+  async function handleAdvanceToReview() {
+    setError(null);
+    const emptyLabel = fields.find((f) => !f.label.trim());
+    if (emptyLabel) { setError("Todos os campos precisam ter um nome."); return; }
+    const keysSeen = new Set<string>();
+    for (const f of fields) {
+      if (keysSeen.has(f.key)) { setError(`Chave duplicada: {{${f.key}}}. Renomeie um dos campos.`); return; }
+      keysSeen.add(f.key);
+    }
+    setIsAdvancing(true);
+    try {
+      const res = await fetch(`/api/templates/${template.id}/schema`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome: nome.trim() || template.nome,
+          estado: estado || null,
+          schema_campos: fields,
+          field_positions: fieldPositions,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(d?.error ?? "Falha ao salvar.");
+      }
+      const d = await res.json() as { campos_sem_placeholder?: string[] };
+      setCamposSemPlaceholder(d.campos_sem_placeholder ?? []);
+      setFieldPositions({});
+      setPreviewVersion((v) => v + 1);
+      setReviewMode(true);
+      setPanelCollapsed(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar.");
+    } finally {
+      setIsAdvancing(false);
+    }
+  }
+
+  function handleConfirmTemplate() {
+    setShowConfirmSuccess(true);
+    setTimeout(() => {
+      setShowConfirmSuccess(false);
+      router.push("/dashboard/templates");
+    }, 3000);
+  }
+
   // Item 5: diff modal
   const diffModal = pendingExtract && (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm">
@@ -1541,29 +1587,72 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         </p>
       )}
 
+      {reviewMode && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <p className="text-sm font-semibold text-emerald-800">Documento preparado — revise e confirme</p>
+          <p className="mt-0.5 text-xs text-emerald-600">Confira o documento à esquerda com os placeholders inseridos. Clicando em Confirmar o template fica ativo para uso nos planos de aula.</p>
+        </div>
+      )}
+
       <div className="flex justify-end gap-3">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
-        >
-          {mode === "confirm" ? "Pular" : "Cancelar"}
-        </button>
-        <button
-          type="button"
-          onClick={() => handleSave()}
-          disabled={isPending}
-          className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
-        >
-          {isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : mode === "confirm" ? (
-            <CheckCircle2 className="h-4 w-4" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          {mode === "confirm" ? "Confirmar template" : "Salvar alterações"}
-        </button>
+        {mode === "confirm" ? (
+          <>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
+            >
+              Pular
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSave()}
+              disabled={isPending}
+              className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+            >
+              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Confirmar template
+            </button>
+          </>
+        ) : reviewMode ? (
+          <>
+            <button
+              type="button"
+              onClick={() => { setReviewMode(false); setPanelCollapsed(false); }}
+              className="flex items-center gap-2 rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Editar campos
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmTemplate}
+              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Confirmar template
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleAdvanceToReview()}
+              disabled={isAdvancing}
+              className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+            >
+              {isAdvancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+              Avançar para revisão
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

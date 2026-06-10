@@ -151,6 +151,34 @@ function matchField(
   return best;
 }
 
+// ── Paragraph helpers ────────────────────────────────────────────────────────
+
+/** Returns the extracted text of each <w:p> element in the given XML node. */
+function extractParagraphTexts(xml: string): string[] {
+  return [...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((m) => extractText(m[0]));
+}
+
+/**
+ * Appends " {{fieldKey}}" as a new run to the paragraph in `cellXml` whose
+ * normalized text matches `labelNorm`.  Returns the modified cell XML, or the
+ * original if no matching paragraph is found or the placeholder is already there.
+ */
+function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string): string {
+  const placeholder = `{{${fieldKey}}}`;
+  const paras = [...cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+  for (const paraMatch of paras) {
+    const paraXml = paraMatch[0];
+    if (normText(extractText(paraXml)) !== labelNorm) continue;
+    if (paraXml.includes(placeholder)) return cellXml; // idempotent
+    const closeIdx = paraXml.lastIndexOf("</w:p>");
+    if (closeIdx === -1) continue;
+    const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
+    const newParaXml = paraXml.slice(0, closeIdx) + newRun + paraXml.slice(closeIdx);
+    return cellXml.replace(paraXml, newParaXml);
+  }
+  return cellXml;
+}
+
 // ── Cell content writer ──────────────────────────────────────────────────────
 
 /**
@@ -304,6 +332,47 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   const rows = parseRows(xml);
   const used = new Set<string>();
 
+  // ── Pass 0: Multi-label paragraph injection ─────────────────────────────────
+  // Handles cells that contain ≥2 label paragraphs ending with ":" in the same cell.
+  // Example: one cell with "Professor(a):\nÁrea/Componente:\nTurma:" — each gets
+  // its own inline placeholder appended to that paragraph.
+  // This also handles ALL CAPS + colon section headers that share a cell with
+  // sub-labels (e.g. "TEMÁTICA ABORDADA:\n- Carga horária prevista:").
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    let rowXml = row.xml;
+    let rowModified = false;
+
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      const cellXml = row.cells[ci];
+      if (!cellXml) continue;
+
+      const paraTexts = extractParagraphTexts(cellXml).map((t) => t.trim());
+      const labelParas = paraTexts.filter((t) => t.endsWith(":") && t.length > 2);
+      if (labelParas.length < 2) continue; // single-label cells handled by later passes
+
+      let newCellXml = cellXml;
+      for (const pt of labelParas) {
+        const field = matchField(pt, schema, used);
+        if (!field) continue;
+        newCellXml = appendToParagraph(newCellXml, normText(pt), field.key);
+        used.add(field.key);
+      }
+
+      if (newCellXml !== cellXml) {
+        rowXml = replaceFirst(rowXml, cellXml, newCellXml);
+        row.cells[ci] = newCellXml;
+        row.cellTexts[ci] = extractText(newCellXml);
+        rowModified = true;
+      }
+    }
+
+    if (rowModified) {
+      xml = replaceFirst(xml, row.xml, rowXml);
+      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts };
+    }
+  }
+
   // ── Pass 1: Inline "Label: value" cells ─────────────────────────────────────
   // Handles filled templates where label and value share a single cell:
   //   "Professor(a): Luiz Carlos Covre"  →  "Professor(a): {{professor}}"
@@ -315,6 +384,11 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     let rowModified = false;
 
     for (let ci = 0; ci < row.cells.length; ci++) {
+      // Skip multi-label cells — already handled by Pass 0
+      const paraTexts = extractParagraphTexts(row.cells[ci] ?? "").map((t) => t.trim());
+      const labelParaCount = paraTexts.filter((t) => t.endsWith(":") && t.length > 2).length;
+      if (labelParaCount >= 2) continue;
+
       const cellText = row.cellTexts[ci];
       const colonIdx = cellText.indexOf(":");
       if (colonIdx <= 1) continue;
@@ -354,26 +428,52 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     const row = rows[ri];
     if (row.cells.length === 0) continue;
 
-    // ── 1-cell row: label → next row content ──────────────────────────────
+    // ── 1-cell row: label → next row content OR same-cell injection ─────────
     if (row.cells.length === 1) {
       const singleCellText = row.cellTexts[0].trim();
-      const hasMixedCase = /[a-z]/.test(singleCellText.normalize("NFD").replace(/[̀-ͯ]/g, ""));
+      // Skip if already handled by Pass 0 (multi-label cell)
+      if (singleCellText.includes("{{")) { continue; }
+
+      const stripped = singleCellText.normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const hasMixedCase = /[a-z]/.test(stripped);
       const hasColon = singleCellText.endsWith(":");
-      // Check whether the next row's first cell is empty (= value slot).
-      // "Objeto(s) de conhecimento em estudo" with a blank row below IS a label.
+
+      // ALL CAPS + no colon → title/subtitle (new rule: school name, document title, etc.)
+      if (!hasMixedCase && !hasColon) { continue; }
+
       const nextRowText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "x";
       const hasEmptyBelow = nextRowText === "";
-      // Title = mixed-case text WITHOUT ":" AND NO empty cell below (both conditions required)
-      const isTitle = hasMixedCase && !hasColon && !hasEmptyBelow;
-      const field = isTitle ? null : matchField(singleCellText, schema, used);
-      if (field && ri + 1 < rows.length) {
+      // Mixed-case + no colon + no adjacent empty → section title (Rule 13)
+      const isMixedCaseTitle = hasMixedCase && !hasColon && !hasEmptyBelow;
+      if (isMixedCaseTitle) { continue; }
+
+      const field = matchField(singleCellText, schema, used);
+      if (!field) { continue; }
+
+      // Determine injection target: if next row is also a label (fill_cell pattern),
+      // inject inline in the CURRENT cell. Otherwise inject into the next row (adjacent_below).
+      const nextIsLabel = nextRowText !== "" && looksLikeLabel(nextRowText);
+
+      if (nextIsLabel) {
+        // Fill-cell: value space is within the current cell → append placeholder inline
+        const origCell = row.cells[0];
+        let newCell = appendToParagraph(origCell, normText(singleCellText), field.key);
+        if (newCell === origCell) {
+          // Fallback: replace cell text if no matching paragraph found (e.g. split runs)
+          newCell = clearAndSetCellText(origCell, `${singleCellText} {{${field.key}}}`);
+        }
+        const newRowXml = replaceFirst(row.xml, origCell, newCell);
+        xml = replaceFirst(xml, row.xml, newRowXml);
+        rows[ri] = { xml: newRowXml, cells: [newCell], cellTexts: [extractText(newCell)] };
+        used.add(field.key);
+      } else if (ri + 1 < rows.length) {
+        // Adjacent-below: inject into next row's first cell
         const nextRow = rows[ri + 1];
         if (nextRow.cells.length >= 1) {
           const origCell = nextRow.cells[0];
           const newCell = setCellContent(origCell, `{{${field.key}}}`);
           const newNextRowXml = replaceFirst(nextRow.xml, origCell, newCell);
           xml = replaceFirst(xml, nextRow.xml, newNextRowXml);
-          // Reflect change so future iterations see updated row
           rows[ri + 1] = {
             xml: newNextRowXml,
             cells: [newCell, ...nextRow.cells.slice(1)],
@@ -605,6 +705,27 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
 
     // ── Inline "Label: value" within a single cell ────────────────────────
     for (let ci = 0; ci < row.cells.length; ci++) {
+      const cellXml = row.cells[ci];
+      if (!cellXml) continue;
+
+      // Paragraph-level scan: cells with multiple "label:" paragraphs
+      // (e.g. "Professor(a):\nÁrea/Componente:\nTurma:" in one cell).
+      const paraTexts = extractParagraphTexts(cellXml).map((t) => t.trim()).filter((t) => t);
+      const labelParas = paraTexts.filter((t) => t.endsWith(":") && t.length > 2);
+      if (labelParas.length >= 2) {
+        for (const pt of labelParas) {
+          // ALL CAPS + no colon is never reached here (all end with ":"), but
+          // skip ALL CAPS paragraphs that somehow slipped through (safety guard).
+          const pHasMixed = /[a-z]/.test(pt.normalize("NFD").replace(/[̀-ͯ]/g, ""));
+          if (!pHasMixed && !pt.endsWith(":")) continue; // title paragraph within cell
+          const label = pt.replace(/:+$/, "").replace(/^-\s*/, "").trim();
+          if (label.length < 2) continue;
+          addPair({ label, valuePreview: "", pattern: "inline_colon" });
+        }
+        continue; // don't also run the concatenated-text scan for this cell
+      }
+
+      // Single-label cell: classic "Label: value" in concatenated text
       const t = row.cellTexts[ci].trim();
       const colonIdx = t.indexOf(":");
       if (colonIdx <= 1 || colonIdx >= t.length - 1) continue;
@@ -666,23 +787,38 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       continue; // don't also run adjacent scan for this row
     }
 
-    // ── 1-cell row → adjacent_below ───────────────────────────────────────
+    // ── 1-cell row → adjacent_below OR inline_colon (fill_cell) ──────────
     if (row.cells.length === 1) {
       const t = row.cellTexts[0].trim();
-      if (ri + 1 < rows.length) {
-        const nextText = (rows[ri + 1].cellTexts[0] ?? "").trim();
-        const hasEmptyBelow = nextText === "";
-        const hasMixedCase = /[a-z]/.test(t.normalize("NFD").replace(/[̀-ͯ]/g, ""));
-        // Classic label heuristic (ends with ":" or ALL-CAPS), OR mixed-case text with
-        // an empty cell below (Rule 13: needs empty adjacent cell to qualify as a field label)
-        const isFieldLabel = looksLikeLabel(t) || (hasMixedCase && !t.endsWith(":") && hasEmptyBelow);
-        if (isFieldLabel && !looksLikeLabel(nextText)) {
-          addPair({
-            label: t.replace(/:+$/, "").trim(),
-            valuePreview: nextText.slice(0, 60),
-            pattern: "adjacent_below",
-          });
-        }
+      const tStripped = t.normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const hasMixedCase = /[a-z]/.test(tStripped);
+      const hasColon = t.endsWith(":");
+
+      // ALL CAPS + no colon → title/subtitle row (school name, document title, etc.), skip
+      if (!hasMixedCase && !hasColon) { continue; }
+
+      const nextText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "";
+      const hasEmptyBelow = nextText === "";
+
+      // Classic label heuristic OR mixed-case with empty below (Rule 13)
+      const isFieldLabel = looksLikeLabel(t) || (hasMixedCase && !hasColon && hasEmptyBelow);
+      if (!isFieldLabel) { continue; }
+
+      if (!looksLikeLabel(nextText)) {
+        // adjacent_below: next cell is empty or has content (value slot in next row)
+        addPair({
+          label: t.replace(/:+$/, "").trim(),
+          valuePreview: nextText.slice(0, 60),
+          pattern: "adjacent_below",
+        });
+      } else {
+        // fill_cell: next row is ALSO a label → value goes in the same cell as the label.
+        // Report as inline_colon so the AI knows the value is in the same cell.
+        addPair({
+          label: t.replace(/:+$/, "").trim(),
+          valuePreview: "",
+          pattern: "inline_colon",
+        });
       }
       continue;
     }
