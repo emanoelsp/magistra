@@ -458,7 +458,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
         .docx-html-preview table { border-collapse: collapse; }
         .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; vertical-align: top; position: relative; }
-        .docx-html-preview img { max-width: 100%; height: auto; display: block; }
+        .docx-html-preview img { max-width: 100% !important; height: auto !important; display: block !important; position: static !important; float: none !important; }
         .docx-html-preview p { margin: 0.2em 0; }
         .docx-html-preview td[contenteditable]:focus,
         .docx-html-preview td[contenteditable]:focus-within,
