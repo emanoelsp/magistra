@@ -402,8 +402,13 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       for (const pt of labelParas) {
         const field = matchField(pt, schema, used);
         if (!field) continue;
+        const before = newCellXml;
         newCellXml = appendToParagraph(newCellXml, normText(pt), field.key);
-        used.add(field.key);
+        if (newCellXml !== before) {
+          used.add(field.key);
+        }
+        // If appendToParagraph didn't find the paragraph (split runs, unusual XML),
+        // do NOT add to used — Pass 1/2 will still attempt injection as fallback.
       }
 
       if (newCellXml !== cellXml) {
