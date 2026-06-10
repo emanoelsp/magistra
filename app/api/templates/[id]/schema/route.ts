@@ -102,9 +102,11 @@ export async function PATCH(
       buffer = removePlaceholder(buffer, key);
     }
 
-    // 2. Direct injection at clicked positions (for newly added fields)
+    // 2. Direct injection at clicked positions (for newly added fields).
+    // Empty cellText means the user typed into an empty cell — ordinal is the
+    // global <w:tc> index in that case (handled inside injectAtCell).
     for (const [key, pos] of Object.entries(fieldPositions)) {
-      if (newKeys.has(key) && pos.cellText.trim()) {
+      if (newKeys.has(key)) {
         buffer = injectAtCell(buffer, pos.cellText, pos.ordinal, key);
       }
     }

@@ -257,6 +257,12 @@ export function PlanGenerationWizard({
           setShowSaveSuccess(true);
           setTimeout(() => setShowSaveSuccess(false), 3000);
           setIsFinalized(true);
+          // Update pedagogic memory in background (fire-and-forget)
+          void fetch("/api/ia/memoria", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conteudo: capturedEditorValues, metadata: metadataValues }),
+          }).catch(() => {});
         })
         .catch((err) => {
           setSaveError(err instanceof Error ? err.message : "Falha ao salvar.");
@@ -616,7 +622,7 @@ export function PlanGenerationWizard({
                 Plano salvo com sucesso! 🎉
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                Agora você pode baixar em DOCX ou PDF.
+                Agora você pode baixar em PDF.
               </p>
             </div>
             <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
@@ -646,19 +652,6 @@ export function PlanGenerationWizard({
                     <Check className="h-3.5 w-3.5" />
                     Salvo
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!savedPlanoId) return;
-                      void triggerDownload(`/api/planos/${savedPlanoId}/download`)
-                        .then((info) => { if (info) setDownloadLimitInfo(info); })
-                        .catch(() => { window.open(`/api/planos/${savedPlanoId}/download`, "_blank"); });
-                    }}
-                    className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Baixar DOCX
-                  </button>
                   <button
                     type="button"
                     onClick={() => {

@@ -1198,8 +1198,8 @@ function AIChatPanel({
                 />
               </div>
               {streamingCharCount > 0 && (
-                <p className="tabular-nums text-xs text-violet-500">
-                  Recebendo… {streamingCharCount}c
+                <p className="text-xs text-violet-500">
+                  Magis está escrevendo…
                 </p>
               )}
             </div>

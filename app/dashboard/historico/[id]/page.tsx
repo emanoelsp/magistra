@@ -42,7 +42,6 @@ export default async function PlanoDetalhesPage({
             <p className="text-xs text-slate-400">{formatDate(plano.data_geracao)}</p>
           </div>
           <div className="flex items-center gap-2">
-            <DownloadPlanButton planoId={plano.id} format="docx" label="DOCX" />
             <DownloadPlanButton planoId={plano.id} format="pdf" label="PDF" />
           </div>
         </div>

@@ -113,6 +113,7 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
    D. Minúsculas/misto + SEM ":" → campo SOMENTE SE houver linha/célula vazia imediatamente abaixo ou à direita. Se não houver → título, descarta.
    E. MÚLTIPLOS RÓTULOS NA MESMA LINHA/CÉLULA: quando há vários parágrafos terminando com ":" na mesma célula (ex.: "Professor(a):\nÁrea/Componente:\nTurma:"), cada um é um campo separado com sua própria variável.
    F. SUB-ITENS "- rótulo:" também geram variável própria.
+   G. CABEÇALHO COM IMAGENS: quando uma linha da tabela tem células com imagens (logos, brasões) intercaladas com texto institucional centralizado (ex: [logo] [ESTADO DE SANTA CATARINA / SECRETARIA...] [bandeira]), essa linha é EXCLUSIVAMENTE decorativa — NUNCA gera variável. Ignore todas as células dessa linha.
    Exemplos de TÍTULOS: "CEDUP HERMANN HERING", "PLANO DE AULA".
    Exemplos de CAMPOS: "HABILIDADES:" → campo. "Professor(a):" → campo. "- Carga horária prevista:" → campo.
 8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" em 9 colunas → um único campo {{turma}}.

@@ -48,6 +48,8 @@ export default async function EditarTemplatePage({ params }: PageProps) {
     schema_campos: Array.isArray(data.schema_campos) ? data.schema_campos : [],
     data_criacao: toIso(data.data_criacao),
     arquivo_url: typeof data.arquivo_url === "string" ? data.arquivo_url : undefined,
+    arquivo_fillable_url:
+      typeof data.arquivo_fillable_url === "string" ? data.arquivo_fillable_url : undefined,
   };
 
   return (

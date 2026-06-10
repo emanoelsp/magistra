@@ -189,6 +189,14 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       const ordinal = textOrdinalsMap.get(originalText) ?? 0;
       textOrdinalsMap.set(originalText, ordinal + 1);
 
+      // When the cell was empty, use the global <td> index as ordinal so the
+      // server can find the exact cell by position (injectAtCell empty-cell mode).
+      // For cells with text, use the text-occurrence ordinal (existing behaviour).
+      const tdGlobalIndex = el.tagName === "TD" ? tds.indexOf(el) : -1;
+      const effectiveOrdinal = !originalText.trim() && tdGlobalIndex >= 0
+        ? tdGlobalIndex
+        : ordinal;
+
       const currentText = el.textContent ?? "";
 
       // Detect {{key}} patterns
@@ -201,7 +209,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const label = !originalText.trim()
           ? (adjacentLabel(el) || key.replace(/_/g, " "))
           : (originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " "));
-        edits.push({ text: originalText, ordinal, key, role: deriveRole(key), label });
+        edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label });
       }
 
       // Detect bare snake_case identifiers typed without {{ }} (must contain underscore)
@@ -213,7 +221,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
           if (!existingKeys.has(key) && !processedKeys.has(key)) {
             processedKeys.add(key);
             const label = adjacentLabel(el) || key.replace(/_/g, " ");
-            edits.push({ text: originalText, ordinal, key, role: deriveRole(key), label });
+            edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label });
           }
         }
       }
@@ -458,7 +466,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
         .docx-html-preview table { border-collapse: collapse; }
         .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; vertical-align: top; position: relative; }
-        .docx-html-preview img { max-width: 100% !important; height: auto !important; display: block !important; position: static !important; float: none !important; }
+        .docx-html-preview img { max-width: 100% !important; height: auto !important; display: inline-block !important; position: static !important; float: none !important; vertical-align: middle !important; }
+        .docx-html-preview td img, .docx-html-preview th img { display: block !important; margin: 0 auto; }
         .docx-html-preview p { margin: 0.2em 0; }
         .docx-html-preview td[contenteditable]:focus,
         .docx-html-preview td[contenteditable]:focus-within,
@@ -570,6 +579,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
               step={5}
               value={zoom}
               onChange={(e) => onZoomChange?.(Number(e.target.value))}
+              onMouseDown={(e) => e.stopPropagation()}
               className="h-1 w-20 accent-violet-600"
             />
             <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>

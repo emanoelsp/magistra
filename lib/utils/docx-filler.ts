@@ -102,6 +102,14 @@ function hasBoldText(cellXml: string): boolean {
  * Used to prevent period markers ("1º", "2º", "3º") from being misidentified as field values
  * in multi-period tables (annual plans with trimester/bimester columns).
  */
+/**
+ * Returns true when a cell's XML contains an inline image (drawing).
+ * Used to skip image cells so they are never treated as value slots.
+ */
+function hasImageContent(cellXml: string): boolean {
+  return /<wp:inline\b|<wp:anchor\b|<v:imagedata\b/.test(cellXml);
+}
+
 function looksLikePeriodMarker(text: string): boolean {
   const t = text.trim();
   return /^\d[ºoO°]?$/.test(t) ||
@@ -258,9 +266,17 @@ export function removePlaceholder(docxBuffer: Buffer, fieldKey: string): Buffer 
 // ── Inject at a specific cell (by text fingerprint) ──────────────────────────
 
 /**
- * Finds the `ordinal`-th <w:tc> whose normalized text equals `cellText` and
- * injects {{fieldKey}} into it.  If cellText is empty or no match is found,
- * returns the buffer unchanged so injectPlaceholders() can handle it later.
+ * Finds the target <w:tc> and injects {{fieldKey}} into it.
+ *
+ * Two modes depending on cellText:
+ *   • Non-empty cellText: find the `ordinal`-th <w:tc> whose normalized text
+ *     matches cellText (original text-fingerprint mode).
+ *   • Empty cellText:     use `ordinal` as a global <w:tc> index (0-based),
+ *     which is set by the client when the user typed into an empty cell.
+ *     This avoids falling back to injectPlaceholders() which uses label
+ *     matching and may place the variable in the wrong cell.
+ *
+ * Returns the buffer unchanged only when no matching cell is found.
  */
 export function injectAtCell(
   docxBuffer: Buffer,
@@ -268,8 +284,6 @@ export function injectAtCell(
   ordinal: number,
   fieldKey: string,
 ): Buffer {
-  if (!cellText.trim()) return docxBuffer;
-
   const zip = new PizZip(docxBuffer);
   const xmlPath = "word/document.xml";
   if (!zip.files[xmlPath]) return docxBuffer;
@@ -279,8 +293,26 @@ export function injectAtCell(
 
   const tcRegex = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
   let match: RegExpExecArray | null;
-  let hits = 0;
 
+  if (!cellText.trim()) {
+    // Empty-cell mode: ordinal is the global <w:tc> index sent by the client
+    let cellCount = 0;
+    while ((match = tcRegex.exec(xml)) !== null) {
+      if (cellCount === ordinal) {
+        const tcXml = match[0];
+        if (tcXml.includes(placeholder)) return docxBuffer; // idempotent
+        const newTc = setCellContent(tcXml, placeholder);
+        xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + tcXml.length);
+        zip.file(xmlPath, xml);
+        return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+      }
+      cellCount++;
+    }
+    return docxBuffer;
+  }
+
+  // Text-fingerprint mode: find ordinal-th cell matching cellText
+  let hits = 0;
   while ((match = tcRegex.exec(xml)) !== null) {
     const tcXml = match[0];
     const text = extractText(tcXml).trim();
@@ -330,16 +362,18 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   xml = stripChangeTracking(xml);
 
   const rows = parseRows(xml);
-  const used = new Set<string>();
+  // Pre-populate `used` with fields already present in the document so
+  // injectPlaceholders never overwrites cells that were placed by injectAtCell.
+  const used = new Set<string>(schema.map((f) => f.key).filter((k) => xml.includes(`{{${k}}}`)));
 
-  // ── Pass 0: Multi-label paragraph injection ─────────────────────────────────
-  // Handles cells that contain ≥2 label paragraphs ending with ":" in the same cell.
-  // Example: one cell with "Professor(a):\nÁrea/Componente:\nTurma:" — each gets
-  // its own inline placeholder appended to that paragraph.
-  // This also handles ALL CAPS + colon section headers that share a cell with
-  // sub-labels (e.g. "TEMÁTICA ABORDADA:\n- Carga horária prevista:").
+  // ── Pass 0: Paragraph-level inline injection ────────────────────────────────
+  // For 1-cell rows: processes ANY cell with ≥1 label paragraph ending with ":"
+  //   (handles "Professor(a):", "HABILIDADES:", "AVALIAÇÃO:" and sub-items)
+  // For N-cell rows: processes only cells with ≥2 label paragraphs
+  //   (single-label cells in multi-column rows use N-cell adjacent scan in Pass 2)
   for (let ri = 0; ri < rows.length; ri++) {
     const row = rows[ri];
+    const is1CellRow = row.cells.length === 1;
     let rowXml = row.xml;
     let rowModified = false;
 
@@ -349,7 +383,20 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 
       const paraTexts = extractParagraphTexts(cellXml).map((t) => t.trim());
       const labelParas = paraTexts.filter((t) => t.endsWith(":") && t.length > 2);
-      if (labelParas.length < 2) continue; // single-label cells handled by later passes
+      // 1-cell rows: inject inline for any label paragraph (threshold = 1)
+      // N-cell rows: only multi-label cells (threshold = 2); single-label → Pass 2
+      const threshold = is1CellRow ? 1 : 2;
+      if (labelParas.length < threshold) continue;
+
+      // ALL CAPS + single-label in 1-cell row → defer to Pass 2 (adjacent_below).
+      // Section headers like "HABILIDADES:" or "OBJETIVOS:" have their content area
+      // in the next row; injecting inline would break that layout.
+      // Mixed-case single labels ("Professor(a):", "Turma:") are always inline.
+      if (is1CellRow && labelParas.length === 1) {
+        const p = labelParas[0];
+        const pStripped = p.normalize("NFD").replace(/[̀-ͯ]/g, "");
+        if (!/[a-z]/.test(pStripped)) continue; // ALL CAPS → Pass 2
+      }
 
       let newCellXml = cellXml;
       for (const pt of labelParas) {
@@ -787,39 +834,38 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       continue; // don't also run adjacent scan for this row
     }
 
-    // ── 1-cell row → adjacent_below OR inline_colon (fill_cell) ──────────
+    // ── 1-cell row → paragraph-level scan (all label paragraphs → inline_colon) ──
+    // Pass 0 now injects inline for all 1-cell rows with label paragraphs, so we
+    // report inline_colon here for any paragraph ending with ":" (not adjacent_below).
     if (row.cells.length === 1) {
+      const cellXml = row.cells[0] ?? "";
+      const paraTexts = extractParagraphTexts(cellXml).map((t) => t.trim()).filter((t) => t);
+      const labelParas = paraTexts.filter((t) => t.endsWith(":") && t.length > 2);
+
+      if (labelParas.length >= 1) {
+        for (const pt of labelParas) {
+          const label = pt.replace(/:+$/, "").replace(/^-\s*/, "").trim();
+          if (label.length < 2) continue;
+          addPair({ label, valuePreview: "", pattern: "inline_colon" });
+        }
+        continue;
+      }
+
+      // No ":" paragraphs — fall back to the classic mixed-case + empty-below rule
       const t = row.cellTexts[0].trim();
       const tStripped = t.normalize("NFD").replace(/[̀-ͯ]/g, "");
       const hasMixedCase = /[a-z]/.test(tStripped);
       const hasColon = t.endsWith(":");
 
-      // ALL CAPS + no colon → title/subtitle row (school name, document title, etc.), skip
+      // ALL CAPS + no colon → title, skip
       if (!hasMixedCase && !hasColon) { continue; }
 
       const nextText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "";
       const hasEmptyBelow = nextText === "";
-
-      // Classic label heuristic OR mixed-case with empty below (Rule 13)
-      const isFieldLabel = looksLikeLabel(t) || (hasMixedCase && !hasColon && hasEmptyBelow);
+      const isFieldLabel = hasMixedCase && !hasColon && hasEmptyBelow;
       if (!isFieldLabel) { continue; }
 
-      if (!looksLikeLabel(nextText)) {
-        // adjacent_below: next cell is empty or has content (value slot in next row)
-        addPair({
-          label: t.replace(/:+$/, "").trim(),
-          valuePreview: nextText.slice(0, 60),
-          pattern: "adjacent_below",
-        });
-      } else {
-        // fill_cell: next row is ALSO a label → value goes in the same cell as the label.
-        // Report as inline_colon so the AI knows the value is in the same cell.
-        addPair({
-          label: t.replace(/:+$/, "").trim(),
-          valuePreview: "",
-          pattern: "inline_colon",
-        });
-      }
+      addPair({ label: t.trim(), valuePreview: nextText.slice(0, 60), pattern: "adjacent_below" });
       continue;
     }
 
@@ -842,7 +888,8 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       const labelSpanRatio = totalSpan > 0 ? (cellSpans[ci] ?? 1) / totalSpan : 0;
       if (labelSpanRatio >= 0.6 && ri + 1 < rows.length) {
         const belowText = (rows[ri + 1].cellTexts[0] ?? "").trim();
-        if (!looksLikeLabel(belowText) && !looksLikePeriodMarker(belowText)) {
+        const belowCellXml = rows[ri + 1].cells[0] ?? "";
+        if (!looksLikeLabel(belowText) && !looksLikePeriodMarker(belowText) && !hasImageContent(belowCellXml)) {
           addPair({
             label: t.replace(/:+$/, "").trim(),
             valuePreview: belowText.slice(0, 60),
@@ -857,6 +904,8 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       if (looksLikeLabel(nextText) || hasBoldText(row.cells[ci + 1] ?? "")) { ci++; continue; }
       // Period markers are column identifiers, not field values — skip
       if (looksLikePeriodMarker(nextText)) { ci++; continue; }
+      // Image cells are not fillable value slots — skip (prevents header logo detection)
+      if (hasImageContent(row.cells[ci + 1] ?? "") || hasImageContent(row.cells[ci] ?? "")) { ci++; continue; }
       addPair({
         label: t.replace(/:+$/, "").trim(),
         valuePreview: nextText.slice(0, 60),
