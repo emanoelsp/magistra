@@ -167,16 +167,94 @@ function extractParagraphTexts(xml: string): string[] {
 }
 
 /**
+ * Returns visual line texts from a cell, splitting at both </w:p> paragraph
+ * boundaries and <w:br/> soft-return elements within paragraphs.
+ * Used as a fallback when paragraph-level matching fails (soft-return templates).
+ */
+function extractLinesFromCell(cellXml: string): string[] {
+  const lines: string[] = [];
+  const paras = [...cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+  for (const paraMatch of paras) {
+    const paraXml = paraMatch[0];
+    if (!paraXml.includes("<w:br")) {
+      const t = extractText(paraXml).trim();
+      if (t) lines.push(t);
+      continue;
+    }
+    // Split at runs that contain a <w:br/> element
+    const runs = [...paraXml.matchAll(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g)];
+    let lineText = "";
+    for (const runMatch of runs) {
+      if (/<w:br(?:\s[^>]*)?\/?>/.test(runMatch[0])) {
+        if (lineText.trim()) lines.push(lineText.trim());
+        lineText = "";
+      } else {
+        lineText += extractText(runMatch[0]);
+      }
+    }
+    if (lineText.trim()) lines.push(lineText.trim());
+  }
+  return lines;
+}
+
+/**
+ * Finds the normalized text of the specific paragraph (or soft-return line)
+ * within a cell that best matches the given field label.
+ *
+ * Needed when the cell has prefix header content (e.g. "CEDUP HERING" before
+ * "Professor(a):") — in that case normText(cellText) is a concatenation that
+ * doesn't match any single paragraph, causing appendToParagraph to fail.
+ *
+ * Returns null when no paragraph/line in the cell matches the field label.
+ */
+function resolveLabelNormFromCell(
+  cellXml: string,
+  field: TemplateFieldSchema,
+): string | null {
+  const hay = normText(field.label);
+  if (!hay) return null;
+
+  // Try paragraph-level exact or endsWith match
+  const paraTexts = extractParagraphTexts(cellXml).map((t) => t.trim());
+  for (const pt of paraTexts) {
+    const pnorm = normText(pt);
+    if (pnorm === hay || (pnorm.length >= hay.length && pnorm.endsWith(hay))) return pnorm;
+  }
+
+  // Try soft-return line matching
+  for (const line of extractLinesFromCell(cellXml)) {
+    const lnorm = normText(line);
+    if (lnorm === hay || (lnorm.length >= hay.length && lnorm.endsWith(hay))) return lnorm;
+  }
+
+  return null;
+}
+
+/**
  * Appends " {{fieldKey}}" as a new run to the paragraph in `cellXml` whose
  * normalized text matches `labelNorm`.  Returns the modified cell XML, or the
  * original if no matching paragraph is found or the placeholder is already there.
+ *
+ * Matching rules (in order):
+ *   1. Exact match: normText(para) === labelNorm
+ *   2. Suffix match: normText(para) ends with labelNorm
+ *      (handles cells where the paragraph has brief preceding content)
+ *   3. Soft-return line match: tries lines within paragraphs that use <w:br/>
  */
 function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string): string {
   const placeholder = `{{${fieldKey}}}`;
   const paras = [...cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+
   for (const paraMatch of paras) {
     const paraXml = paraMatch[0];
-    if (normText(extractText(paraXml)) !== labelNorm) continue;
+    const paraNorm = normText(extractText(paraXml));
+
+    // Accept exact match or "suffix" match (paragraph has header prefix + label)
+    const matches =
+      paraNorm === labelNorm ||
+      (labelNorm.length >= 3 && paraNorm.length >= labelNorm.length && paraNorm.endsWith(labelNorm));
+
+    if (!matches) continue;
     if (paraXml.includes(placeholder)) return cellXml; // idempotent
     const closeIdx = paraXml.lastIndexOf("</w:p>");
     if (closeIdx === -1) continue;
@@ -184,6 +262,61 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
     const newParaXml = paraXml.slice(0, closeIdx) + newRun + paraXml.slice(closeIdx);
     return cellXml.replace(paraXml, newParaXml);
   }
+
+  // Soft-return fallback: paragraph uses <w:br/> to separate visual lines
+  for (const paraMatch of paras) {
+    const paraXml = paraMatch[0];
+    if (!paraXml.includes("<w:br")) continue;
+
+    const runs = [...paraXml.matchAll(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g)];
+    let lineRuns: string[] = [];
+    let lastLineRunXml: string | null = null;
+
+    for (const runMatch of runs) {
+      if (/<w:br(?:\s[^>]*)?\/?>/.test(runMatch[0])) {
+        const lineText = lineRuns.map((r) => extractText(r)).join("").trim();
+        const lineNorm = normText(lineText);
+        if (
+          lineNorm === labelNorm ||
+          (labelNorm.length >= 3 && lineNorm.length >= labelNorm.length && lineNorm.endsWith(labelNorm))
+        ) {
+          // Inject after the last content run of this line (before the <w:br/> run)
+          if (lastLineRunXml) {
+            if (paraXml.includes(placeholder)) return cellXml;
+            const insertAfter = lastLineRunXml;
+            const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
+            const insertIdx = paraXml.lastIndexOf(insertAfter) + insertAfter.length;
+            const newParaXml = paraXml.slice(0, insertIdx) + newRun + paraXml.slice(insertIdx);
+            return cellXml.replace(paraXml, newParaXml);
+          }
+        }
+        lineRuns = [];
+        lastLineRunXml = null;
+      } else {
+        lineRuns.push(runMatch[0]);
+        if (extractText(runMatch[0]).trim()) lastLineRunXml = runMatch[0];
+      }
+    }
+    // Check last line (after final <w:br/> or if no break at all but paragraph had breaks above)
+    if (lineRuns.length > 0) {
+      const lineText = lineRuns.map((r) => extractText(r)).join("").trim();
+      const lineNorm = normText(lineText);
+      if (
+        lineNorm === labelNorm ||
+        (labelNorm.length >= 3 && lineNorm.length >= labelNorm.length && lineNorm.endsWith(labelNorm))
+      ) {
+        if (lastLineRunXml) {
+          if (paraXml.includes(placeholder)) return cellXml;
+          const insertAfter = lastLineRunXml;
+          const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
+          const insertIdx = paraXml.lastIndexOf(insertAfter) + insertAfter.length;
+          const newParaXml = paraXml.slice(0, insertIdx) + newRun + paraXml.slice(insertIdx);
+          return cellXml.replace(paraXml, newParaXml);
+        }
+      }
+    }
+  }
+
   return cellXml;
 }
 
@@ -509,7 +642,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       if (nextIsLabel) {
         // Fill-cell: value space is within the current cell → append placeholder inline
         const origCell = row.cells[0];
-        let newCell = appendToParagraph(origCell, normText(singleCellText), field.key);
+        const labelNorm = resolveLabelNormFromCell(origCell, field) ?? normText(singleCellText);
+        let newCell = appendToParagraph(origCell, labelNorm, field.key);
         if (newCell === origCell) {
           // Fallback: replace cell text if no matching paragraph found (e.g. split runs)
           newCell = clearAndSetCellText(origCell, `${singleCellText} {{${field.key}}}`);
@@ -545,7 +679,28 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     let rowModified = false;
 
     for (let ci = 0; ci < cells.length; ci++) {
-      const field = matchField(cellTexts[ci], schema, used);
+      // Primary match: try the full cell text
+      let field = matchField(cellTexts[ci], schema, used);
+
+      // Fallback: try each paragraph individually.
+      // Handles cells that combine header text with a label (e.g. "CEDUP HERING\nProfessor(a):")
+      // where the concatenated cell text gives a low match score.
+      if (!field) {
+        const paraTexts = extractParagraphTexts(cells[ci]).map((t) => t.trim()).filter((t) => t.length > 1);
+        for (const pt of paraTexts) {
+          field = matchField(pt, schema, used);
+          if (field) break;
+        }
+      }
+
+      // Soft-return fallback: paragraph uses <w:br/> to separate visual lines
+      if (!field && cells[ci].includes("<w:br")) {
+        for (const line of extractLinesFromCell(cells[ci])) {
+          field = matchField(line, schema, used);
+          if (field) break;
+        }
+      }
+
       if (!field) continue;
 
       const hasNextCell = ci + 1 < cells.length;
@@ -556,7 +711,11 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       // every cell is a label with the value expected after the colon in the same cell.
       if (!hasNextCell || looksLikeLabel(cellTexts[ci + 1])) {
         const origCell = cells[ci];
-        const newCell = appendToParagraph(origCell, normText(cellTexts[ci]), field.key);
+        // Resolve the precise paragraph/line norm so appendToParagraph finds the right spot
+        // (avoids the bug where normText(cellText) = "cedup heringprofessor a" but no
+        //  individual paragraph has that exact normalization)
+        const labelNorm = resolveLabelNormFromCell(origCell, field) ?? normText(cellTexts[ci]);
+        const newCell = appendToParagraph(origCell, labelNorm, field.key);
         if (newCell !== origCell) {
           rowXml = replaceFirst(rowXml, origCell, newCell);
           cells[ci] = newCell;
@@ -572,7 +731,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       if (nextAlsoLabel) {
         // Next cell matches a schema field — inject inline rather than overwriting it
         const origCell = cells[ci];
-        const newCell = appendToParagraph(origCell, normText(cellTexts[ci]), field.key);
+        const labelNorm = resolveLabelNormFromCell(origCell, field) ?? normText(cellTexts[ci]);
+        const newCell = appendToParagraph(origCell, labelNorm, field.key);
         if (newCell !== origCell) {
           rowXml = replaceFirst(rowXml, origCell, newCell);
           cells[ci] = newCell;
@@ -632,6 +792,25 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       if (nextModified) {
         xml = replaceFirst(xml, nextRow.xml, nextRowXml);
         rows[ri + 1] = { xml: nextRowXml, cells: nextCells, cellTexts: nextCellTexts };
+      }
+    }
+  }
+
+  // Diagnostic: log any fields that still have no placeholder after all passes
+  const stillMissing = schema.filter((f) => !xml.includes(`{{${f.key}}}`));
+  if (stillMissing.length > 0) {
+    console.info(`[injectPlaceholders] miss: ${stillMissing.map((f) => f.key).join(", ")}`);
+    for (const f of stillMissing) {
+      const labelNorm = normText(f.label);
+      for (let ri = 0; ri < rows.length; ri++) {
+        for (let ci = 0; ci < rows[ri].cellTexts.length; ci++) {
+          const ct = rows[ri].cellTexts[ci];
+          const ctnorm = normText(ct);
+          const shortHay = labelNorm.slice(0, Math.min(6, labelNorm.length));
+          if (shortHay && (ctnorm.includes(shortHay) || ct.toLowerCase().includes(f.label.slice(0, 6).toLowerCase()))) {
+            console.info(`  key=${f.key} label="${f.label}" norm="${labelNorm}" → row${ri} cell${ci}: "${ct.slice(0, 80)}" (norm: "${ctnorm.slice(0, 80)}")`);
+          }
+        }
       }
     }
   }
