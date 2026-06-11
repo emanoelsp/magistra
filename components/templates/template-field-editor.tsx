@@ -426,6 +426,24 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     }
   }, [phase, fieldPositions, fields]);
 
+  // Inject image-override CSS into <head> AFTER docx-preview renders so our rule
+  // is always later in the cascade than docx-preview's injected stylesheet.
+  useEffect(() => {
+    if (phase !== "done") return;
+    const id = "docx-img-override-editor";
+    let el = document.getElementById(id) as HTMLStyleElement | null;
+    if (!el) {
+      el = document.createElement("style");
+      el.id = id;
+      document.head.appendChild(el);
+    }
+    el.textContent = [
+      `.docx-wrapper img { max-width:100%!important; height:auto!important; display:inline-block!important; position:static!important; float:none!important; vertical-align:middle!important; }`,
+      `.docx-wrapper td img, .docx-wrapper th img { display:block!important; margin:0 auto; }`,
+    ].join("\n");
+    return () => { el?.remove(); };
+  }, [phase]);
+
   // Contenteditable — make cells editable, avoiding nested contenteditable
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
