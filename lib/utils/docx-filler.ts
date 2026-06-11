@@ -1828,6 +1828,533 @@ export function fillDocx(
   return doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// injectByTopology — Priority-based spatial injection engine
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Designed for "zero-config onboarding": the user uploads a BLANK template
+// (cells are empty — no values pre-filled) and the engine decides WHERE to
+// place each {{placeholder}} purely from the geometric topology of the table.
+//
+// Priority chain applied per candidate label cell, in strict order:
+//   1. Adjacent Right  — empty cell at virtual col = labelVCol + labelSpan
+//   2. Adjacent Below  — empty cell in next row at same virtual col
+//   3. Inline Suffix   — cell text ends with ":", "–/—", or city-comma
+//   4. Period Vector   — ordinal header row → {{key_1}}, {{key_2}} …
+//   5. Dead Zone       — skip (headers without empty neighbours, connectives)
+//
+// Differences vs injectPlaceholders:
+//   • injectPlaceholders is for labelled templates (label cells + value cells
+//     already exist; uses multi-pass fuzzy matching against schema labels).
+//   • injectByTopology is for blank templates (cells are empty; uses adjacency
+//     geometry + suffix heuristics to pick the right slot without prior values).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Dead-zone constants ───────────────────────────────────────────────────────
+
+const DEAD_ZONE_CONNECTIVES = new Set([
+  "e", "ou", "de", "da", "do", "dos", "das", "em", "no", "na",
+  "nos", "nas", "a", "o", "as", "os", "um", "uma", "uns", "umas",
+  "para", "por", "com", "se", "que", "mas", "nem",
+]);
+
+/**
+ * Returns true when the text should be skipped before any adjacency check.
+ * These are cells that can NEVER be a field anchor regardless of neighbours.
+ */
+function isDeadZoneText(rawText: string): boolean {
+  const t = rawText.trim();
+  if (!t || t.length < 2) return true;
+  if (t.length > 100) return true;                    // long paragraphs / descriptions
+  if (isInstructionalBlock(t)) return true;           // "Obs:", "Nota:", "Observação:"
+  const norm = normText(t);
+  if (!norm || norm.length < 2) return true;          // punctuation-only after normalization
+  const words = norm.split(/\s+/).filter(Boolean);
+  if (words.length === 1 && DEAD_ZONE_CONNECTIVES.has(words[0])) return true;
+  return false;
+}
+
+// ── Inline-suffix detection (Priority 3) ─────────────────────────────────────
+
+type InlineSuffixKind = "colon" | "hyphen" | "city_comma" | null;
+
+/**
+ * Classifies whether the cell text ends with a recognisable field-label suffix.
+ * Only cells with such a suffix qualify for inline injection.
+ */
+function detectInlineSuffix(rawText: string): InlineSuffixKind {
+  const t = rawText.trim();
+  if (t.endsWith(":")) return "colon";
+  // Em-dash / en-dash / isolated hyphen at the end
+  if (/[–—]$/.test(t) || /(?:^|\s)[-–—]\s*$/.test(t)) return "hyphen";
+  // Single capitalised word + comma (e.g. "Blumenau,")
+  if (/^[A-ZÀ-Ú][a-zA-ZÀ-ú]{2,},$/.test(t)) return "city_comma";
+  return null;
+}
+
+// ── Period/ordinal vector (Priority 4) ───────────────────────────────────────
+
+interface VectorHeader {
+  colIdx: number;   // physical cell index inside the row
+  vCol:   number;   // virtual column where the cell starts
+  ordinal: number;  // numeric ordinal (1, 2, 3 …)
+}
+
+/**
+ * If ≥ 2 cells in this row are pure ordinal markers (1º, 2º, 3º …)
+ * returns the descriptor array; otherwise returns [].
+ * The ≥ 2 guard prevents single period markers from triggering vector mode.
+ */
+function detectVectorRow(row: Row): VectorHeader[] {
+  const vcols = computeVirtualColIndices(row.cells);
+  const headers: VectorHeader[] = [];
+
+  for (let ci = 0; ci < row.cells.length; ci++) {
+    const t = extractText(row.cells[ci] ?? "").trim();
+    if (!looksLikePeriodMarker(t)) continue;
+    const ord = parseInt(t.match(/^(\d+)/)?.[1] ?? "0", 10);
+    if (ord < 1) continue;
+    headers.push({ colIdx: ci, vCol: vcols[ci] ?? ci, ordinal: ord });
+  }
+
+  return headers.length >= 2 ? headers : [];
+}
+
+/**
+ * Maps an ordinal position to a schema field / placeholder key.
+ *
+ * Resolution order:
+ *   1. Schema field whose key ends with `_N` (e.g. trimestre_1, bimestre_2).
+ *   2. Schema field with injection_pattern "period_column" → synthesise key_N.
+ *
+ * Returns null when no matching field is found.
+ */
+function resolvePeriodPlaceholder(
+  schema: TemplateFieldSchema[],
+  used: Set<string>,
+  ordinal: number,
+): { key: string; markUsed: boolean } | null {
+  // Strategy 1: explicit numbered keys in schema
+  for (const f of schema) {
+    if (used.has(f.key)) continue;
+    if (new RegExp(`[_]?${ordinal}$`).test(f.key)) return { key: f.key, markUsed: true };
+  }
+  // Strategy 2: single period_column base field → synthesise
+  const base = schema.find((f) => !used.has(f.key) && f.injection_pattern === "period_column");
+  if (base) return { key: `${base.key}_${ordinal}`, markUsed: false };
+  return null;
+}
+
+// ── Rule D: textWrapping soft-return multi-label injection ───────────────────
+
+/**
+ * Finds the column-header label for a data cell at `vCol` by walking upward
+ * through the rows above `dataRowIdx`. Skips vMerge continuation cells (they
+ * are visual extensions of the merge-start cell above them).
+ *
+ * Returns the label text, or null when no non-empty ancestor cell is found.
+ */
+function findColumnHeader(rows: Row[], dataRowIdx: number, vCol: number): string | null {
+  for (let ri = dataRowIdx - 1; ri >= 0; ri--) {
+    const row = rows[ri];
+    const vcols = computeVirtualColIndices(row.cells);
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      if ((vcols[ci] ?? ci) !== vCol) continue;
+      if (isVMergeContinuation(row.cells[ci] ?? "")) continue;
+      const text = extractText(row.cells[ci] ?? "").trim();
+      if (text) return text;
+    }
+  }
+  return null;
+}
+
+/**
+ * For a sibling column in a period-vector table block, resolves which schema
+ * field should be injected into data row N of that column.
+ *
+ * Tries (in order):
+ *   1. Field whose key ends with `_tr${n}` (e.g. conceitos_estruturantes_tr2)
+ *   2. Field whose key ends with `_${n}`  (e.g. conceitos_2)
+ *   3. Field with injection_pattern "column_header" whose normalised label
+ *      matches the column header, synthesising `${key}_${n}`.
+ */
+function resolveSiblingColumnField(
+  schema: TemplateFieldSchema[],
+  used: Set<string>,
+  colHeader: string,
+  n: number,
+): { key: string; markUsed: boolean } | null {
+  const headerNorm = normText(colHeader);
+
+  // Strategy 1 & 2: explicit numbered keys whose base matches the column header
+  for (const f of schema) {
+    if (used.has(f.key)) continue;
+    const baseKey = f.key.replace(/_tr\d+$/, "").replace(/_\d+$/, "");
+    const baseNorm = normText(baseKey.replace(/_/g, " "));
+    const matches =
+      baseNorm === headerNorm ||
+      (headerNorm.length >= 4 && baseNorm.includes(headerNorm.slice(0, 6))) ||
+      (baseNorm.length >= 4 && headerNorm.includes(baseNorm.slice(0, 6)));
+    if (!matches) continue;
+    if (new RegExp(`_tr${n}$`).test(f.key)) return { key: f.key, markUsed: true };
+    if (new RegExp(`_${n}$`).test(f.key)) return { key: f.key, markUsed: true };
+  }
+
+  // Strategy 3: column_header field → synthesise key_n
+  for (const f of schema) {
+    if (used.has(f.key)) continue;
+    if (f.injection_pattern !== "column_header") continue;
+    const labelNorm = normText(f.label);
+    const matches =
+      labelNorm === headerNorm ||
+      (headerNorm.length >= 4 && labelNorm.includes(headerNorm.slice(0, 6))) ||
+      (labelNorm.length >= 4 && headerNorm.includes(labelNorm.slice(0, 6)));
+    if (matches) return { key: `${f.key}_${n}`, markUsed: false };
+  }
+
+  return null;
+}
+
+/**
+ * Rule D — Soft-return multi-label injection for textWrapping cells.
+ *
+ * Some templates pack multiple label:value pairs into a single cell using
+ * <w:br w:type="textWrapping"/> as visual line separators instead of distinct
+ * table cells. Example — Plano 30 dias (CEDUP Hering) format:
+ *
+ *   <w:t>Professor(a): </w:t><w:br type="textWrapping"/>
+ *   <w:t>Área/Componente: </w:t><w:br type="textWrapping"/>
+ *   <w:t>Turma:</w:t>
+ *
+ * For each <w:t> whose content ends with ":" that matches a schema field,
+ * appends " {{key}}" directly into the <w:t> text (NOT a new run — the token
+ * must stay in the same visual line as its label).
+ *
+ * Processing is done in reverse order so earlier <w:t> indices stay valid.
+ *
+ * Returns the modified cell XML and the list of injected field keys.
+ */
+function injectTextWrappingSegments(
+  cellXml: string,
+  schema: TemplateFieldSchema[],
+  used: Set<string>,
+): { xml: string; injected: string[] } {
+  if (!/<w:br\b/.test(cellXml)) return { xml: cellXml, injected: [] };
+
+  // Collect all <w:t> elements ending with ":" (potential inline labels)
+  const matches: Array<{ full: string; text: string; index: number }> = [];
+  const wtRegex = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
+  let wm: RegExpExecArray | null;
+  let result = cellXml;
+
+  while ((wm = wtRegex.exec(result)) !== null) {
+    const text = wm[1];
+    if (text.trimEnd().endsWith(":")) {
+      matches.push({ full: wm[0], text, index: wm.index });
+    }
+  }
+
+  const injected: string[] = [];
+
+  // Process backwards to keep earlier indices stable across replacements
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const { full, text, index } = matches[i];
+    const field = matchField(text.trim(), schema, used);
+    if (!field) continue;
+
+    const placeholder = `{{${field.key}}}`;
+    // Preserve existing trailing space, add placeholder directly in the <w:t>
+    const trimmed = text.trimEnd();
+    const newWt = `<w:t xml:space="preserve">${trimmed} ${placeholder}</w:t>`;
+    result = result.slice(0, index) + newWt + result.slice(index + full.length);
+
+    used.add(field.key);
+    injected.push(field.key);
+  }
+
+  return { xml: result, injected };
+}
+
+// ── Injection primitives ──────────────────────────────────────────────────────
+
+/**
+ * Injects `placeholder` into a cell that is EMPTY (no text content).
+ * Appends a new `<w:r>` run before the closing `</w:p>` of the last paragraph.
+ * Does NOT touch `<w:pPr>` or `<w:tcPr>` — all formatting is preserved.
+ */
+function injectIntoEmptyCell(cellXml: string, placeholder: string): string {
+  const run = `<w:r><w:t xml:space="preserve">${placeholder}</w:t></w:r>`;
+  const lastClose = cellXml.lastIndexOf("</w:p>");
+  if (lastClose === -1) return cellXml;
+  return cellXml.slice(0, lastClose) + run + cellXml.slice(lastClose);
+}
+
+/**
+ * Appends ` {{placeholder}}` as a new run after the last existing run in the
+ * cell's last paragraph (inline — same cell, after the label suffix).
+ * Invariant: never mutates the existing `<w:r>` nodes — only appends.
+ */
+function injectInlineSuffixRun(cellXml: string, placeholder: string): string {
+  const run = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
+  // Insert before </w:p> of the last paragraph so the run is inside the paragraph
+  const lastPClose = cellXml.lastIndexOf("</w:p>");
+  if (lastPClose === -1) return cellXml;
+  return cellXml.slice(0, lastPClose) + run + cellXml.slice(lastPClose);
+}
+
+// ── Effective-empty guard ─────────────────────────────────────────────────────
+
+/**
+ * A cell qualifies as an injection target only when:
+ *   • extracted text is blank, AND
+ *   • it is NOT a vMerge continuation (visual extension of a merged cell above), AND
+ *   • it does NOT contain an inline image.
+ */
+function isEffectivelyEmpty(cellXml: string): boolean {
+  if (isVMergeContinuation(cellXml)) return false;
+  if (hasImageContent(cellXml)) return false;
+  return extractText(cellXml).trim() === "";
+}
+
+// ── Main engine ───────────────────────────────────────────────────────────────
+
+/**
+ * Spatial injection engine for blank DOCX templates.
+ *
+ * Walk every table row × cell. For each cell whose text looks like a field
+ * label, apply the 5-priority decision chain to decide where to place the
+ * `{{placeholder}}`.  The chain is strict: once a higher-priority rule fires,
+ * lower-priority rules are not evaluated for that cell.
+ *
+ * Idempotent: fields already present in the document (via extractText — immune
+ * to OOXML run fragmentation) are skipped.
+ *
+ * Pairs with the existing injectPlaceholders for the labelled-template case:
+ *   • Blank templates  → injectByTopology  (geometry-first)
+ *   • Filled templates → injectPlaceholders (label-matching-first)
+ */
+export function injectByTopology(
+  docxBuffer: Buffer,
+  schema: TemplateFieldSchema[],
+): Buffer {
+  if (schema.length === 0) return docxBuffer;
+
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  let xml = zip.files[xmlPath].asText();
+  xml = stripChangeTracking(xml);
+
+  // Idempotency: pre-populate `used` with fields already present in the XML.
+  // extractText() is used so fragmented tokens (split across <w:r> nodes) are
+  // detected even if xml.includes("{{key}}") would miss them.
+  const used = new Set<string>();
+  for (const f of schema) {
+    if (extractText(xml).includes(`{{${f.key}}}`)) used.add(f.key);
+  }
+  if (used.size === schema.length) return docxBuffer;
+
+  let rows = parseRows(xml);
+
+  // ── Rule D pre-pass: textWrapping soft-return multi-label cells ──────────
+  //
+  // Process cells that pack multiple label:value pairs into one cell via
+  // <w:br w:type="textWrapping"/> before the main adjacency loop runs.
+  // These cells always fail P1/P2 (no separate adjacent cells), and a naive
+  // P3 would only handle the last label. Rule D processes ALL segments.
+
+  rows = parseRows(xml);
+  for (const row of rows) {
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      const cellXml = row.cells[ci] ?? "";
+      if (!/<w:br\b/.test(cellXml)) continue;
+      const { xml: newCell, injected } = injectTextWrappingSegments(cellXml, schema, used);
+      if (injected.length === 0) continue;
+      xml = replaceFirst(xml, cellXml, newCell);
+      rows = parseRows(xml);
+      console.info(`[topology rule-D] injected: ${injected.join(", ")}`);
+    }
+  }
+
+  // ── Priority 4 pre-pass: ordinal/period vector rows ──────────────────────
+  //
+  // Detect rows where ≥ 2 cells are ordinal markers (1º, 2º, 3º …).
+  //
+  // DIAGONAL pattern (observed in EMIEP): ordinal N does NOT go into the
+  // row immediately below the header — it goes into row ri + N:
+  //   R09: 1º | 2º | 3º   (vector header row, ri)
+  //   R10: {{tr1}} at vC(1º) | ()          | ()          ← ri+1
+  //   R11: ()              | {{tr2}} at vC(2º) | ()      ← ri+2
+  //   R12: ()              | ()          | {{tr3}} at vC(3º) ← ri+3
+  //
+  // SIBLING COLUMN fill (Rule F): columns that are NOT ordinal headers but
+  // are in the same data-row block (conceitos/habilidades/objeto in EMIEP)
+  // also receive numbered variants for each data row:
+  //   R10: {{conceitos_tr1}} | {{habilidades_tr1}} | {{objeto_tr1}}
+  //   R11: {{conceitos_tr2}} | …                   | …
+  //   R12: {{conceitos_tr3}} | …                   | …
+
+  rows = parseRows(xml);
+  for (let ri = 0; ri < rows.length; ri++) {
+    const vectorHeaders = detectVectorRow(rows[ri]);
+    if (vectorHeaders.length === 0) continue;
+
+    const ordinalVCols = new Set(vectorHeaders.map((h) => h.vCol));
+    const maxOrdinal   = Math.max(...vectorHeaders.map((h) => h.ordinal));
+
+    for (const h of vectorHeaders) {
+      // ── Ordinal column: diagonal injection at row ri + h.ordinal ─────────
+      const dataRow = rows[ri + h.ordinal];
+      if (!dataRow) continue;
+
+      const dataVCols   = computeVirtualColIndices(dataRow.cells);
+      const vColToDataIdx = new Map<number, number>();
+      for (let j = 0; j < dataRow.cells.length; j++) {
+        const vc = dataVCols[j] ?? j;
+        if (!vColToDataIdx.has(vc)) vColToDataIdx.set(vc, j);
+      }
+
+      const resolved = resolvePeriodPlaceholder(schema, used, h.ordinal);
+      if (resolved) {
+        const targetIdx  = vColToDataIdx.get(h.vCol);
+        const targetCell = targetIdx !== undefined ? (dataRow.cells[targetIdx] ?? "") : "";
+        if (targetIdx !== undefined && isEffectivelyEmpty(targetCell)) {
+          const placeholder = `{{${resolved.key}}}`;
+          const newCell = injectIntoEmptyCell(targetCell, placeholder);
+          xml  = replaceFirst(xml, targetCell, newCell);
+          rows = parseRows(xml);
+          if (resolved.markUsed) used.add(resolved.key);
+          console.info(`[topology p4-diagonal] ${resolved.key} ordinal=${h.ordinal} ri=${ri + h.ordinal}`);
+        }
+      }
+    }
+
+    // ── Sibling columns: fill empty cells in data rows ri+1 … ri+maxOrdinal
+    for (let n = 1; n <= maxOrdinal; n++) {
+      const dataRow = rows[ri + n];
+      if (!dataRow) continue;
+      const dataVCols = computeVirtualColIndices(dataRow.cells);
+
+      for (let j = 0; j < dataRow.cells.length; j++) {
+        const cellXml   = dataRow.cells[j] ?? "";
+        const cellVCol  = dataVCols[j] ?? j;
+        if (ordinalVCols.has(cellVCol)) continue;  // already handled above
+        if (!isEffectivelyEmpty(cellXml)) continue;
+
+        const colHeader = findColumnHeader(rows, ri + n, cellVCol);
+        if (!colHeader) continue;
+
+        const sibResolved = resolveSiblingColumnField(schema, used, colHeader, n);
+        if (!sibResolved) continue;
+
+        const placeholder = `{{${sibResolved.key}}}`;
+        const newCell = injectIntoEmptyCell(cellXml, placeholder);
+        xml  = replaceFirst(xml, cellXml, newCell);
+        rows = parseRows(xml);
+        if (sibResolved.markUsed) used.add(sibResolved.key);
+        console.info(`[topology p4-sibling] ${sibResolved.key} col="${colHeader}" row=${ri + n}`);
+      }
+    }
+  }
+
+  // ── Main pass: Priorities 1 · 2 · 3 · 5 ─────────────────────────────────
+  //
+  // For each non-empty, non-dead-zone cell that matches a schema field label,
+  // try adjacency rules in order. Fall through to Priority 5 (skip) when none
+  // of them apply.
+
+  rows = parseRows(xml); // reload after Priority 4 mutations
+
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    const vcols = computeVirtualColIndices(row.cells);
+
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      const cellXml = row.cells[ci] ?? "";
+
+      // Hard skips — not recoverable by any priority rule
+      if (isVMergeContinuation(cellXml)) continue;
+      if (hasImageContent(cellXml)) continue;
+
+      const rawText = extractText(cellXml).trim();
+      if (!rawText) continue;
+      if (isDeadZoneText(rawText)) continue;  // instructional / connective / too long
+
+      // Match cell text to a schema field (reuses fuzzy scorer + alias fallback)
+      const field = matchField(rawText, schema, used);
+      if (!field) continue;
+
+      const placeholder  = `{{${field.key}}}`;
+      const labelVCol    = vcols[ci] ?? ci;
+      const labelSpan    = getCellGridSpan(cellXml);
+      const rightVCol    = labelVCol + labelSpan;   // virtual col of the expected value cell
+
+      // ── Priority 1: Adjacent right ──────────────────────────────────────
+      let placed = false;
+      for (let j = ci + 1; j < row.cells.length; j++) {
+        const right = row.cells[j] ?? "";
+        if (isVMergeContinuation(right)) continue;
+        const rvc = vcols[j] ?? j;
+        if (rvc < rightVCol) continue;    // still inside the label's span
+        if (rvc > rightVCol) break;       // overshot — no right candidate
+        // rvc === rightVCol
+        if (!isEffectivelyEmpty(right)) break; // occupied — skip to Priority 2
+        const newCell = injectIntoEmptyCell(right, placeholder);
+        xml   = replaceFirst(xml, right, newCell);
+        rows  = parseRows(xml);
+        used.add(field.key);
+        placed = true;
+        console.info(`[topology p1] ${field.key} ← right of "${rawText}"`);
+        break;
+      }
+      if (placed) continue;
+
+      // ── Priority 2: Adjacent below ──────────────────────────────────────
+      if (ri + 1 < rows.length) {
+        const nextRow  = rows[ri + 1];
+        const nvcols   = computeVirtualColIndices(nextRow.cells);
+        for (let j = 0; j < nextRow.cells.length; j++) {
+          if (isVMergeContinuation(nextRow.cells[j] ?? "")) continue;
+          if ((nvcols[j] ?? j) !== labelVCol) continue;  // different virtual column
+          if (!isEffectivelyEmpty(nextRow.cells[j] ?? "")) break;
+          const targetCell = nextRow.cells[j];
+          const newCell    = injectIntoEmptyCell(targetCell, placeholder);
+          xml   = replaceFirst(xml, targetCell, newCell);
+          rows  = parseRows(xml);
+          used.add(field.key);
+          placed = true;
+          console.info(`[topology p2] ${field.key} ← below "${rawText}"`);
+          break;
+        }
+      }
+      if (placed) continue;
+
+      // ── Priority 3: Inline suffix ───────────────────────────────────────
+      // Only fires when the cell ALREADY ends with a recognised label suffix
+      // (":", "–", city-comma). Cells that are ALL-CAPS headings without a
+      // suffix and without empty neighbours fall through to Priority 5 (skip).
+      const suffix = detectInlineSuffix(rawText);
+      if (suffix !== null) {
+        const newCell = injectInlineSuffixRun(cellXml, placeholder);
+        xml   = replaceFirst(xml, cellXml, newCell);
+        rows  = parseRows(xml);
+        used.add(field.key);
+        console.info(`[topology p3-${suffix}] ${field.key} inline in "${rawText}"`);
+        continue;
+      }
+
+      // ── Priority 5: Dead zone (implicit) ───────────────────────────────
+      // Cell is capitalised / ALL-CAPS but has no empty neighbours and no
+      // recognised suffix → structural header, not a field anchor.  Skip.
+      console.info(`[topology p5-skip] "${rawText}" — no injection target found`);
+    }
+  }
+
+  zip.file(xmlPath, xml);
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
 // ── Challenge 4: Orphan field append ─────────────────────────────────────────
 
 /**

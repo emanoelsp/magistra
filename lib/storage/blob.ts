@@ -95,7 +95,9 @@ export async function downloadFile(url: string): Promise<Buffer> {
   if (url.includes("blob.vercel-storage.com") && process.env.BLOB_READ_WRITE_TOKEN) {
     headers["Authorization"] = `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`;
   }
-  const res = await fetch(url, { headers });
+  // cache: "no-store" bypasses the Vercel CDN so we always get the latest
+  // version of overwritten files (same path, new content after each save).
+  const res = await fetch(url, { headers, cache: "no-store" });
   if (!res.ok) throw new Error(`Storage fetch failed: ${res.status} ${url}`);
   return Buffer.from(await res.arrayBuffer());
 }

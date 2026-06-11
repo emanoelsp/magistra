@@ -74,6 +74,8 @@ export interface TemplateRecord {
   arquivo_url?: string;
   arquivo_fillable_url?: string;
   fillable_status?: TemplateFillableStatus;
+  /** Persisted cell-click positions (cellText + ordinal) keyed by field key. */
+  field_positions?: Record<string, { cellText: string; ordinal: number }>;
   deleted_at?: string;
 }
 

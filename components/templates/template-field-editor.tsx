@@ -899,9 +899,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     }
 
     if (newFields.length === 0 && removedKeys.length === 0) {
-      // Nothing new to persist — save schema metadata only without re-fetching
-      // the DOCX.  Re-fetching would reload the file from storage and overwrite
-      // the correct chip positions the user sees in the current DOM.
+      // No structural changes — metadata-only save. Still refresh the preview so
+      // any positional edits the user made in the Word editor become visible.
       void fetch(`/api/templates/${template.id}/schema`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -911,7 +910,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           schema_campos: fields,
           field_positions: {},
         }),
-      }).catch(() => { /* silent */ });
+      })
+        .then(() => { setPreviewVersion((v) => v + 1); })
+        .catch(() => { /* silent */ });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       return;

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -10,8 +11,6 @@ import {
   appendOrphanField,
   injectAtCell,
   injectPlaceholders,
-  removePlaceholder,
-  renamePlaceholder,
   reportInjections,
 } from "../../../../../lib/utils/docx-filler";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
@@ -84,59 +83,70 @@ export async function PATCH(
       }
     }
 
-    // Download current DOCX (fillable if available, else original)
     const arquivoUrl = typeof data.arquivo_url === "string" ? data.arquivo_url : "";
-    const fillableUrl = typeof data.arquivo_fillable_url === "string" ? data.arquivo_fillable_url : "";
 
     const isDocx = /\.(docx|doc)$/i.test(arquivoUrl.split("?")[0]);
     if (!isDocx || !arquivoUrl) {
-      // Non-DOCX template: just update Firestore schema
       await db.collection("magis_templates").doc(id).update({ nome, estado, schema_campos: newSchema });
       return NextResponse.json({ ok: true });
     }
 
-    // Use fillable as base if it exists; otherwise use original
-    const sourceUrl = fillableUrl || arquivoUrl;
-    let buffer = await downloadFile(sourceUrl);
+    // ── Immutable Base Pattern ───────────────────────────────────────────────
+    // ALWAYS regenerate the fillable from the original (clean, token-free) DOCX.
+    //
+    // Why: using the previous fillable as base causes three classes of bugs:
+    //   1. Ghost variables — tokens from deleted fields survive across saves
+    //      because removePlaceholder fails on OOXML-fragmented tokens.
+    //   2. Position drift — re-running injectPlaceholders on a document that
+    //      already has {{tokens}} may reposition them when the label heuristic
+    //      scores a different cell.
+    //   3. State accumulation — each save compounds errors from prior saves.
+    //
+    // With the original as base, the fillable is always a pure function of
+    // (original DOCX, current schema, current positions). Deleted fields simply
+    // aren't injected. Impossible to have ghost variables by construction.
+    let buffer = await downloadFile(arquivoUrl);
 
-    // 1. Rename placeholders in-place for fields whose label is unchanged but key
-    //    was corrected by the user.  Rename-in-place preserves the existing cell
-    //    position instead of removing + re-injecting via label matching (which may
-    //    choose the wrong cell and cause a visible "revert").
-    const renamedOldKeys = new Set<string>(corrections.map((c) => c.extracted_key));
-    for (const correction of corrections) {
-      buffer = renamePlaceholder(buffer, correction.extracted_key, correction.correct_key);
+    // ── Merge field positions: Firestore (historical) + request (this save) ─
+    // field_positions are persisted so manual cell-click placements survive
+    // across page reloads and metadata-only saves.
+    type FieldPosition = { cellText: string; ordinal: number };
+    const stored = (typeof data.field_positions === "object" && data.field_positions !== null)
+      ? (data.field_positions as Record<string, FieldPosition>)
+      : {};
+
+    const allPositions: Record<string, FieldPosition> = { ...stored };
+    for (const [k, v] of Object.entries(fieldPositions)) {
+      allPositions[k] = v;                    // new/override from this save
+    }
+    for (const key of deletedKeys) {
+      delete allPositions[key];               // removed field → forget position
+    }
+    for (const key of Object.keys(allPositions)) {
+      if (!newKeys.has(key)) delete allPositions[key]; // stale cleanup
     }
 
-    // 2. Remove placeholders for truly deleted fields (not just renamed)
-    for (const key of deletedKeys.filter((k) => !renamedOldKeys.has(k))) {
-      buffer = removePlaceholder(buffer, key);
-    }
-
-    // 3. Direct injection at clicked positions (for newly added fields).
-    // Empty cellText means the user typed into an empty cell — ordinal is the
-    // global <w:tc> index in that case (handled inside injectAtCell).
-    for (const [key, pos] of Object.entries(fieldPositions)) {
-      if (newKeys.has(key) && !renamedOldKeys.has(key)) {
+    // 1. Apply all known positions via injectAtCell (most precise — exact cell).
+    for (const [key, pos] of Object.entries(allPositions)) {
+      if (newKeys.has(key)) {
         buffer = injectAtCell(buffer, pos.cellText, pos.ordinal, key);
       }
     }
 
-    // 3. Label-based injection for any remaining fields without placeholders
+    // 2. Label-based injection for any remaining fields without explicit positions.
     buffer = injectPlaceholders(buffer, newSchema);
 
-    // 4. Post-injection validation: report which fields got placed and which didn't
+    // 3. Post-injection validation: report which fields got placed and which didn't
     const { missing: camposSemPlaceholder } = reportInjections(buffer, newSchema);
     if (camposSemPlaceholder.length > 0) {
       console.info(`[templates/schema] Campos sem placeholder automático: ${camposSemPlaceholder.join(", ")}`);
     }
 
-    // 4b. Tier 2 orphan fallback: for fields still missing AND not manually placed via
-    //     field_positions, append a labeled row to the last table so docxtemplater has
-    //     a valid target. Preserves cell-click (Tier 1) positioning when it was used.
-    const manuallyPositioned = new Set(Object.keys(fieldPositions));
+    // 4. Tier 2 orphan fallback: fields still missing AND not in allPositions
+    //    → append a labeled row so docxtemplater always has a valid target.
+    const positionedKeys = new Set(Object.keys(allPositions));
     for (const key of camposSemPlaceholder) {
-      if (manuallyPositioned.has(key)) continue;
+      if (positionedKeys.has(key)) continue;
       const field = newSchema.find((f) => f.key === key);
       if (!field) continue;
       buffer = appendOrphanField(buffer, key, field.label);
@@ -151,18 +161,25 @@ export async function PATCH(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
 
-    // 6. Update Firestore (include corrections if any were detected)
+    // 6. Update Firestore (persist merged positions + corrections audit log)
     const firestoreUpdate: Record<string, unknown> = {
       nome,
       estado,
       schema_campos: newSchema,
       arquivo_fillable_url: newFillableUrl,
       fillable_status: "pronto",
+      field_positions: allPositions,    // source of truth for placement
     };
     if (corrections.length > 0) {
       firestoreUpdate.campo_corrections = FieldValue.arrayUnion(...corrections);
     }
     await db.collection("magis_templates").doc(id).update(firestoreUpdate);
+
+    // Bust Next.js Router Cache so server components re-read fresh Firestore data
+    revalidatePath(`/dashboard/templates/${id}`);
+    revalidatePath(`/dashboard/templates/${id}/editar`);
+    revalidatePath(`/dashboard/templates/${id}/visualizar`);
+    revalidatePath(`/dashboard/templates/${id}/confirmar`);
 
     return NextResponse.json({
       ok: true,
