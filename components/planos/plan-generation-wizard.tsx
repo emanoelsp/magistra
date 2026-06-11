@@ -11,6 +11,7 @@ import {
   Download,
   FileText,
   LoaderCircle,
+  Pencil,
   Save,
   Sparkles,
 } from "lucide-react";
@@ -34,12 +35,22 @@ interface RecentPlano {
   conteudo_gerado: Record<string, unknown>;
 }
 
+export interface ResumeData {
+  planoId: string;
+  templateId: string;
+  /** 0-based step index to resume at (0=template, 1=metadata, 2=editor, 3=review) */
+  wizardStep: number;
+  planoTitulo: string;
+  values: Record<string, string>;
+}
+
 interface PlanGenerationWizardProps {
   userId: string;
   userName: string;
   availableTemplates: TemplateOption[];
   preSelectedTemplateId?: string;
   recentPlanos?: RecentPlano[];
+  resumeData?: ResumeData;
 }
 
 function formatDate(value: string) {
@@ -90,20 +101,23 @@ export function PlanGenerationWizard({
   availableTemplates,
   preSelectedTemplateId,
   recentPlanos = [],
+  resumeData,
 }: PlanGenerationWizardProps) {
   const router = useRouter();
 
-  // Determina passo inicial: se veio com template pré-selecionado, pula p/ step 1 (metadados)
-  const initialStep = preSelectedTemplateId ? 1 : 0;
-  const initialId = preSelectedTemplateId ?? availableTemplates[0]?.id ?? "";
+  const initialStep = resumeData ? resumeData.wizardStep
+    : preSelectedTemplateId ? 1 : 0;
+  const initialId = resumeData?.templateId ?? preSelectedTemplateId ?? availableTemplates[0]?.id ?? "";
 
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialId);
-  const [planoTitulo, setPlanoTitulo] = useState("");
+  const [planoTitulo, setPlanoTitulo] = useState(resumeData?.planoTitulo ?? "");
   const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
   const [saveToTemplate, setSaveToTemplate] = useState(true);
-  const [capturedEditorValues, setCapturedEditorValues] = useState<Record<string, string>>({});
-  const [savedPlanoId, setSavedPlanoId] = useState<string | null>(null);
+  const [capturedEditorValues, setCapturedEditorValues] = useState<Record<string, string>>(
+    resumeData?.values ?? {}
+  );
+  const [savedPlanoId, setSavedPlanoId] = useState<string | null>(resumeData?.planoId ?? null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [officePreviewUrl, setOfficePreviewUrl] = useState<string | null>(null);
   const [officePreviewLoading, setOfficePreviewLoading] = useState(false);
@@ -115,6 +129,7 @@ export function PlanGenerationWizard({
   const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
 
   const editorRef = useRef<PlanEditorHandle>(null);
+  const hasAppliedResumeRef = useRef(false);
 
   // Fetch Office Online preview URL when step 4 opens with a saved plan
   useEffect(() => {
@@ -166,13 +181,23 @@ export function PlanGenerationWizard({
   // Quando template muda, pré-popula metadados com o que está salvo
   useEffect(() => {
     if (!selectedTemplate) return;
+
+    // On first mount when resuming: restore metadata from saved values
+    if (resumeData && !hasAppliedResumeRef.current) {
+      hasAppliedResumeRef.current = true;
+      const initial: Record<string, string> = {};
+      for (const f of manualFields) {
+        initial[f.key] = resumeData.values[f.key] ?? "";
+      }
+      setMetadataValues(initial);
+      return;
+    }
+
     const saved = selectedTemplate.metadata_padrao ?? {};
     const initial: Record<string, string> = {};
-
     for (const f of manualFields) {
       initial[f.key] = saved[f.key] ?? f.defaultValue ?? "";
     }
-    // Escola já extraída do template → preenche campo de escola se existir
     if (selectedTemplate.escolaNome) {
       const escolaField = manualFields.find(
         (f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"),
@@ -208,6 +233,32 @@ export function PlanGenerationWizard({
           .catch(() => {/* silently ignore — not blocking */});
       });
     }
+
+    // Save rascunho with current step so "Continuar editando" resumes at the editor
+    if (selectedTemplate) {
+      const conteudo: Record<string, unknown> = {
+        criado_por: userName,
+        template_nome: selectedTemplate.nome,
+        _plano_titulo: planoTitulo.trim(),
+        _wizard_step: 2,
+        ...metadataValues,
+      };
+      setIsAutoSaving(true);
+      const doSave = savedPlanoId
+        ? planosService.updatePlano(savedPlanoId, { conteudo_gerado: conteudo, status: "rascunho" }).then(() => savedPlanoId)
+        : planosService.createPlano({
+            user_id: userId,
+            template_id: selectedTemplateId,
+            status: "rascunho",
+            conteudo_gerado: conteudo,
+            schema_campos: selectedTemplate.schema_campos,
+          });
+      void doSave
+        .then((id) => { if (typeof id === "string") setSavedPlanoId(id); })
+        .catch(() => {})
+        .finally(() => setIsAutoSaving(false));
+    }
+
     goNext();
   }
 
@@ -222,6 +273,7 @@ export function PlanGenerationWizard({
       criado_por: userName,
       template_nome: selectedTemplate.nome,
       _plano_titulo: planoTitulo.trim(),
+      _wizard_step: 3,
       ...merged,
     };
     setIsAutoSaving(true);
@@ -563,6 +615,7 @@ export function PlanGenerationWizard({
             userName={userName}
             wizardMode
             initialValues={editorInitialValues}
+            resumeDraft={!!resumeData}
           />
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -764,7 +817,11 @@ export function PlanGenerationWizard({
                             <FileText className="h-4 w-4" />
                           </span>
                           <div>
-                            <p className="font-semibold text-slate-900">{plano.template_nome}</p>
+                            <p className="font-semibold text-slate-900">
+                              {typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
+                                ? plano.conteudo_gerado._plano_titulo
+                                : plano.template_nome}
+                            </p>
                             <p className="mt-0.5 text-xs text-slate-600">
                               {plano.escola_nome ?? "Escola não informada"}
                             </p>
@@ -786,12 +843,22 @@ export function PlanGenerationWizard({
                               Baixar
                             </a>
                           )}
-                          <a
-                            href={`/dashboard/historico/${plano.id}`}
-                            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-                          >
-                            Detalhes
-                          </a>
+                          {plano.status === "rascunho" ? (
+                            <a
+                              href={`/dashboard/gerar?resume=${plano.id}`}
+                              className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-violet-500"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              Continuar
+                            </a>
+                          ) : (
+                            <a
+                              href={`/dashboard/historico/${plano.id}`}
+                              className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+                            >
+                              Detalhes
+                            </a>
+                          )}
                         </div>
                       </div>
                     </li>

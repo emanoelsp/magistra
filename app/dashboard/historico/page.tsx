@@ -134,7 +134,11 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                         <FileText className="h-4 w-4" />
                       </span>
                       <div>
-                        <p className="font-semibold text-slate-950">{plano.template_nome}</p>
+                        <p className="font-semibold text-slate-950">
+                          {typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
+                            ? plano.conteudo_gerado._plano_titulo
+                            : plano.template_nome}
+                        </p>
                         <p className="mt-0.5 text-sm text-slate-500">
                           {plano.escola_nome ? `${plano.escola_nome} · ` : ""}
                           {formatDate(plano.data_geracao)}
@@ -155,7 +159,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                       )}
                       {plano.status === "rascunho" && (
                         <Link
-                          href={`/dashboard/planos/${plano.id}/editar`}
+                          href={`/dashboard/gerar?resume=${plano.id}`}
                           className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500"
                         >
                           <Pencil className="h-3.5 w-3.5" />

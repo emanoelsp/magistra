@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 
-import { PlanGenerationWizard } from "../../../components/planos/plan-generation-wizard";
+import { PlanGenerationWizard, type ResumeData } from "../../../components/planos/plan-generation-wizard";
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
+import { getAdminDb } from "../../../lib/firebase/admin";
 import { getUserPlanosComNome, getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
 import { LimitActions } from "../../../components/dashboard/limit-actions";
@@ -20,18 +21,45 @@ const PLAN_LABELS: Record<string, string> = {
 };
 
 interface GerarPlanoPageProps {
-  searchParams: Promise<{ template?: string }>;
+  searchParams: Promise<{ template?: string; resume?: string }>;
 }
 
 export default async function GerarPlanoPage({ searchParams }: GerarPlanoPageProps) {
   const user = await requireCurrentUserProfile();
 
-  const [templates, { template: preSelectedId }, limits, recentPlanosResult] = await Promise.all([
+  const [templates, params, limits, recentPlanosResult] = await Promise.all([
     getUserTemplateOptions(user.uid),
     searchParams,
     getLimitsStatus(user.uid, user.plano),
     getUserPlanosComNome(user.uid, 3, 1),
   ]);
+
+  const { template: preSelectedId, resume: resumeId } = params;
+
+  // Load resume data when ?resume=<planoId> is present
+  let resumeData: ResumeData | undefined;
+  if (resumeId) {
+    const snap = await getAdminDb().collection("magis_planos").doc(resumeId).get();
+    if (snap.exists) {
+      const d = snap.data()!;
+      if (typeof d.user_id === "string" && d.user_id === user.uid && d.status !== "gerado") {
+        const raw = (typeof d.conteudo_gerado === "object" && d.conteudo_gerado !== null
+          ? d.conteudo_gerado
+          : {}) as Record<string, unknown>;
+        resumeData = {
+          planoId: resumeId,
+          templateId: typeof d.template_id === "string" ? d.template_id : "",
+          wizardStep: typeof raw._wizard_step === "number" ? raw._wizard_step : 2,
+          planoTitulo: typeof raw._plano_titulo === "string" ? raw._plano_titulo : "",
+          values: Object.fromEntries(
+            Object.entries(raw)
+              .filter(([k, v]) => typeof v === "string" && k !== "criado_por" && k !== "template_nome" && !k.startsWith("_"))
+              .map(([k, v]) => [k, v as string]),
+          ),
+        };
+      }
+    }
+  }
 
   const planoLabel = PLAN_LABELS[limits.plano] ?? limits.plano;
   const canCreatePlano = limits.canCreatePlano;
@@ -146,8 +174,9 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
             userId={user.uid}
             userName={user.nome || user.email}
             availableTemplates={templates}
-            preSelectedTemplateId={preSelectedId}
+            preSelectedTemplateId={resumeData ? undefined : preSelectedId}
             recentPlanos={recentPlanosResult.items}
+            resumeData={resumeData}
           />
         )}
       </section>
