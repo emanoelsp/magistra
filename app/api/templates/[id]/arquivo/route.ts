@@ -27,12 +27,29 @@ export async function GET(
 
     const template = snap.data() as TemplateRecord;
 
-    // fresh=1: always regenerate placeholders from the original DOCX (never use cached fillable)
+    // fresh=1: return the DOCX with {{tokens}} in place.
+    // If a fillable DOCX exists (user has already positioned variables via the editor),
+    // return it directly — re-running injectPlaceholders on the original would discard
+    // all manual cell positioning stored in arquivo_fillable_url.
+    // Only fall back to regenerating from the original when no fillable exists yet.
     if (wantFresh && template.arquivo_url) {
       const isDocx = /\.(docx|doc)(\?|$)/i.test(template.arquivo_url);
       const schema = Array.isArray(template.schema_campos) ? template.schema_campos : [];
       if (isDocx && schema.length > 0) {
         try {
+          const fillableUrl = typeof template.arquivo_fillable_url === "string"
+            ? template.arquivo_fillable_url
+            : "";
+          if (fillableUrl) {
+            const fillableBuffer = await downloadFile(fillableUrl);
+            return new NextResponse(new Uint8Array(fillableBuffer), {
+              headers: {
+                "Content-Type": DOCX_CT,
+                "Content-Disposition": `attachment; filename="template-fresh-${id.slice(0, 8)}.docx"`,
+                "Cache-Control": "private, no-store",
+              },
+            });
+          }
           const { injectPlaceholders } = await import("../../../../../lib/utils/docx-filler");
           const rawBuffer = await downloadFile(template.arquivo_url);
           const freshBuffer = injectPlaceholders(rawBuffer, schema);
