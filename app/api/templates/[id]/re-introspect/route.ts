@@ -1,13 +1,14 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { SchemaType } from "@google/generative-ai";
 import type { ResponseSchema } from "@google/generative-ai";
 import mammoth from "mammoth";
 import pdf from "pdf-parse";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
+import { callAIWithFallbacks } from "../../../../../lib/ai/provider";
 import {
   injectPlaceholders,
   reportInjections,
@@ -32,35 +33,6 @@ function keyToField(key: string): TemplateFieldSchema {
   return { key, label, type: "text", required: true, role, group, placeholder: "", helperText: "", aiInstructions: "" };
 }
 
-const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
-const GROQ_MODEL = "llama-3.3-70b-versatile";
-
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2000;
-
-async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      const status = (err as { status?: number })?.status;
-      const msg = (err as Error)?.message ?? "";
-      const isQuota = status === 429 && (msg.includes("free_tier") || msg.includes("limit: 0") || msg.includes("PerDay"));
-      const isRetryable = !isQuota && (status === 503 || status === 429 || msg.includes("503") || msg.includes("high demand"));
-      if (!isRetryable || attempt === MAX_RETRIES) throw err;
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
-    }
-  }
-  throw lastError;
-}
-
-function isQuotaError(err: unknown): boolean {
-  const status = (err as { status?: number })?.status;
-  const msg = (err as Error)?.message ?? "";
-  return status === 429 && (msg.includes("free_tier") || msg.includes("limit: 0") || msg.includes("PerDay"));
-}
 
 // ── Extração de conteúdo ────────────────────────────────────────────────────
 
@@ -340,56 +312,15 @@ function buildPrompt(
 
 // ── AI generation ───────────────────────────────────────────────────────────
 
-async function generateWithGemini(promptStr: string): Promise<string> {
-  const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: MODEL_NAME,
-    generationConfig: {
-      temperature: 0.1,
-      topP: 0.6,
-      topK: 40,
-      responseMimeType: "application/json",
-      responseSchema: INTROSPECT_RESPONSE_SCHEMA,
-    },
-    systemInstruction: SYSTEM_INSTRUCTION,
-  });
-  const result = await withRetry(() => model.generateContent(promptStr));
-  return result.response.text();
-}
-
-async function generateWithGroq(promptStr: string): Promise<string> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: SYSTEM_INSTRUCTION },
-        { role: "user", content: promptStr },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`Groq error ${res.status}: ${await res.text()}`);
-  const data = (await res.json()) as { choices: { message: { content: string } }[] };
-  return data.choices[0].message.content;
-}
-
 async function generateSchema(promptStr: string): Promise<string> {
-  try {
-    return await generateWithGemini(promptStr);
-  } catch (err) {
-    if (isQuotaError(err)) {
-      console.warn("[re-introspect] Gemini quota esgotada, usando Groq...");
-      return generateWithGroq(promptStr);
-    }
-    throw err;
-  }
+  const { text } = await callAIWithFallbacks({
+    systemInstruction: SYSTEM_INSTRUCTION,
+    prompt: promptStr,
+    temperature: 0.1,
+    topP: 0.6,
+    geminiSchema: INTROSPECT_RESPONSE_SCHEMA,
+  });
+  return text;
 }
 
 function parseSchema(raw: string): unknown {

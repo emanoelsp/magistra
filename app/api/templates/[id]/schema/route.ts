@@ -10,6 +10,7 @@ import {
   injectAtCell,
   injectPlaceholders,
   removePlaceholder,
+  renamePlaceholder,
   reportInjections,
 } from "../../../../../lib/utils/docx-filler";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
@@ -97,16 +98,25 @@ export async function PATCH(
     const sourceUrl = fillableUrl || arquivoUrl;
     let buffer = await downloadFile(sourceUrl);
 
-    // 1. Remove placeholders for deleted fields
-    for (const key of deletedKeys) {
+    // 1. Rename placeholders in-place for fields whose label is unchanged but key
+    //    was corrected by the user.  Rename-in-place preserves the existing cell
+    //    position instead of removing + re-injecting via label matching (which may
+    //    choose the wrong cell and cause a visible "revert").
+    const renamedOldKeys = new Set<string>(corrections.map((c) => c.extracted_key));
+    for (const correction of corrections) {
+      buffer = renamePlaceholder(buffer, correction.extracted_key, correction.correct_key);
+    }
+
+    // 2. Remove placeholders for truly deleted fields (not just renamed)
+    for (const key of deletedKeys.filter((k) => !renamedOldKeys.has(k))) {
       buffer = removePlaceholder(buffer, key);
     }
 
-    // 2. Direct injection at clicked positions (for newly added fields).
+    // 3. Direct injection at clicked positions (for newly added fields).
     // Empty cellText means the user typed into an empty cell — ordinal is the
     // global <w:tc> index in that case (handled inside injectAtCell).
     for (const [key, pos] of Object.entries(fieldPositions)) {
-      if (newKeys.has(key)) {
+      if (newKeys.has(key) && !renamedOldKeys.has(key)) {
         buffer = injectAtCell(buffer, pos.cellText, pos.ordinal, key);
       }
     }

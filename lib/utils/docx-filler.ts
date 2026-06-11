@@ -173,26 +173,24 @@ function extractParagraphTexts(xml: string): string[] {
  */
 function extractLinesFromCell(cellXml: string): string[] {
   const lines: string[] = [];
-  const paras = [...cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
-  for (const paraMatch of paras) {
+  for (const paraMatch of cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)) {
     const paraXml = paraMatch[0];
     if (!paraXml.includes("<w:br")) {
       const t = extractText(paraXml).trim();
       if (t) lines.push(t);
       continue;
     }
-    // Split at runs that contain a <w:br/> element
-    const runs = [...paraXml.matchAll(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g)];
-    let lineText = "";
-    for (const runMatch of runs) {
-      if (/<w:br(?:\s[^>]*)?\/?>/.test(runMatch[0])) {
-        if (lineText.trim()) lines.push(lineText.trim());
-        lineText = "";
-      } else {
-        lineText += extractText(runMatch[0]);
-      }
+    // Segment-based split: cut the paragraph XML at every <w:br/> position.
+    // Handles Format C (all visual lines in one <w:r> run with alternating
+    // <w:t> and <w:br/> elements) without any run-level processing.
+    let segStart = 0;
+    for (const brMatch of paraXml.matchAll(/<w:br(?:\s[^>]*)?\/?>/g)) {
+      const t = extractText(paraXml.slice(segStart, brMatch.index!)).trim();
+      if (t) lines.push(t);
+      segStart = brMatch.index! + brMatch[0].length;
     }
-    if (lineText.trim()) lines.push(lineText.trim());
+    const lastT = extractText(paraXml.slice(segStart)).trim();
+    if (lastT) lines.push(lastT);
   }
   return lines;
 }
@@ -245,14 +243,20 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
   const placeholder = `{{${fieldKey}}}`;
   const paras = [...cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
 
+  // First pass: paragraph-level matching (skip paragraphs with soft returns).
+  // Paragraphs that contain <w:br/> are handled exclusively by the soft-return
+  // pass below so we inject at the correct visual line, not the paragraph end.
   for (const paraMatch of paras) {
     const paraXml = paraMatch[0];
+    if (paraXml.includes("<w:br")) continue; // defer to soft-return pass
+
     const paraNorm = normText(extractText(paraXml));
 
-    // Accept exact match or "suffix" match (paragraph has header prefix + label)
+    // Accept: exact | suffix (header prefix + label) | prefix (label + value)
     const matches =
       paraNorm === labelNorm ||
-      (labelNorm.length >= 3 && paraNorm.length >= labelNorm.length && paraNorm.endsWith(labelNorm));
+      (labelNorm.length >= 3 && paraNorm.length >= labelNorm.length && paraNorm.endsWith(labelNorm)) ||
+      (labelNorm.length >= 4 && paraNorm.startsWith(labelNorm));
 
     if (!matches) continue;
     if (paraXml.includes(placeholder)) return cellXml; // idempotent
@@ -263,57 +267,60 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
     return cellXml.replace(paraXml, newParaXml);
   }
 
-  // Soft-return fallback: paragraph uses <w:br/> to separate visual lines
+  // Soft-return pass: segment-based.
+  // Splits the paragraph XML at every <w:br/> position and matches each
+  // segment independently.  Handles all DOCX layouts including Format C
+  // (all visual lines packed into one <w:r> run with alternating <w:t>
+  // and <w:br/> elements) — the run-based approach wrongly concatenated
+  // all text and matched the wrong segment.
+  //
+  // Injection strategy:
+  //   • Non-last segment: append placeholder text before the closing </w:t>
+  //     in the matched segment (stays inside the existing <w:r> — valid DOCX).
+  //   • Last segment: add a new <w:r> run before </w:p>.
   for (const paraMatch of paras) {
     const paraXml = paraMatch[0];
     if (!paraXml.includes("<w:br")) continue;
+    if (paraXml.includes(placeholder)) return cellXml; // idempotent
 
-    const runs = [...paraXml.matchAll(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g)];
-    let lineRuns: string[] = [];
-    let lastLineRunXml: string | null = null;
-
-    for (const runMatch of runs) {
-      if (/<w:br(?:\s[^>]*)?\/?>/.test(runMatch[0])) {
-        const lineText = lineRuns.map((r) => extractText(r)).join("").trim();
-        const lineNorm = normText(lineText);
-        if (
-          lineNorm === labelNorm ||
-          (labelNorm.length >= 3 && lineNorm.length >= labelNorm.length && lineNorm.endsWith(labelNorm))
-        ) {
-          // Inject after the last content run of this line (before the <w:br/> run)
-          if (lastLineRunXml) {
-            if (paraXml.includes(placeholder)) return cellXml;
-            const insertAfter = lastLineRunXml;
-            const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
-            const insertIdx = paraXml.lastIndexOf(insertAfter) + insertAfter.length;
-            const newParaXml = paraXml.slice(0, insertIdx) + newRun + paraXml.slice(insertIdx);
-            return cellXml.replace(paraXml, newParaXml);
-          }
-        }
-        lineRuns = [];
-        lastLineRunXml = null;
-      } else {
-        lineRuns.push(runMatch[0]);
-        if (extractText(runMatch[0]).trim()) lastLineRunXml = runMatch[0];
-      }
+    const segments: Array<{ startInPara: number; endInPara: number; isLast: boolean }> = [];
+    let segStart = 0;
+    for (const brMatch of paraXml.matchAll(/<w:br(?:\s[^>]*)?\/?>/g)) {
+      segments.push({ startInPara: segStart, endInPara: brMatch.index!, isLast: false });
+      segStart = brMatch.index! + brMatch[0].length;
     }
-    // Check last line (after final <w:br/> or if no break at all but paragraph had breaks above)
-    if (lineRuns.length > 0) {
-      const lineText = lineRuns.map((r) => extractText(r)).join("").trim();
-      const lineNorm = normText(lineText);
-      if (
-        lineNorm === labelNorm ||
-        (labelNorm.length >= 3 && lineNorm.length >= labelNorm.length && lineNorm.endsWith(labelNorm))
-      ) {
-        if (lastLineRunXml) {
-          if (paraXml.includes(placeholder)) return cellXml;
-          const insertAfter = lastLineRunXml;
-          const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
-          const insertIdx = paraXml.lastIndexOf(insertAfter) + insertAfter.length;
-          const newParaXml = paraXml.slice(0, insertIdx) + newRun + paraXml.slice(insertIdx);
-          return cellXml.replace(paraXml, newParaXml);
-        }
+    const pCloseIdx = paraXml.lastIndexOf("</w:p>");
+    segments.push({
+      startInPara: segStart,
+      endInPara: pCloseIdx >= 0 ? pCloseIdx : paraXml.length,
+      isLast: true,
+    });
+
+    for (const seg of segments) {
+      const segXml = paraXml.slice(seg.startInPara, seg.endInPara);
+      const segNorm = normText(extractText(segXml));
+
+      const matches =
+        segNorm === labelNorm ||
+        (labelNorm.length >= 3 && segNorm.length >= labelNorm.length && segNorm.endsWith(labelNorm)) ||
+        (labelNorm.length >= 4 && segNorm.startsWith(labelNorm));
+
+      if (!matches) continue;
+
+      let newParaXml: string;
+      if (!seg.isLast) {
+        const lastWtClose = segXml.lastIndexOf("</w:t>");
+        if (lastWtClose < 0) continue; // no <w:t> in segment
+        const insertPos = seg.startInPara + lastWtClose;
+        newParaXml =
+          paraXml.slice(0, insertPos) + ` ${placeholder}` + paraXml.slice(insertPos);
+      } else {
+        const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
+        newParaXml =
+          paraXml.slice(0, seg.endInPara) + newRun + paraXml.slice(seg.endInPara);
       }
+
+      return cellXml.replace(paraXml, newParaXml);
     }
   }
 
@@ -373,7 +380,26 @@ function setCellContent(cellXml: string, content: string): string {
   return cellXml.replace(firstPara, newPara);
 }
 
-// ── Remove a single placeholder ─────────────────────────────────────────────
+// ── Remove / rename a single placeholder ─────────────────────────────────────
+
+/**
+ * Renames all occurrences of {{oldKey}} to {{newKey}} in the DOCX XML in-place.
+ * Used when the user renames a field key while keeping the same label, so the
+ * placeholder stays at its existing position instead of being removed and
+ * re-injected by label-matching (which may choose the wrong cell).
+ */
+export function renamePlaceholder(docxBuffer: Buffer, oldKey: string, newKey: string): Buffer {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+  let xml = zip.files[xmlPath].asText();
+  const oldPh = `{{${oldKey}}}`;
+  const newPh = `{{${newKey}}}`;
+  if (!xml.includes(oldPh)) return docxBuffer;
+  xml = xml.split(oldPh).join(newPh);
+  zip.file(xmlPath, xml);
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
 
 /**
  * Removes all occurrences of {{fieldKey}} from the DOCX by emptying the
@@ -563,6 +589,13 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   //   "Professor(a): Luiz Carlos Covre"  →  "Professor(a): {{professor}}"
   // Only applies when there is actual content after the colon (skips section
   // headers like "TEMÁTICA ABORDADA:" where nothing follows the colon in the cell).
+
+  // Build set of still-missing keys for targeted logging
+  const missingAfterPass0 = new Set(schema.filter((f) => !xml.includes(`{{${f.key}}}`)).map((f) => f.key));
+  if (missingAfterPass0.size > 0) {
+    console.info(`[inject pass0→1] still missing: ${[...missingAfterPass0].join(", ")}`);
+  }
+
   for (let ri = 0; ri < rows.length; ri++) {
     const row = rows[ri];
     let rowXml = row.xml;
@@ -585,15 +618,31 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       // Skip if nothing follows the colon (standalone header like "TEMÁTICA ABORDADA:")
       // or if the value is suspiciously long (multi-paragraph content block)
       if (!valueAfterColon || valueAfterColon.length > 300) continue;
+      // Skip cells where the value portion itself contains sub-labels (additional colons).
+      // clearAndSetCellText would destroy those sub-items; last-resort handles them.
+      if (valueAfterColon.includes(":")) continue;
 
       const field = matchField(potentialLabel, schema, used);
-      if (!field) continue;
+      if (!field) {
+        // Log only for still-missing fields that have a colon-pattern match
+        const potNorm = normText(potentialLabel);
+        for (const f of schema) {
+          if (!missingAfterPass0.has(f.key)) continue;
+          if (used.has(f.key)) continue;
+          const fn = normText(f.label);
+          if (fn.length >= 3 && (potNorm.includes(fn) || fn.includes(potNorm))) {
+            console.info(`[inject pass1 NO-MATCH] key=${f.key} label="${f.label}" potentialLabel="${potentialLabel}" cellText="${cellText.slice(0, 80)}" row${ri}c${ci}`);
+          }
+        }
+        continue;
+      }
 
       // Preserve the label prefix and inject placeholder as value
       const labelPrefix = cellText.slice(0, colonIdx + 1); // "Professor(a):"
       const newContent = `${labelPrefix} {{${field.key}}}`;
       const origCell = row.cells[ci];
       const newCell = clearAndSetCellText(origCell, newContent);
+      console.info(`[inject pass1 OK] ${field.key} row${ri}c${ci} "${cellText.slice(0, 60)}" → "${newContent.slice(0, 60)}"`);
       rowXml = replaceFirst(rowXml, origCell, newCell);
       row.cells[ci] = newCell;
       row.cellTexts[ci] = newContent;
@@ -796,10 +845,69 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     }
   }
 
+  // ── Last-resort pass: field-scan for any still-missing fields ────────────────
+  // Tries each still-missing field against every cell using fNorm (field label
+  // norm) as labelNorm.  This routes appendToParagraph to the soft-return line
+  // matching branch for <w:br/> paragraphs so it injects at the correct visual
+  // line rather than the paragraph end.  All fields are tried per cell before
+  // moving on, so multi-field cells (e.g. CEDUP header) are fully resolved in
+  // one pass.
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    let rowXml = row.xml;
+    let rowModified = false;
+
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      let cellXml = row.cells[ci];
+      const origCellXml = cellXml;
+      let cellModified = false;
+
+      for (const f of schema) {
+        if (used.has(f.key)) continue;
+        if (xml.includes(`{{${f.key}}}`)) { used.add(f.key); continue; }
+
+        const fNorm = normText(f.label);
+        if (!fNorm || fNorm.length < 2) continue;
+
+        // Pre-filter: skip cells with no text resembling this field label
+        const cellNorm = normText(extractText(cellXml));
+        const isRelated =
+          cellNorm === fNorm ||
+          cellNorm.endsWith(fNorm) ||
+          cellNorm.startsWith(fNorm) ||
+          (fNorm.length >= 4 && cellNorm.includes(fNorm));
+
+        if (!isRelated) continue;
+
+        const newCell = appendToParagraph(cellXml, fNorm, f.key);
+        if (newCell !== cellXml) {
+          console.info(`[inject last-resort] ${f.key} fNorm="${fNorm}" row${ri} cell${ci}`);
+          cellXml = newCell;
+          used.add(f.key);
+          cellModified = true;
+        } else {
+          console.info(`[inject last-resort FAIL] ${f.key} fNorm="${fNorm}" row${ri} cell${ci}`);
+        }
+      }
+
+      if (cellModified) {
+        rowXml = replaceFirst(rowXml, origCellXml, cellXml);
+        row.cells[ci] = cellXml;
+        row.cellTexts[ci] = extractText(cellXml);
+        rowModified = true;
+      }
+    }
+
+    if (rowModified) {
+      xml = replaceFirst(xml, row.xml, rowXml);
+      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts };
+    }
+  }
+
   // Diagnostic: log any fields that still have no placeholder after all passes
   const stillMissing = schema.filter((f) => !xml.includes(`{{${f.key}}}`));
   if (stillMissing.length > 0) {
-    console.info(`[injectPlaceholders] miss: ${stillMissing.map((f) => f.key).join(", ")}`);
+    console.info(`[injectPlaceholders] STILL MISSING after last-resort: ${stillMissing.map((f) => f.key).join(", ")}`);
     for (const f of stillMissing) {
       const labelNorm = normText(f.label);
       for (let ri = 0; ri < rows.length; ri++) {
@@ -808,7 +916,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
           const ctnorm = normText(ct);
           const shortHay = labelNorm.slice(0, Math.min(6, labelNorm.length));
           if (shortHay && (ctnorm.includes(shortHay) || ct.toLowerCase().includes(f.label.slice(0, 6).toLowerCase()))) {
-            console.info(`  key=${f.key} label="${f.label}" norm="${labelNorm}" → row${ri} cell${ci}: "${ct.slice(0, 80)}" (norm: "${ctnorm.slice(0, 80)}")`);
+            console.info(`  → ${f.key} label="${f.label}" norm="${labelNorm}" | row${ri} cell${ci}: "${ct.slice(0, 80)}" (norm: "${ctnorm.slice(0, 80)}")`);
           }
         }
       }

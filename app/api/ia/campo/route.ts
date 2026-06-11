@@ -1,13 +1,14 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { SchemaType } from "@google/generative-ai";
 import type { ResponseSchema } from "@google/generative-ai";
 
 import { createHash } from "crypto";
 
 import { getAdminDb } from "../../../../lib/firebase/admin";
 import { requireCurrentUserProfile } from "../../../../lib/auth/session";
+import { callAIWithFallbacks, makeGeminiModel, isQuotaError } from "../../../../lib/ai/provider";
 import { checkRateLimit } from "../../../../lib/services/rate-limit.server";
 import { validateSugestoes } from "../../../../lib/services/suggestion-validator";
 import { getPedagogicMemoryContext } from "../../../../lib/services/pedagogic-memory.server";
@@ -33,9 +34,6 @@ function computeSchemaHash(schemaCampos: unknown[]): string {
 }
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
-const GROQ_MODEL = "llama-3.3-70b-versatile";
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2000;
 
 // ── Response schema — garante conformidade estrutural no nível do sampler ──
 const SUGESTAO_RESPONSE_SCHEMA: ResponseSchema = {
@@ -103,97 +101,24 @@ Saída:
 {"raciocinio":"Campo de metodologia (outros) para Geografia no 6º ano. Sugiro abordagens práticas e específicas para esta faixa etária e disciplina.","sugestoes":[{"id":"s1","label":"Leitura e interpretação de mapas temáticos com roteiro guiado de análise em duplas","descricao":"Desenvolve raciocínio geográfico de forma colaborativa, central para o 6º ano que inicia cartografia.","fonte":"Objetivo pedagógico"},{"id":"s2","label":"Produção de maquete do relevo local com material reciclável e apresentação oral para a turma","descricao":"Ativa aprendizagem tridimensional e comunicação, tornando o conteúdo de relevo concreto e significativo.","fonte":"Objetivo pedagógico"},{"id":"s3","label":"Estudo do meio: observação do bairro com ficha de campo e registro fotográfico","descricao":"Conecta conceitos de espaço geográfico à realidade próxima do aluno, metodologia prevista pela BNCC.","fonte":"BNCC EF06GE04"}]}`,
 };
 
-function isQuotaError(err: unknown): boolean {
-  const status = (err as { status?: number })?.status;
-  const msg = (err as Error)?.message ?? "";
-  return status === 429 && (msg.includes("free_tier") || msg.includes("limit: 0") || msg.includes("PerDay"));
-}
-
-function isRetryable(err: unknown): boolean {
-  if (isQuotaError(err)) return false;
-  const status = (err as { status?: number })?.status;
-  const msg = (err as Error)?.message ?? "";
-  return (
-    status === 503 ||
-    status === 429 ||
-    msg.includes("503") ||
-    msg.includes("429") ||
-    msg.includes("high demand") ||
-    msg.includes("RECITATION")
-  );
-}
-
-async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      if (!isRetryable(err) || attempt === MAX_RETRIES) throw err;
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
-    }
-  }
-  throw lastError;
-}
-
-function makeGeminiModel(systemInstruction: string) {
-  const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
-  const genAI = new GoogleGenerativeAI(apiKey);
-  return genAI.getGenerativeModel({
-    model: MODEL_NAME,
-    generationConfig: {
-      temperature: 0.35,
-      topP: 0.8,
-      topK: 40,
-      responseMimeType: "application/json",
-      responseSchema: SUGESTAO_RESPONSE_SCHEMA,
-    },
-    systemInstruction,
+function makeLocalGeminiModel(systemInstruction: string) {
+  return makeGeminiModel(systemInstruction, {
+    temperature: 0.35,
+    topP: 0.8,
+    topK: 40,
+    geminiSchema: SUGESTAO_RESPONSE_SCHEMA,
   });
-}
-
-async function generateWithGemini(systemInstruction: string, prompt: string): Promise<string> {
-  const model = makeGeminiModel(systemInstruction);
-  const response = await withRetry(() => model.generateContent(prompt));
-  return response.response.text();
-}
-
-async function generateWithGroq(systemInstruction: string, prompt: string): Promise<string> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      temperature: 0.35,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemInstruction },
-        { role: "user", content: prompt },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Groq error ${res.status}: ${body}`);
-  }
-  const data = (await res.json()) as { choices: { message: { content: string } }[] };
-  return data.choices[0].message.content;
 }
 
 async function generateSuggestions(systemInstruction: string, prompt: string): Promise<string> {
-  try {
-    return await generateWithGemini(systemInstruction, prompt);
-  } catch (err) {
-    if (isQuotaError(err)) {
-      console.warn("[PlanoMagistra/ia/campo] Gemini quota esgotada, usando Groq como fallback...");
-      return await generateWithGroq(systemInstruction, prompt);
-    }
-    throw err;
-  }
+  const { text } = await callAIWithFallbacks({
+    systemInstruction,
+    prompt,
+    temperature: 0.35,
+    topP: 0.8,
+    geminiSchema: SUGESTAO_RESPONSE_SCHEMA,
+  });
+  return text;
 }
 
 export async function POST(request: Request) {
@@ -471,17 +396,17 @@ Responda SOMENTE com JSON válido:
 
     // ── Streaming path ────────────────────────────────────────────────────────
     if (stream) {
-      const model = makeGeminiModel(systemInstruction);
+      const model = makeLocalGeminiModel(systemInstruction);
 
-      // Start stream — if this throws (quota, auth), return a proper error response
+      // Start stream — on quota error fall back to non-streaming via callAIWithFallbacks
       let streamResult: Awaited<ReturnType<typeof model.generateContentStream>>;
       try {
         streamResult = await model.generateContentStream(prompt);
       } catch (err) {
         if (isQuotaError(err)) {
-          console.warn("[PlanoMagistra/ia/campo] Gemini quota, Groq fallback no stream...");
+          console.warn("[PlanoMagistra/ia/campo] Gemini quota, fallback não-streaming...");
           try {
-            const rawText = await generateWithGroq(systemInstruction, prompt);
+            const rawText = await generateSuggestions(systemInstruction, prompt);
             const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
             const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
             const sugestoes = validateSugestoes(raw, { templateId, fieldKey });
