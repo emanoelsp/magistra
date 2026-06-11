@@ -7,6 +7,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
+  appendOrphanField,
   injectAtCell,
   injectPlaceholders,
   removePlaceholder,
@@ -128,6 +129,17 @@ export async function PATCH(
     const { missing: camposSemPlaceholder } = reportInjections(buffer, newSchema);
     if (camposSemPlaceholder.length > 0) {
       console.info(`[templates/schema] Campos sem placeholder automático: ${camposSemPlaceholder.join(", ")}`);
+    }
+
+    // 4b. Tier 2 orphan fallback: for fields still missing AND not manually placed via
+    //     field_positions, append a labeled row to the last table so docxtemplater has
+    //     a valid target. Preserves cell-click (Tier 1) positioning when it was used.
+    const manuallyPositioned = new Set(Object.keys(fieldPositions));
+    for (const key of camposSemPlaceholder) {
+      if (manuallyPositioned.has(key)) continue;
+      const field = newSchema.find((f) => f.key === key);
+      if (!field) continue;
+      buffer = appendOrphanField(buffer, key, field.label);
     }
 
     // 5. Upload as the new fillable DOCX

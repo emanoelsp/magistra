@@ -17,6 +17,18 @@ export type TemplateFieldGroup =
   | "avaliacao"
   | "outros";
 
+/**
+ * Structural hint that tells injectPlaceholders HOW to place this field in the
+ * DOCX XML. Set by the AI during introspection and used as a priority signal
+ * over the generic label-matching passes. Mirrors StructuralPair.pattern.
+ */
+export type InjectionPattern =
+  | "adjacent_right"   // value cell is immediately to the right of the label cell
+  | "adjacent_below"   // value cell is in the next row below the label
+  | "inline_colon"     // "Label: {{value}}" within the same cell/paragraph
+  | "column_header"    // label is a column header; value rows follow below
+  | "period_column";   // trimester/bimester sparse matrix column
+
 export interface TemplateFieldSchema {
   key: string;
   label: string;
@@ -29,6 +41,8 @@ export interface TemplateFieldSchema {
   options?: string[];
   aiInstructions?: string;
   defaultValue?: string;
+  /** Structural hint from the AI introspection step — how to locate this field's cell. */
+  injection_pattern?: InjectionPattern;
 }
 
 export interface UserProfile {

@@ -153,6 +153,121 @@ function computeVirtualColIndices(cells: string[]): number[] {
   return indices;
 }
 
+// ── Challenge 3: GridSpan-aware empty-cell navigation ────────────────────────
+
+/**
+ * Given a label cell at physical index `labelIdx` in `row.cells`, returns the
+ * physical index of the first EMPTY cell that would visually follow it in the
+ * grid — accounting for <w:gridSpan> merges so the "next column" calculation
+ * is correct even when the label cell itself spans multiple columns.
+ *
+ * Search order:
+ *   1. Same row, cell at virtual column (labelVCol + labelSpan) — adjacent_right
+ *   2. Next row, first cell whose virtual column equals labelVCol — adjacent_below
+ *
+ * Returns null when no empty candidate is found in either position.
+ *
+ * @param rows    - full parsed row array (from parseRows)
+ * @param rowIdx  - row index of the label cell
+ * @param labelIdx - physical cell index of the label cell within its row
+ */
+export function findNextEmptyCellAfterLabel(
+  rows: Row[],
+  rowIdx: number,
+  labelIdx: number,
+): { rowIdx: number; colIdx: number } | null {
+  const row    = rows[rowIdx];
+  const vcols  = computeVirtualColIndices(row.cells);
+
+  const labelVCol  = vcols[labelIdx] ?? labelIdx;
+  const labelSpan  = getCellGridSpan(row.cells[labelIdx] ?? "");
+  const valueVCol  = labelVCol + labelSpan; // first virtual column after the label
+
+  // ── 1. Adjacent right (same row) ─────────────────────────────────────────
+  for (let i = labelIdx + 1; i < row.cells.length; i++) {
+    if (isVMergeContinuation(row.cells[i] ?? "")) continue;
+    if ((vcols[i] ?? i) !== valueVCol) continue;
+    if (!extractText(row.cells[i] ?? "").trim()) return { rowIdx, colIdx: i };
+  }
+
+  // ── 2. Adjacent below (next row, same virtual column) ─────────────────────
+  if (rowIdx + 1 < rows.length) {
+    const nextRow   = rows[rowIdx + 1];
+    const nextVCols = computeVirtualColIndices(nextRow.cells);
+    for (let j = 0; j < nextRow.cells.length; j++) {
+      if (isVMergeContinuation(nextRow.cells[j] ?? "")) continue;
+      if ((nextVCols[j] ?? j) !== labelVCol) continue;
+      if (!extractText(nextRow.cells[j] ?? "").trim()) return { rowIdx: rowIdx + 1, colIdx: j };
+    }
+  }
+
+  return null;
+}
+
+// ── Challenge 2: Label-anchored injection into an adjacent blank cell ─────────
+
+/**
+ * The invariant for fragmentation-safe injection into blank templates:
+ *   • FIND  — always via extractText() across run boundaries (never raw XML search)
+ *   • MATCH — normText() fuzzy comparison (immune to punctuation, accents, spacing)
+ *   • INJECT — always append a new <w:r><w:t>{{key}}</w:t></w:r> node (never mutate
+ *              existing runs, never clobber formatting)
+ *
+ * This function encapsulates that contract as a named primitive. It finds the row
+ * containing `labelText` in any cell, then injects `{{fieldKey}}` into the nearest
+ * blank adjacent cell (right-then-below, gridSpan-aware via findNextEmptyCellAfterLabel).
+ *
+ * Used by injectPlaceholders when the field has injection_pattern "adjacent_right"
+ * or "adjacent_below" and the schema came from a blank template with no pre-existing
+ * values to overwrite.
+ *
+ * Returns the modified buffer, or the original if no label anchor was found.
+ */
+export function injectIntoAdjacentEmpty(
+  docxBuffer: Buffer,
+  fieldKey: string,
+  fieldLabel: string,
+): Buffer {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  let xml = zip.files[xmlPath].asText();
+  const placeholder = `{{${fieldKey}}}`;
+  if (extractText(xml).includes(placeholder)) return docxBuffer; // idempotent
+
+  xml = stripChangeTracking(xml);
+  const rows = parseRows(xml);
+
+  const labelNorm = normText(fieldLabel);
+
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    for (let ci = 0; ci < row.cells.length; ci++) {
+      if (isVMergeContinuation(row.cells[ci] ?? "")) continue;
+      const cellNorm = normText(extractText(row.cells[ci] ?? ""));
+      // Accept: exact, suffix ("CEDUP\nLabel:" → suffix match), prefix
+      const isAnchor =
+        cellNorm === labelNorm ||
+        (labelNorm.length >= 3 && cellNorm.endsWith(labelNorm)) ||
+        (labelNorm.length >= 4 && cellNorm.startsWith(labelNorm));
+      if (!isAnchor) continue;
+
+      const target = findNextEmptyCellAfterLabel(rows, ri, ci);
+      if (!target) continue;
+
+      const origCell = rows[target.rowIdx].cells[target.colIdx];
+      const newCell  = setCellContent(origCell, placeholder);
+      xml = replaceFirst(xml, origCell, newCell);
+
+      zip.file(xmlPath, xml);
+      return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+    }
+  }
+
+  return docxBuffer;
+}
+
 // ── Label detector ────────────────────────────────────────────────────────────
 
 /**
@@ -659,6 +774,57 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   // injectPlaceholders never overwrites cells that were placed by injectAtCell.
   // Uses projected text for the same fragmentation-safety reason.
   const used = new Set<string>(schema.map((f) => f.key).filter((k) => projectedText.includes(`{{${k}}}`)));
+
+  // ── Pass -1: injection_pattern priority pass (Challenge 1) ─────────────────
+  // Fields carrying an injection_pattern hint from AI introspection (Challenge 1)
+  // are dispatched directly via findNextEmptyCellAfterLabel so blank-template
+  // adjacent cells are found without re-running the full fuzzy label-matching
+  // pipeline. Works entirely on the in-memory xml + rows state — no buffer round-trip.
+  {
+    let pass1Xml = xml;
+    let pass1Rows = rows;
+    for (const f of schema) {
+      if (used.has(f.key)) continue;
+      const pat = f.injection_pattern;
+      if (pat !== "adjacent_right" && pat !== "adjacent_below") continue;
+
+      const labelNorm = normText(f.label);
+      let placed = false;
+
+      outer: for (let ri = 0; ri < pass1Rows.length; ri++) {
+        const row = pass1Rows[ri];
+        for (let ci = 0; ci < row.cells.length; ci++) {
+          if (isVMergeContinuation(row.cells[ci] ?? "")) continue;
+          const cellNorm = normText(extractText(row.cells[ci] ?? ""));
+          const isAnchor =
+            cellNorm === labelNorm ||
+            (labelNorm.length >= 3 && cellNorm.endsWith(labelNorm)) ||
+            (labelNorm.length >= 4 && cellNorm.startsWith(labelNorm));
+          if (!isAnchor) continue;
+
+          const target = findNextEmptyCellAfterLabel(pass1Rows, ri, ci);
+          if (!target) continue;
+
+          const origCell = pass1Rows[target.rowIdx].cells[target.colIdx];
+          const newCell  = setCellContent(origCell, `{{${f.key}}}`);
+          pass1Xml = replaceFirst(pass1Xml, origCell, newCell);
+          pass1Rows = parseRows(pass1Xml);
+          used.add(f.key);
+          placed = true;
+          break outer;
+        }
+      }
+
+      if (placed) console.info(`[inject pass-1 OK] ${f.key} pattern=${pat}`);
+    }
+    // Propagate changes back to the shared xml / rows references
+    if (pass1Xml !== xml) {
+      xml = pass1Xml;
+      const updated = parseRows(xml);
+      for (let i = 0; i < updated.length; i++) rows[i] = updated[i];
+      rows.length = updated.length;
+    }
+  }
 
   // ── Pass 0: Paragraph-level inline injection ────────────────────────────────
   // For 1-cell rows: processes ANY cell with ≥1 label paragraph ending with ":"
@@ -1660,4 +1826,71 @@ export function fillDocx(
 
   doc.render(data);
   return doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
+// ── Challenge 4: Orphan field append ─────────────────────────────────────────
+
+/**
+ * Appends a new [Label: | {{key}}] row to the last table in the document, or
+ * a standalone paragraph if the document has no tables.
+ *
+ * This is the structural fallback for fields the user created manually in the UI
+ * that have no corresponding label anchor in the Word document — "orphan fields"
+ * where no RegEx anchor exists for injectPlaceholders or injectIntoAdjacentEmpty
+ * to latch onto.
+ *
+ * Architecture:
+ *   Tier 1 (preferred): user clicks a cell in the HTML editor → injectAtCell
+ *                        places {{key}} at the exact clicked position.
+ *   Tier 2 (this fn):    user created the field but never clicked → append a
+ *                        new labeled row so docxtemplater has a valid target and
+ *                        the generated document at least contains the value.
+ *
+ * The appended row inherits tcPr (borders, width) from the last existing row
+ * so it visually fits the surrounding table without style surgery.
+ */
+export function appendOrphanField(
+  docxBuffer: Buffer,
+  fieldKey: string,
+  fieldLabel: string,
+): Buffer {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  let xml = zip.files[xmlPath].asText();
+  const placeholder = `{{${fieldKey}}}`;
+
+  // Idempotent: if the placeholder already exists anywhere, do nothing.
+  if (extractText(xml).includes(placeholder)) return docxBuffer;
+
+  const lastTblEnd = xml.lastIndexOf("</w:tbl>");
+
+  if (lastTblEnd !== -1) {
+    const beforeClose = xml.slice(0, lastTblEnd);
+    const lastTrStart = beforeClose.lastIndexOf("<w:tr");
+    const lastTrEnd   = beforeClose.lastIndexOf("</w:tr>") + "</w:tr>".length;
+
+    // Inherit the first cell's tcPr (borders, shading, width) for visual consistency
+    const lastRowXml = lastTrStart >= 0 ? beforeClose.slice(lastTrStart, lastTrEnd) : "";
+    const tcPr = lastRowXml.match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/)?.[0] ?? "";
+
+    const newRow = [
+      `<w:tr>`,
+      `<w:tc>${tcPr}<w:p><w:r><w:t xml:space="preserve">${fieldLabel}:</w:t></w:r></w:p></w:tc>`,
+      `<w:tc>${tcPr}<w:p><w:r><w:t xml:space="preserve">${placeholder}</w:t></w:r></w:p></w:tc>`,
+      `</w:tr>`,
+    ].join("");
+
+    xml = xml.slice(0, lastTblEnd) + newRow + xml.slice(lastTblEnd);
+  } else {
+    // No tables — append as a standalone paragraph before </w:body>
+    const bodyClose = xml.lastIndexOf("</w:body>");
+    if (bodyClose === -1) return docxBuffer;
+    const newPara = `<w:p><w:r><w:t xml:space="preserve">${fieldLabel}: ${placeholder}</w:t></w:r></w:p>`;
+    xml = xml.slice(0, bodyClose) + newPara + xml.slice(bodyClose);
+  }
+
+  zip.file(xmlPath, xml);
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }

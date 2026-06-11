@@ -51,14 +51,15 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
         type: SchemaType.OBJECT,
         required: ["key", "label", "type", "required", "role", "group"],
         properties: {
-          key:            { type: SchemaType.STRING },
-          label:          { type: SchemaType.STRING },
-          type:           { type: SchemaType.STRING, format: "enum", enum: ["text", "textarea"] },
-          required:       { type: SchemaType.BOOLEAN },
-          role:           { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
-          group:          { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
-          defaultValue:   { type: SchemaType.STRING, nullable: true },
-          aiInstructions: { type: SchemaType.STRING, nullable: true },
+          key:               { type: SchemaType.STRING },
+          label:             { type: SchemaType.STRING },
+          type:              { type: SchemaType.STRING, format: "enum", enum: ["text", "textarea"] },
+          required:          { type: SchemaType.BOOLEAN },
+          role:              { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
+          group:             { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
+          defaultValue:      { type: SchemaType.STRING, nullable: true },
+          aiInstructions:    { type: SchemaType.STRING, nullable: true },
+          injection_pattern: { type: SchemaType.STRING, nullable: true, format: "enum", enum: ["adjacent_right", "adjacent_below", "inline_colon", "column_header", "period_column"] },
         },
       },
     },
@@ -111,6 +112,8 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
 15. BLOCOS "Obs:", "Nota:", "Observação:", "N.B.": são instruções de negócio descritivas, NUNCA geram campo. Qualquer parágrafo, célula ou rodapé cujo texto inicia com essas palavras deve ser completamente ignorado — não crie campo, não crie label, não processe.
 16. CABEÇALHO EM CAIXA ALTA SEM ":" (Regra Top-Down / Parent-Child): Quando uma linha contém APENAS texto todo em maiúsculas sem ":" E a linha imediatamente abaixo está vazia ou tem espaço para valor, o texto é um rótulo de seção que gera variável na linha inferior. Exemplos: "PROJETOS INTEGRADORES" + linha vazia → campo projeto_integrador (type textarea). NUNCA confundir com nomes de instituição/escola que aparecem no topo do documento sem linha vazia logo abaixo.
 17. VARIÁVEIS DE SISTEMA (auto-preenchidas): Chaves reservadas que o sistema preenche automaticamente sem input do usuário: {{data_atual}} (data de geração em pt-BR), {{ano_letivo}} (ano corrente). Quando o documento apresentar texto como "Blumenau, {{data_atual}}" ou "Ano letivo: {{ano_letivo}}", declare esses campos com role "manual", type "text" e aiInstructions = "" — o sistema injeta o valor automaticamente; não espere que o professor preencha.
+18. PADRÃO DE INJEÇÃO (injection_pattern) — OBRIGATÓRIO quando <estrutura_detectada> estiver disponível: para cada campo, encontre o par correspondente em <estrutura_detectada> pelo label e copie seu "pattern" para o campo "injection_pattern" do JSON de saída. Se não houver par correspondente, use null. Mapeamento direto de valores: "adjacent_right" | "adjacent_below" | "inline_colon" | "column_header" | "period_column". Este metadado é usado pelo sistema de injeção para localizar a célula correta no XML do Word sem re-derivar a estrutura.
+   Exemplos: "Professor(a):" com par de padrão "inline_colon" → injection_pattern "inline_colon". "HABILIDADES:" com par "adjacent_below" → injection_pattern "adjacent_below". Se <estrutura_detectada> estiver vazio → injection_pattern null para todos os campos.
 </regras>
 <raciocinio_obrigatorio>
 Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
@@ -120,6 +123,7 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
 4. Confirme que cada label será copiado EXATAMENTE como aparece no documento, sem normalização.
 5. Identifique colunas repetidas (→ mesmo campo único), estruturas de período (→ sufixos _tr1/_tr2/_tr3), ranges de data (→ _inicio/_fim) e colunas paralelas (→ campos independentes lado a lado).
 6. Blocos "Obs:", "Nota:", "Observação:" → descartar imediatamente (Regra 15). Texto ALL CAPS + sem ":" + linha vazia abaixo → campo adjacent_below (Regra 16). Variáveis de sistema (data_atual, ano_letivo) → declarar com role manual, o sistema preenche (Regra 17). Para CADA linha/parágrafo restante, aplique a Regra 13:
+7. Para cada campo extraído, procure o par correspondente em <estrutura_detectada> pelo label e preencha injection_pattern com o "pattern" do par (Regra 18). Isso é crítico para a injeção zero-config em templates em branco.
    • TUDO MAIÚSCULO + ":" → campo direto, variável na mesma célula.
    • TUDO MAIÚSCULO + sem ":" → título, descarta imediatamente.
    • Misto + ":" → campo.
