@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronLeft, ChevronRight, Clock, Edit2, FileText, FolderKanban } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Clock, Edit2, FileText, FolderKanban, Pencil } from "lucide-react";
 
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import {
@@ -153,12 +153,23 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                           className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:opacity-60"
                         />
                       )}
-                      <Link
-                        href={`/dashboard/historico/${plano.id}`}
-                        className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-                      >
-                        Ver detalhes
-                      </Link>
+                      {plano.status === "rascunho" && (
+                        <Link
+                          href={`/dashboard/planos/${plano.id}/editar`}
+                          className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          Continuar editando
+                        </Link>
+                      )}
+                      {plano.status === "gerado" && (
+                        <Link
+                          href={`/dashboard/historico/${plano.id}`}
+                          className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+                        >
+                          Ver detalhes
+                        </Link>
+                      )}
                     </div>
                   </div>
                 );

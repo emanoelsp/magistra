@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+
+  <!-- Fundo branco com cantos levemente arredondados -->
+  <rect width="32" height="32" rx="7" fill="#ffffff"/>
+
+  <!-- Topo do capelo (losango) -->
+  <polygon points="16,4 27.5,10.5 16,17 4.5,10.5" fill="#7B1D2B"/>
+
+  <!-- Brilho sutil no topo do capelo -->
+  <polygon points="16,4 27.5,10.5 16,10.5 4.5,10.5" fill="#9B2438" opacity="0.35"/>
+
+  <!-- Corpo cilíndrico do capelo -->
+  <path d="M12,16 L12,21.5 Q12,23.5 16,23.5 Q20,23.5 20,21.5 L20,16 Z" fill="#7B1D2B"/>
+
+  <!-- Cordinha da borla: linha a partir do canto direito do losango -->
+  <line x1="27.5" y1="10.5" x2="27.5" y2="21.5"
+        stroke="#7B1D2B" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- Nó da cordinha (pequeno círculo) -->
+  <circle cx="27.5" cy="23.5" r="2.2" fill="#7B1D2B"/>
+
+  <!-- Franjas da borla (3 fios finos) -->
+  <line x1="25.8" y1="24.5" x2="25.0" y2="28"
+        stroke="#7B1D2B" stroke-width="1.1" stroke-linecap="round"/>
+  <line x1="27.5" y1="25.2" x2="27.5" y2="29"
+        stroke="#7B1D2B" stroke-width="1.1" stroke-linecap="round"/>
+  <line x1="29.2" y1="24.5" x2="30.0" y2="28"
+        stroke="#7B1D2B" stroke-width="1.1" stroke-linecap="round"/>
+
+</svg>

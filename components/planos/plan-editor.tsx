@@ -44,6 +44,10 @@ interface PlanEditorProps {
   userName: string;
   wizardMode?: boolean;
   initialValues?: Record<string, string>;
+  /** When resuming an existing draft, pass its Firestore ID so saves update instead of creating a new plan. */
+  initialPlanoId?: string;
+  /** When true, ia_sugerida fields are preserved from initialValues instead of being cleared. */
+  resumeDraft?: boolean;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -252,7 +256,7 @@ function PreviewDocView({ html, values }: PreviewDocViewProps) {
 // ─── PlanEditor ───────────────────────────────────────────────────────────────
 
 export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function PlanEditor(
-  { template, userId, userName, wizardMode = false, initialValues },
+  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false },
   ref,
 ) {
   const router = useRouter();
@@ -275,11 +279,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       if (ef) init[ef.key] = template.escola_nome;
     }
     if (!initialValues) return init;
-    // Apply manual/metadata values from initialValues, then unconditionally
-    // clear every ia_sugerida field so Magis fills them fresh each generation.
     const merged = { ...init, ...initialValues };
-    for (const f of schema) {
-      if (f.role === "ia_sugerida") merged[f.key] = "";
+    // When resuming a draft, keep all existing values (including ia_sugerida).
+    // In new-plan mode, clear ia_sugerida so Magis fills them fresh.
+    if (!resumeDraft) {
+      for (const f of schema) {
+        if (f.role === "ia_sugerida") merged[f.key] = "";
+      }
     }
     return merged;
   });
@@ -293,7 +299,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const [streamingCharCount, setStreamingCharCount] = useState(0);
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  const [planoId, setPlanoId] = useState<string | null>(null);
+  const [planoId, setPlanoId] = useState<string | null>(initialPlanoId ?? null);
   const [autoSuggestedOnce, setAutoSuggestedOnce] = useState(false);
   const [generalContext, setGeneralContext] = useState("");
 
@@ -1394,7 +1400,7 @@ function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadat
   }, [active]);
 
   return (
-    <div className={`rounded-2xl border p-4 transition ${active ? "border-violet-400 bg-violet-50 shadow-sm ring-1 ring-violet-100" : "border-blue-300 bg-blue-50/40"}`}>
+    <div className={`rounded-2xl p-4 transition ${active ? "border border-violet-400 bg-violet-50 shadow-sm ring-1 ring-violet-100" : "border-2 border-blue-400 bg-blue-50/60 shadow-[0_0_0_3px_rgba(59,130,246,0.15)] ring-1 ring-blue-200"}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-slate-800">{field.label}</span>
         <button
