@@ -232,6 +232,20 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
     }
   }, [phase, schema]);
 
+  // Fix anchor image positions after docx-preview renders
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current || !bufferRef.current) return;
+    let cancelled = false;
+    const buf = bufferRef.current;
+    const cont = containerRef.current;
+    import("../../lib/utils/docx-anchor-fix")
+      .then(({ fixDocxAnchorImages }) => {
+        if (!cancelled) return fixDocxAnchorImages(buf, cont);
+      })
+      .catch(() => {/* ignore */});
+    return () => { cancelled = true; };
+  }, [phase]);
+
   const busy = phase === "loading" || phase === "rendering";
 
   return (
@@ -245,8 +259,8 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
       <style>{`
         .docx-wrapper { background: #f1f5f9 !important; padding: 24px 16px !important; min-height: 300px; }
         .docx-wrapper section.docx { box-shadow: 0 2px 8px rgba(0,0,0,.10) !important; border-radius: 3px !important; margin-bottom: 16px !important; }
-        .docx-wrapper img { max-width: 100% !important; height: auto !important; display: inline-block !important; position: static !important; float: none !important; vertical-align: middle !important; }
-        .docx-wrapper td img, .docx-wrapper th img { display: block !important; margin: 0 auto; }
+        .docx-wrapper img { max-width: 100%; height: auto; }
+        .docx-wrapper section { overflow: visible !important; }
       `}</style>
       <div className={`overflow-y-auto max-h-[70vh] ${busy || phase === "error" ? "hidden" : ""}`}>
         <div ref={containerRef} />

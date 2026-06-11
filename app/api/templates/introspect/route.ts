@@ -10,6 +10,7 @@ import { getAdminDb } from "../../../../lib/firebase/admin";
 import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 import { getLimitsStatus } from "../../../../lib/services/limits";
 import { callAIWithFallbacks } from "../../../../lib/ai/provider";
+import { scanDocxStructure } from "../../../../lib/utils/docx-filler";
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
 
@@ -101,6 +102,15 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
    • recuperacao_paralela → "Proponha atividades diferenciadas baseadas nas dificuldades previstas pelos objetivos e avaliação."
    • Outros campos ia_sugerida → "Seja específico ao contexto da turma, disciplina e período descritos no plano."
    Campos role "manual" → aiInstructions = "".
+14. TOKENIZAÇÃO AVANÇADA DO KEY (normalização de rótulos):
+   A. Marcador de plural "(s)" ou "(es)": remova os parênteses ao gerar o key. "Habilidade(s) selecionada(s)" → key "habilidades_selecionadas". "Professor(a)" → key "professor" (singular base).
+   B. Símbolo "Nº" ou "N°": substitua por "numero" no key. "Nº aulas semanais" → key "numero_aulas_semanais".
+   C. Conectivos e conjunções no key: use ambos os termos. "Adaptações e observações" → key "adaptacoes_observacoes".
+   D. Prefixo "- " no rótulo: ignore no key. "- Carga horária:" → key "carga_horaria".
+   E. Parênteses, pontuação e caracteres especiais: nunca aparecem no key — apenas letras, dígitos e _.
+15. BLOCOS "Obs:", "Nota:", "Observação:", "N.B.": são instruções de negócio descritivas, NUNCA geram campo. Qualquer parágrafo, célula ou rodapé cujo texto inicia com essas palavras deve ser completamente ignorado — não crie campo, não crie label, não processe.
+16. CABEÇALHO EM CAIXA ALTA SEM ":" (Regra Top-Down / Parent-Child): Quando uma linha contém APENAS texto todo em maiúsculas sem ":" E a linha imediatamente abaixo está vazia ou tem espaço para valor, o texto é um rótulo de seção que gera variável na linha inferior. Exemplos: "PROJETOS INTEGRADORES" + linha vazia → campo projeto_integrador (type textarea). NUNCA confundir com nomes de instituição/escola que aparecem no topo do documento sem linha vazia logo abaixo.
+17. VARIÁVEIS DE SISTEMA (auto-preenchidas): Chaves reservadas que o sistema preenche automaticamente sem input do usuário: {{data_atual}} (data de geração em pt-BR), {{ano_letivo}} (ano corrente). Quando o documento apresentar texto como "Blumenau, {{data_atual}}" ou "Ano letivo: {{ano_letivo}}", declare esses campos com role "manual", type "text" e aiInstructions = "" — o sistema injeta o valor automaticamente; não espere que o professor preencha.
 </regras>
 <raciocinio_obrigatorio>
 Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
@@ -108,8 +118,8 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
 2. Classifique cada campo: é de identificação (professor, turma, escola, data) ou pedagógico (objetivos, habilidades, conteúdos, avaliação)?
 3. Para cada campo pedagógico, determine o group correto: objetivos | competencias | habilidades | conteudos | avaliacao | outros.
 4. Confirme que cada label será copiado EXATAMENTE como aparece no documento, sem normalização.
-5. Identifique colunas repetidas (→ mesmo campo único), estruturas de período (→ sufixos _tr1/_tr2/_tr3) e ranges de data (→ _inicio/_fim).
-6. Para CADA linha/parágrafo, aplique a Regra 13:
+5. Identifique colunas repetidas (→ mesmo campo único), estruturas de período (→ sufixos _tr1/_tr2/_tr3), ranges de data (→ _inicio/_fim) e colunas paralelas (→ campos independentes lado a lado).
+6. Blocos "Obs:", "Nota:", "Observação:" → descartar imediatamente (Regra 15). Texto ALL CAPS + sem ":" + linha vazia abaixo → campo adjacent_below (Regra 16). Variáveis de sistema (data_atual, ano_letivo) → declarar com role manual, o sistema preenche (Regra 17). Para CADA linha/parágrafo restante, aplique a Regra 13:
    • TUDO MAIÚSCULO + ":" → campo direto, variável na mesma célula.
    • TUDO MAIÚSCULO + sem ":" → título, descarta imediatamente.
    • Misto + ":" → campo.
@@ -188,7 +198,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
     }
 
-    const pdfText = await extractFileText(file);
+    // Read the file buffer once and reuse for text extraction + structural scan
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    const pdfText = await extractFileText(new File([fileBuffer], file.name, { type: file.type }));
+
+    // Rule 1 + 5: structural pre-scan — parse DOCX XML for label→value pairs.
+    // Includes non-table paragraphs (Rule 1) and implicitly excludes header/footer
+    // XML files since scanDocxStructure only reads word/document.xml (Rule 5).
+    const isDocxFile = /\.(docx|doc)(\?|$)/i.test(file.name);
+    const structuralPairs = isDocxFile ? (() => {
+      try { return scanDocxStructure(fileBuffer); } catch { return []; }
+    })() : [];
+    console.info(`[introspect] Estrutura detectada: ${structuralPairs.length} pares`);
 
     // Few-shot: two examples covering the main structural patterns found in Brazilian school templates.
     const fewShotExamples = [
@@ -213,7 +234,7 @@ export async function POST(request: Request) {
         nota: "Regra 10: 'Data ou período de realização: 13/07/2026 a 09/08/2026' → dois campos data_inicio + data_fim.",
       },
       {
-        descricao: "Planejamento anual com 3 trimestres (EMIEP-2026). Regra 8: colunas repetidas → 1 campo. Regra 9: 3 linhas de dados → sufixos _tr1/_tr2/_tr3.",
+        descricao: "Planejamento anual com 3 trimestres (EMIEP-2026). Regra 8: colunas repetidas → 1 campo. Regra 9: 3 linhas de dados → sufixos _tr1/_tr2/_tr3. Regra 16: 'PROJETOS INTEGRADORES' (ALL CAPS + linha vazia abaixo) → campo adjacent_below. Regra 17: rodapé 'Blumenau, data' → campo data_atual (auto-preenchido).",
         campos: [
           { key: "professor_a", label: "PROFESSOR (A)", type: "text", required: true, role: "manual", group: "dados_turma" },
           { key: "nome_curso", label: "CURSO", type: "text", required: true, role: "manual", group: "dados_turma" },
@@ -239,26 +260,64 @@ export async function POST(request: Request) {
           { key: "tr3", label: "3º Trimestre", type: "text", required: false, role: "manual", group: "dados_turma" },
           { key: "metodologia", label: "METODOLOGIA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
           { key: "avaliacao", label: "AVALIAÇÃO", type: "textarea", required: true, role: "ia_sugerida", group: "avaliacao" },
+          { key: "projeto_integrador", label: "PROJETOS INTEGRADORES", type: "textarea", required: false, role: "ia_sugerida", group: "outros", aiInstructions: "Seja específico ao contexto da turma, disciplina e período descritos no plano." },
           { key: "referencias_bibliograficas", label: "REFERÊNCIAS BIBLIOGRÁFICAS", type: "textarea", required: false, role: "manual", group: "outros" },
+          { key: "data_atual", label: "Data de geração", type: "text", required: false, role: "manual", group: "dados_turma", defaultValue: "" },
         ],
         notas: [
           "Regra 8: PROFESSOR (A), Turma(s) etc. repetem em 9-10 colunas → 1 campo cada.",
           "Regra 9: HABILIDADES/CONCEITOS/OBJETO aparecem em 3 linhas (uma por trimestre) → sufixos _tr1/_tr2/_tr3.",
+          "Regra 16: 'PROJETOS INTEGRADORES' (ALL CAPS, sem ':', linha vazia abaixo) → campo adjacent_below.",
+          "Regra 17: rodapé com data (ex: 'Blumenau, DD/MM/AAAA') → campo data_atual auto-preenchido pelo sistema.",
         ],
+      },
+      {
+        descricao: "Sequência Didática (SC) — template tabular com rótulo em célula A e variável em célula B adjacente. Padrões: Regra 1 (ancoragem célula-a-célula), Regra 14 (Nº → numero, (s) → remoção), Regra 15 (Obs: → ignorar).",
+        regras: [
+          "Regra 14A: 'Habilidade(s) selecionada(s)' → key 'habilidades_selecionadas' (remove (s) de ambas).",
+          "Regra 14B: 'Nº de aulas' → key 'numero_de_aulas' (Nº → numero).",
+          "Regra 15: rodapé 'Obs: a periodicidade da postagem...' → NENHUM campo gerado.",
+          "Colunas paralelas 'Experiências de ensino e aprendizagem' | 'Recursos necessários' → dois campos independentes.",
+          "Cabeçalho com logo GOVERNO DE SANTA CATARINA + 'SEQUÊNCIA DIDÁTICA' → Regra 13G, nenhum campo.",
+        ],
+        campos: [
+          { key: "escola", label: "Escola", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "" },
+          { key: "docente", label: "Docente", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "" },
+          { key: "componente_curricular", label: "Componente Curricular", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "" },
+          { key: "turma", label: "Turma", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "" },
+          { key: "numero_de_aulas", label: "Nº de aulas", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "" },
+          { key: "data_inicio", label: "Período", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "" },
+          { key: "data_fim", label: "Período", type: "text", required: true, role: "manual", group: "dados_turma", defaultValue: "" },
+          { key: "habilidades_selecionadas", label: "Habilidade(s) selecionada(s)", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades", aiInstructions: "Selecione habilidades BNCC alinhadas ao componente curricular e ao período letivo." },
+          { key: "experiencia_ensino_aprendizagem", label: "Experiências de ensino e aprendizagem", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos", aiInstructions: "Elabore considerando os objetivos de aprendizagem e as habilidades definidas neste plano." },
+          { key: "recursos", label: "Recursos necessários", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos", aiInstructions: "Seja específico ao contexto da turma, disciplina e período descritos no plano." },
+          { key: "adaptacoes_observacoes", label: "Adaptações e observações", type: "textarea", required: false, role: "manual", group: "outros", defaultValue: "" },
+        ],
+        nota: "O rodapé 'Obs: a periodicidade da postagem do plano de aula será de no máximo 30 dias...' é Regra 15 — NENHUM campo gerado a partir dele.",
       },
     ];
 
-    const promptStr = [
+    const promptParts: string[] = [
       `<instrucao>`,
-      `Analise o texto em <documento> e extraia TODOS os campos visíveis. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece (título da seção, rótulo da linha, cabeçalho). Não normalize, não traduza, não abrevia. O 'key' é o label em snake_case sem acentos. Se o documento estiver preenchido, inclua o conteúdo como 'defaultValue'. Aplique as Regras 8 (colunas repetidas), 9 (períodos/trimestres) e 10 (range de datas).`,
+      structuralPairs.length > 0
+        ? `Analise os pares rótulo→valor em <estrutura_detectada> (FONTE PRIMÁRIA) e o texto em <documento>. USE <estrutura_detectada> para obter labels e posições — copie cada label EXATAMENTE. O 'key' é o label em snake_case sem acentos. Aplique as Regras 8, 9 e 10.`
+        : `Analise o texto em <documento> e extraia TODOS os campos visíveis. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece. O 'key' é o label em snake_case sem acentos. Aplique as Regras 8, 9 e 10.`,
       `</instrucao>`,
       `<exemplos>`,
       JSON.stringify(fewShotExamples),
       `</exemplos>`,
-      `<documento>`,
-      pdfText,
-      `</documento>`,
-    ].join("\n");
+    ];
+
+    if (structuralPairs.length > 0) {
+      promptParts.push(
+        `<estrutura_detectada>`,
+        JSON.stringify(structuralPairs, null, 2),
+        `</estrutura_detectada>`,
+      );
+    }
+
+    promptParts.push(`<documento>`, pdfText, `</documento>`);
+    const promptStr = promptParts.join("\n");
 
     const { text: raw, provider: aiProvider } = await generateSchema(promptStr);
 

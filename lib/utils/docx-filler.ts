@@ -26,9 +26,22 @@ function normText(s: string): string {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
+    .replace(/\(s\)/g, "s")       // "Habilidade(s)" → "Habilidades"
+    .replace(/\(es\)/g, "es")     // "Professor(es)" → "Professores"
+    .replace(/n[°º]/g, "numero")  // "Nº" / "N°" → "numero"
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Returns true when a text block is an instructional/observational note rather
+ * than a field anchor.  Blocks starting with "Obs:", "Nota:", "Observação:" etc.
+ * are business-rule descriptions that must never be treated as labels or injected.
+ * Rule 4 / Rule 15 (Imutabilidade Estrita).
+ */
+function isInstructionalBlock(text: string): boolean {
+  return /^\s*(obs[.:\s]|nota[s]?[.:\s]|observa[çc][aã]o[s]?[.:\s]|n\.b[.:\s])/i.test(text);
 }
 
 function replaceFirst(haystack: string, needle: string, replacement: string): string {
@@ -164,6 +177,33 @@ function matchField(
 /** Returns the extracted text of each <w:p> element in the given XML node. */
 function extractParagraphTexts(xml: string): string[] {
   return [...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((m) => extractText(m[0]));
+}
+
+/**
+ * Returns a preview of a cell's block content by joining non-empty paragraph
+ * texts with newlines (Rule 3: scalar vs. block distinction).
+ * Used for adjacent_below valuePreview so the AI receives a multi-line preview
+ * instead of the concatenated-without-separators extractText result.
+ */
+function cellBlockPreview(cellXml: string, maxLen = 120): string {
+  const texts = extractParagraphTexts(cellXml).map((t) => t.trim()).filter(Boolean);
+  return texts.join("\n").slice(0, maxLen);
+}
+
+/**
+ * Builds a table-position index so non-table paragraph passes can skip
+ * paragraphs that happen to be inside a <w:tbl> element.
+ */
+function buildTableRanges(xml: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const m of xml.matchAll(/<w:tbl[\s>][\s\S]*?<\/w:tbl>/g)) {
+    ranges.push([m.index!, m.index! + m[0].length]);
+  }
+  return ranges;
+}
+
+function inTableRange(pos: number, ranges: Array<[number, number]>): boolean {
+  return ranges.some(([s, e]) => pos >= s && pos < e);
 }
 
 /**
@@ -514,8 +554,11 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   if (!zip.files[xmlPath]) throw new Error("DOCX inválido: word/document.xml não encontrado.");
 
   let xml = zip.files[xmlPath].asText();
-  // Only skip injection if ALL schema fields already have placeholders in the document
-  if (schema.every((f) => xml.includes(`{{${f.key}}}`))) return docxBuffer;
+  // Idempotency check via projected plain text — immune to OOXML run fragmentation.
+  // xml.includes("{{key}}") fails when Word splits the token across multiple <w:r> nodes;
+  // extractText joins all <w:t> content across run boundaries before checking.
+  const projectedText = extractText(xml);
+  if (schema.every((f) => projectedText.includes(`{{${f.key}}}`))) return docxBuffer;
 
   // Only strip change tracking, preserve all other formatting
   xml = stripChangeTracking(xml);
@@ -523,7 +566,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   const rows = parseRows(xml);
   // Pre-populate `used` with fields already present in the document so
   // injectPlaceholders never overwrites cells that were placed by injectAtCell.
-  const used = new Set<string>(schema.map((f) => f.key).filter((k) => xml.includes(`{{${k}}}`)));
+  // Uses projected text for the same fragmentation-safety reason.
+  const used = new Set<string>(schema.map((f) => f.key).filter((k) => projectedText.includes(`{{${k}}}`)));
 
   // ── Pass 0: Paragraph-level inline injection ────────────────────────────────
   // For 1-cell rows: processes ANY cell with ≥1 label paragraph ending with ":"
@@ -591,7 +635,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   // headers like "TEMÁTICA ABORDADA:" where nothing follows the colon in the cell).
 
   // Build set of still-missing keys for targeted logging
-  const missingAfterPass0 = new Set(schema.filter((f) => !xml.includes(`{{${f.key}}}`)).map((f) => f.key));
+  const missingAfterPass0 = new Set(schema.filter((f) => !extractText(xml).includes(`{{${f.key}}}`)).map((f) => f.key));
   if (missingAfterPass0.size > 0) {
     console.info(`[inject pass0→1] still missing: ${[...missingAfterPass0].join(", ")}`);
   }
@@ -672,11 +716,15 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       const hasMixedCase = /[a-z]/.test(stripped);
       const hasColon = singleCellText.endsWith(":");
 
-      // ALL CAPS + no colon → title/subtitle (new rule: school name, document title, etc.)
-      if (!hasMixedCase && !hasColon) { continue; }
-
+      // Compute next-row text early — needed for both ALL-CAPS and mixed-case checks.
       const nextRowText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "x";
       const hasEmptyBelow = nextRowText === "";
+
+      // ALL CAPS + no colon: title by default, BUT if the next row is empty it is a
+      // section field anchor (Rule 3 — e.g. "PROJETOS INTEGRADORES").
+      // ALL CAPS + empty below falls through to the adjacent_below injection path below.
+      if (!hasMixedCase && !hasColon && !hasEmptyBelow) { continue; }
+
       // Mixed-case + no colon + no adjacent empty → section title (Rule 13)
       const isMixedCaseTitle = hasMixedCase && !hasColon && !hasEmptyBelow;
       if (isMixedCaseTitle) { continue; }
@@ -822,7 +870,22 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       let nextModified = false;
 
       for (let ci = 0; ci < cells.length && ci < nextCells.length; ci++) {
-        const field = matchField(cellTexts[ci], schema, used);
+        let field = matchField(cellTexts[ci], schema, used);
+
+        // Rule 2 (Sparse Matrix): period markers "1º" / "2º" / "3º" may score below
+        // the 0.4 threshold against labels like "1º Trimestre". Fall back to
+        // position-based matching: 1st period column → tr1, 2nd → tr2, 3rd → tr3.
+        if (!field && looksLikePeriodMarker(cellTexts[ci].trim())) {
+          const periodPosition = cells
+            .slice(0, ci + 1)
+            .filter((_, idx) => looksLikePeriodMarker(cellTexts[idx].trim()))
+            .length - 1; // 0-based: 0 → tr1, 1 → tr2, 2 → tr3
+          const trNum = periodPosition + 1;
+          field = schema.find(
+            (f) => !used.has(f.key) && (f.key === `tr${trNum}` || f.key.endsWith(`_tr${trNum}`))
+          ) ?? null;
+        }
+
         if (!field) continue;
         // Only inject into genuinely empty value slots — skip label-looking cells
         // and cells with substantial content (likely a pre-filled value or sub-header)
@@ -841,6 +904,46 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       if (nextModified) {
         xml = replaceFirst(xml, nextRow.xml, nextRowXml);
         rows[ri + 1] = { xml: nextRowXml, cells: nextCells, cellTexts: nextCellTexts };
+      }
+    }
+  }
+
+  // ── Pass 3: Non-table paragraph injection (Rule 1) ───────────────────────────
+  // Handles "Label: value" and "Label:" patterns in standalone paragraphs outside
+  // tables. Covers templates that use flowing text rather than table grids.
+  {
+    const tblRanges = buildTableRanges(xml);
+    const paraMatches = [...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+    for (let i = 0; i < paraMatches.length; i++) {
+      const pm = paraMatches[i];
+      if (inTableRange(pm.index!, tblRanges)) continue;
+      const paraXml = pm[0];
+      const text = extractText(paraXml).trim();
+      if (!text || text.length < 3) continue;
+      // Rule 15: skip instructional/observational blocks — never inject into "Obs:", "Nota:", etc.
+      if (isInstructionalBlock(text)) continue;
+      const colonIdx = text.indexOf(":");
+      if (colonIdx <= 1) continue;
+      const potentialLabel = text.slice(0, colonIdx).replace(/^[-\s]+/, "").trim();
+      if (potentialLabel.length < 2) continue;
+      const field = matchField(potentialLabel, schema, used);
+      if (!field) continue;
+      if (extractText(xml).includes(`{{${field.key}}}`)) { used.add(field.key); continue; }
+      const value = text.slice(colonIdx + 1).trim();
+      let newParaXml: string;
+      if (value) {
+        const labelPrefix = text.slice(0, colonIdx + 1);
+        newParaXml = clearAndSetCellText(paraXml, `${labelPrefix} {{${field.key}}}`);
+      } else {
+        const closeIdx = paraXml.lastIndexOf("</w:p>");
+        if (closeIdx < 0) continue;
+        const newRun = `<w:r><w:t xml:space="preserve"> {{${field.key}}}</w:t></w:r>`;
+        newParaXml = paraXml.slice(0, closeIdx) + newRun + paraXml.slice(closeIdx);
+      }
+      if (newParaXml !== paraXml) {
+        xml = replaceFirst(xml, paraXml, newParaXml);
+        used.add(field.key);
+        console.info(`[inject pass3] ${field.key} standalone para "${text.slice(0, 60)}"`);
       }
     }
   }
@@ -864,7 +967,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 
       for (const f of schema) {
         if (used.has(f.key)) continue;
-        if (xml.includes(`{{${f.key}}}`)) { used.add(f.key); continue; }
+        if (extractText(xml).includes(`{{${f.key}}}`)) { used.add(f.key); continue; }
 
         const fNorm = normText(f.label);
         if (!fNorm || fNorm.length < 2) continue;
@@ -905,7 +1008,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   }
 
   // Diagnostic: log any fields that still have no placeholder after all passes
-  const stillMissing = schema.filter((f) => !xml.includes(`{{${f.key}}}`));
+  const finalProjected = extractText(xml);
+  const stillMissing = schema.filter((f) => !finalProjected.includes(`{{${f.key}}}`));
   if (stillMissing.length > 0) {
     console.info(`[injectPlaceholders] STILL MISSING after last-resort: ${stillMissing.map((f) => f.key).join(", ")}`);
     for (const f of stillMissing) {
@@ -1126,6 +1230,8 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
 
       // Single-label cell: classic "Label: value" in concatenated text
       const t = row.cellTexts[ci].trim();
+      // Rule 15: skip instructional cells ("Obs:", "Nota:", etc.) inside tables too
+      if (isInstructionalBlock(t)) continue;
       const colonIdx = t.indexOf(":");
       if (colonIdx <= 1 || colonIdx >= t.length - 1) continue;
       const label = t.slice(0, colonIdx).trim();
@@ -1203,21 +1309,36 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
         continue;
       }
 
-      // No ":" paragraphs — fall back to the classic mixed-case + empty-below rule
+      // No ":" paragraphs — fall back to mixed-case + empty-below rule (Rule 13 / Rule 3)
       const t = row.cellTexts[0].trim();
       const tStripped = t.normalize("NFD").replace(/[̀-ͯ]/g, "");
       const hasMixedCase = /[a-z]/.test(tStripped);
       const hasColon = t.endsWith(":");
 
-      // ALL CAPS + no colon → title, skip
-      if (!hasMixedCase && !hasColon) { continue; }
-
-      const nextText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "";
+      const nextText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "sentinel";
       const hasEmptyBelow = nextText === "";
+
+      // ALL CAPS + no colon: title unless followed by empty row.
+      // Empty below signals a section field anchor (Rule 3 — e.g. "PROJETOS INTEGRADORES").
+      if (!hasMixedCase && !hasColon) {
+        if (!hasEmptyBelow) continue;
+        // ALL CAPS + empty below → adjacent_below field anchor
+        addPair({
+          label: t.trim(),
+          valuePreview: cellBlockPreview(rows[ri + 1]?.cells[0] ?? "", 120),
+          pattern: "adjacent_below",
+        });
+        continue;
+      }
+
       const isFieldLabel = hasMixedCase && !hasColon && hasEmptyBelow;
       if (!isFieldLabel) { continue; }
 
-      addPair({ label: t.trim(), valuePreview: nextText.slice(0, 60), pattern: "adjacent_below" });
+      addPair({
+        label: t.trim(),
+        valuePreview: cellBlockPreview(rows[ri + 1]?.cells[0] ?? "", 120),
+        pattern: "adjacent_below",
+      });
       continue;
     }
 
@@ -1244,7 +1365,8 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
         if (!looksLikeLabel(belowText) && !looksLikePeriodMarker(belowText) && !hasImageContent(belowCellXml)) {
           addPair({
             label: t.replace(/:+$/, "").trim(),
-            valuePreview: belowText.slice(0, 60),
+            // Rule 3: capture multi-paragraph block preview for textarea fields
+            valuePreview: cellBlockPreview(belowCellXml, 120),
             pattern: "adjacent_below",
           });
         }
@@ -1264,6 +1386,52 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
         pattern: "adjacent_right",
       });
       ci += 2;
+    }
+  }
+
+  // ── Rule 1: Standalone paragraphs outside tables ──────────────────────────
+  // Scans <w:p> elements that are NOT inside any <w:tbl>. Only word/document.xml
+  // is processed here — header/footer XML files are separate and never read,
+  // satisfying Rule 5 (immutable header/footer isolation) by structural exclusion.
+  {
+    const tblRanges = buildTableRanges(xml);
+    const paraMatches = [...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+    for (let i = 0; i < paraMatches.length; i++) {
+      const pm = paraMatches[i];
+      if (inTableRange(pm.index!, tblRanges)) continue;
+
+      const text = extractText(pm[0]).trim();
+      if (!text || text.length < 3) continue;
+
+      // Rule 15: Instructional/observational blocks ("Obs:", "Nota:") → skip entirely
+      if (isInstructionalBlock(text)) continue;
+
+      // ALL-CAPS without colon → section title (Rule 13B), skip
+      const stripped = text.normalize("NFD").replace(/[̀-ͯ]/g, "");
+      if (!/[a-z]/.test(stripped) && !text.endsWith(":")) continue;
+
+      const colonIdx = text.indexOf(":");
+      if (colonIdx <= 1) continue;
+
+      const label = text.slice(0, colonIdx).replace(/^[-\s]+/, "").trim();
+      if (label.length < 2) continue;
+
+      const value = text.slice(colonIdx + 1).trim();
+      if (value) {
+        // "Label: current value" → inline_colon with value as preview
+        addPair({ label, valuePreview: value.slice(0, 60), pattern: "inline_colon" });
+      } else {
+        // "Label:" alone → look ahead for a non-empty, non-label paragraph
+        let nextPreview = "";
+        for (let j = i + 1; j < paraMatches.length && j <= i + 3; j++) {
+          if (inTableRange(paraMatches[j].index!, tblRanges)) break;
+          const t = extractText(paraMatches[j][0]).trim();
+          if (t) { nextPreview = t; break; }
+        }
+        if (!looksLikeLabel(nextPreview)) {
+          addPair({ label, valuePreview: nextPreview.slice(0, 60), pattern: "adjacent_below" });
+        }
+      }
     }
   }
 
@@ -1347,6 +1515,19 @@ export function fillDocx(
   const data: Record<string, string> = {};
   for (const field of schema) {
     data[field.key] = (values[field.key] ?? "").trim();
+  }
+
+  // Rule 4 — Temporal Middleware: auto-populate reserved system keys at generation time.
+  // These are filled only when NOT already provided by the user (user value takes precedence).
+  const now = new Date();
+  const SYSTEM_VARS: Record<string, string> = {
+    data_atual:  now.toLocaleDateString("pt-BR"),
+    data_gerado: now.toLocaleDateString("pt-BR"),
+    ano_letivo:  String(now.getFullYear()),
+    ano_atual:   String(now.getFullYear()),
+  };
+  for (const [sysKey, sysVal] of Object.entries(SYSTEM_VARS)) {
+    if (!data[sysKey]) data[sysKey] = sysVal;
   }
 
   doc.render(data);

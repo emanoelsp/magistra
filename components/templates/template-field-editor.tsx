@@ -395,6 +395,20 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     }
   }, [phase, fields]);
 
+  // Fix anchor image positions after docx-preview renders
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current || !bufferRef.current) return;
+    let cancelled = false;
+    const buf = bufferRef.current;
+    const cont = containerRef.current;
+    import("../../lib/utils/docx-anchor-fix")
+      .then(({ fixDocxAnchorImages }) => {
+        if (!cancelled) return fixDocxAnchorImages(buf, cont);
+      })
+      .catch(() => {/* ignore positioning errors */});
+    return () => { cancelled = true; };
+  }, [phase]);
+
   // Inject {{key}} chips when fieldPositions changes (only for non-empty cellText
   // positions — if cellText is empty the chip was typed directly and the
   // colorization effect above already handles it)
@@ -425,24 +439,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       targetEl.appendChild(chip);
     }
   }, [phase, fieldPositions, fields]);
-
-  // Inject image-override CSS into <head> AFTER docx-preview renders so our rule
-  // is always later in the cascade than docx-preview's injected stylesheet.
-  useEffect(() => {
-    if (phase !== "done") return;
-    const id = "docx-img-override-editor";
-    let el = document.getElementById(id) as HTMLStyleElement | null;
-    if (!el) {
-      el = document.createElement("style");
-      el.id = id;
-      document.head.appendChild(el);
-    }
-    el.textContent = [
-      `.docx-wrapper img { max-width:100%!important; height:auto!important; display:inline-block!important; position:static!important; float:none!important; vertical-align:middle!important; }`,
-      `.docx-wrapper td img, .docx-wrapper th img { display:block!important; margin:0 auto; }`,
-    ].join("\n");
-    return () => { el?.remove(); };
-  }, [phase]);
 
   // Contenteditable — make cells editable, avoiding nested contenteditable
   useEffect(() => {
@@ -484,8 +480,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
         .docx-html-preview table { border-collapse: collapse; }
         .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; vertical-align: top; position: relative; }
-        .docx-html-preview img { max-width: 100% !important; height: auto !important; display: inline-block !important; position: static !important; float: none !important; vertical-align: middle !important; }
-        .docx-html-preview td img, .docx-html-preview th img { display: block !important; margin: 0 auto; }
+        .docx-html-preview img { max-width: 100%; height: auto; }
+        .docx-html-preview section { overflow: visible !important; }
         .docx-html-preview p { margin: 0.2em 0; }
         .docx-html-preview td[contenteditable]:focus,
         .docx-html-preview td[contenteditable]:focus-within,
