@@ -1,4 +1,5 @@
 import "server-only";
+import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { MercadoPagoConfig, PreApproval } from "mercadopago";
 import { FieldValue } from "firebase-admin/firestore";
@@ -10,6 +11,42 @@ function getMpClient() {
   return new MercadoPagoConfig({ accessToken: token });
 }
 
+/**
+ * Validates the x-signature header sent by MercadoPago.
+ * Format: "ts=<timestamp>,v1=<hmac-sha256-hex>"
+ * Signed string: "id:<dataId>;request-id:<xRequestId>;ts:<ts>;"
+ * Returns true if valid, false if invalid, null if secret not configured (skip validation).
+ */
+function validateMpSignature(
+  xSignature: string | null,
+  xRequestId: string | null,
+  dataId: string,
+): boolean | null {
+  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+  if (!secret) return null;
+  if (!xSignature) return false;
+
+  const parts = Object.fromEntries(
+    xSignature.split(",").map((part) => {
+      const [k, ...rest] = part.split("=");
+      return [k?.trim() ?? "", rest.join("=").trim()];
+    }),
+  );
+
+  const ts = parts["ts"];
+  const v1 = parts["v1"];
+  if (!ts || !v1) return false;
+
+  const signed = `id:${dataId};request-id:${xRequestId ?? ""};ts:${ts};`;
+  const expected = createHmac("sha256", secret).update(signed).digest("hex");
+
+  try {
+    return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(v1, "hex"));
+  } catch {
+    return false;
+  }
+}
+
 const AVULSO_TIPOS = new Set(["avulso_template", "avulso_plano"]);
 const AVULSO_FIELD: Record<string, "avulso_templates" | "avulso_planos"> = {
   avulso_template: "avulso_templates",
@@ -18,15 +55,45 @@ const AVULSO_FIELD: Record<string, "avulso_templates" | "avulso_planos"> = {
 
 export async function POST(request: Request) {
   try {
+    const xSignature = request.headers.get("x-signature");
+    const xRequestId = request.headers.get("x-request-id");
+
     const body = (await request.json()) as {
+      id?: string | number;
       type?: string;
       action?: string;
       data?: { id?: string };
     };
 
+    // Valida assinatura HMAC-SHA256 quando MERCADOPAGO_WEBHOOK_SECRET está configurado
+    if (body.data?.id) {
+      const signatureValid = validateMpSignature(xSignature, xRequestId, body.data.id);
+      if (signatureValid === false) {
+        console.warn("[webhook/mp] Assinatura inválida — requisição rejeitada.");
+        return NextResponse.json({ error: "Assinatura inválida." }, { status: 401 });
+      }
+      if (signatureValid === null) {
+        console.warn("[webhook/mp] MERCADOPAGO_WEBHOOK_SECRET não configurado — validação de assinatura ignorada.");
+      }
+    }
+
     // MP envia type = "subscription_preapproval" para eventos de assinatura
     if (body.type !== "subscription_preapproval" || !body.data?.id) {
       return NextResponse.json({ ok: true });
+    }
+
+    // Idempotência: cada notificação tem um id único enviado pelo MP
+    const notificationId = body.id != null ? String(body.id) : null;
+    if (notificationId) {
+      const db = getAdminDb();
+      const eventRef = db.collection("magis_webhook_events").doc(notificationId);
+      const eventSnap = await eventRef.get();
+      if (eventSnap.exists) {
+        console.log(`[webhook/mp] Notificação ${notificationId} já processada — ignorando.`);
+        return NextResponse.json({ ok: true });
+      }
+      // Reserva o slot antes de processar para evitar race condition
+      await eventRef.set({ processed_at: new Date().toISOString(), subscription_id: body.data.id });
     }
 
     const client = getMpClient();

@@ -1,33 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 
-  <!-- Fundo branco com cantos levemente arredondados -->
+  <!-- Fundo branco -->
   <rect width="32" height="32" rx="7" fill="#ffffff"/>
 
-  <!-- Topo do capelo (losango) -->
-  <polygon points="16,4 27.5,10.5 16,17 4.5,10.5" fill="#7c3aed"/>
+  <!-- Corpo do capelo -->
+  <path d="M10,15.5 L10,21.5 Q10,25 16,25 Q22,25 22,21.5 L22,15.5 Z" fill="#5b5ea6"/>
 
-  <!-- Brilho sutil no topo do capelo -->
-  <polygon points="16,4 27.5,10.5 16,10.5 4.5,10.5" fill="#a78bfa" opacity="0.35"/>
+  <!-- Tabuleiro — face inferior (mesma cor do corpo) -->
+  <polygon points="16,17.5 27,11 5,11" fill="#5b5ea6"/>
 
-  <!-- Corpo cilíndrico do capelo — mais largo e mais alto -->
-  <path d="M10.5,16.5 L10.5,22.5 Q10.5,25 16,25 Q21.5,25 21.5,22.5 L21.5,16.5 Z" fill="#7c3aed"/>
+  <!-- Tabuleiro — face superior (lilás claro) -->
+  <polygon points="16,4 27,11 5,11" fill="#9090d8"/>
 
-  <!-- Aba/borda inferior do cilindro (leve contraste de profundidade) -->
-  <ellipse cx="16" cy="25" rx="5.5" ry="1.4" fill="#6d28d9"/>
+  <!-- Cordinha da borla: curva do canto direito e desce -->
+  <path d="M27,11 Q30,11 30,13.5 L30,21" stroke="#5b5ea6" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- Cordinha da borla: linha a partir do canto direito do losango -->
-  <line x1="27.5" y1="10.5" x2="27.5" y2="21.5"
-        stroke="#7c3aed" stroke-width="1.8" stroke-linecap="round"/>
-
-  <!-- Nó da cordinha (pequeno círculo) -->
-  <circle cx="27.5" cy="23.5" r="2.2" fill="#7c3aed"/>
-
-  <!-- Franjas da borla (3 fios finos) -->
-  <line x1="25.8" y1="24.5" x2="25.0" y2="28"
-        stroke="#7c3aed" stroke-width="1.1" stroke-linecap="round"/>
-  <line x1="27.5" y1="25.2" x2="27.5" y2="29"
-        stroke="#7c3aed" stroke-width="1.1" stroke-linecap="round"/>
-  <line x1="29.2" y1="24.5" x2="30.0" y2="28"
-        stroke="#7c3aed" stroke-width="1.1" stroke-linecap="round"/>
+  <!-- Ponta da borla (miolo em losango) -->
+  <polygon points="30,21.5 28.3,24.5 30,27.5 31.7,24.5" fill="#5b5ea6"/>
 
 </svg>

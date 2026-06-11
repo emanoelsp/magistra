@@ -380,6 +380,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       setStreamingCharCount(0);
       const combinedContext = [generalContext.trim(), extraContext?.trim()].filter(Boolean).join("\n\n");
       try {
+        // Include non-empty ia_sugerida field values for richer RAG context
+        const filledValues = Object.fromEntries(
+          schema
+            .filter((f) => f.role === "ia_sugerida" && f.key !== field.key && values[f.key]?.trim())
+            .map((f) => [f.key, values[f.key]!])
+        );
+
         const res = await fetch("/api/ia/campo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -390,6 +397,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             fieldGroup: field.group,
             metadata: meta,
             ...(combinedContext ? { extraContext: combinedContext } : {}),
+            ...(Object.keys(filledValues).length > 0 ? { currentValues: filledValues } : {}),
             stream: true,
             ...(bypassCache ? { bypassCache: true } : {}),
           }),
@@ -517,7 +525,17 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       ...values,
     };
     if (planoId) {
-      await planosService.updatePlano(planoId, { conteudo_gerado: conteudo, status });
+      await planosService.updatePlano(planoId, {
+        conteudo_gerado: conteudo,
+        status,
+        // Snapshot file URLs when finalizing so download survives template deletion
+        ...(status === "gerado" && template.arquivo_url
+          ? { arquivo_url: template.arquivo_url }
+          : {}),
+        ...(status === "gerado" && template.arquivo_fillable_url
+          ? { arquivo_fillable_url: template.arquivo_fillable_url }
+          : {}),
+      });
       // Snapshot version on every save (fire-and-forget)
       void fetch(`/api/planos/${planoId}/versoes`, {
         method: "POST",
@@ -526,13 +544,15 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       }).catch(() => {});
       return planoId;
     }
-    // Snapshot schema_campos at creation so preview/download survive future template edits
+    // Snapshot schema_campos and file URLs at creation so preview/download survive future template edits
     const id = await planosService.createPlano({
       user_id: userId,
       template_id: template.id,
       conteudo_gerado: conteudo,
       status,
       schema_campos: template.schema_campos,
+      ...(template.arquivo_url ? { arquivo_url: template.arquivo_url } : {}),
+      ...(template.arquivo_fillable_url ? { arquivo_fillable_url: template.arquivo_fillable_url } : {}),
     });
     setPlanoId(id);
     return id;

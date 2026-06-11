@@ -75,6 +75,8 @@ export const planosService = {
       status: input.status,
       data_geracao: serializeDateForWrite(input.data_geracao),
       ...(Array.isArray(input.schema_campos) ? { schema_campos: input.schema_campos } : {}),
+      ...(input.arquivo_url ? { arquivo_url: input.arquivo_url } : {}),
+      ...(input.arquivo_fillable_url ? { arquivo_fillable_url: input.arquivo_fillable_url } : {}),
     });
 
     return planoRef.id;
@@ -121,6 +123,14 @@ export const planosService = {
 
     if (typeof input.status === "string") {
       payload.status = input.status;
+    }
+
+    if (typeof input.arquivo_url === "string") {
+      payload.arquivo_url = input.arquivo_url;
+    }
+
+    if (typeof input.arquivo_fillable_url === "string") {
+      payload.arquivo_fillable_url = input.arquivo_fillable_url;
     }
 
     if (Object.keys(payload).length === 0) {

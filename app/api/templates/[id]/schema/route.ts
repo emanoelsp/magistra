@@ -135,9 +135,23 @@ export async function PATCH(
     }
 
     // 1. Apply all known positions via injectAtCell (most precise — exact cell).
+    // Strip {{key}} from the stored cellText fingerprint so it matches the original
+    // DOCX (which has no placeholder yet). When the user typed {{key}} inline after
+    // label text, pass appendToLabel=true so the label is preserved on regeneration.
     for (const [key, pos] of Object.entries(allPositions)) {
       if (newKeys.has(key)) {
-        buffer = injectAtCell(buffer, pos.cellText, pos.ordinal, key);
+        const phToken = `{{${key}}}`;
+        const hasInlineToken = pos.cellText.includes(phToken);
+        const cleanCellText = pos.cellText
+          .replace(new RegExp(`\\s*\\{\\{${key}\\}\\}\\s*`, "g"), "")
+          .trim();
+        buffer = injectAtCell(
+          buffer,
+          cleanCellText,
+          pos.ordinal,
+          key,
+          hasInlineToken && cleanCellText.length > 0,
+        );
       }
     }
 

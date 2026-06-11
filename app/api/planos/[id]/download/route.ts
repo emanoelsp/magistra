@@ -447,15 +447,15 @@ export async function GET(
           ? template.schema_campos
           : [];
 
-    // Determine file type from stored path
-    const arquivoUrl = template?.arquivo_url ?? "";
+    // Prefer snapshotted URLs saved at finalization; fall back to live template
+    const arquivoUrl = planoData.arquivo_url ?? template?.arquivo_url ?? "";
     const ext = arquivoUrl.split(".").pop()?.toLowerCase() ?? "pdf";
     const isDocx = ext === "docx" || ext === "doc";
 
     // Gera o DOCX preenchido (reutilizado tanto para download DOCX quanto para conversão PDF)
     if (isDocx && arquivoUrl) {
       try {
-        const fillableUrl = template?.arquivo_fillable_url ?? "";
+        const fillableUrl = planoData.arquivo_fillable_url ?? template?.arquivo_fillable_url ?? "";
         let docxBuffer: Buffer;
 
         if (fillableUrl) {

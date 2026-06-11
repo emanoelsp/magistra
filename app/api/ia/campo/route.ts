@@ -146,6 +146,7 @@ export async function POST(request: Request) {
       extraContext?: string;
       bypassCache?: boolean;
       stream?: boolean;
+      currentValues?: Record<string, string>;
     };
 
     const {
@@ -157,6 +158,7 @@ export async function POST(request: Request) {
       extraContext: extraContextRaw,
       bypassCache = false,
       stream = false,
+      currentValues = {},
     } = body;
 
     // Sanitize user-controlled values before prompt interpolation
@@ -329,7 +331,19 @@ Responda SOMENTE com JSON válido:
 { "raciocinio": string, "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string }] }
 </contrato_de_saida>`;
 
-    const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${contexto}`.trim();
+    // Enrich RAG query with already-filled ia_sugerida field values for better Pinecone recall
+    const sanitizedCurrentValues: Record<string, string> = Object.fromEntries(
+      Object.entries(currentValues)
+        .filter(([k, v]) => k !== fieldKey && typeof v === "string" && v.trim().length > 0)
+        .map(([k, v]) => [sanitizeForPrompt(k), sanitizeForPrompt(v as string)])
+        .slice(0, 8)
+    );
+    const currentValuesContext = Object.values(sanitizedCurrentValues)
+      .filter((v) => v.length > 3)
+      .join(" ")
+      .slice(0, 400);
+
+    const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${contexto} ${currentValuesContext}`.trim();
     const etapaRaw = metadata["etapa"] ?? metadata["ano"] ?? "";
     const etapa = etapaRaw.toLowerCase().includes("médio") || etapaRaw.toLowerCase().includes("medio")
       ? "EM"
@@ -360,6 +374,10 @@ Responda SOMENTE com JSON válido:
       ? curriculum.cnct.map((c) => `${c.curso}: ${c.texto}`).join("\n")
       : null;
 
+    const filledFieldsLines = Object.entries(sanitizedCurrentValues)
+      .filter(([, v]) => v.length > 3)
+      .map(([k, v]) => `  <campo_preenchido nome="${k}">${v.slice(0, 200)}</campo_preenchido>`);
+
     const prompt = [
       `<campo>`,
       `  <nome>${fieldLabel}</nome>`,
@@ -371,6 +389,7 @@ Responda SOMENTE com JSON válido:
       `  <template>${template.nome}</template>`,
       `  <turma>${contexto}</turma>`,
       ...(extraContext?.trim() ? [`  <contexto_extra>${extraContext.trim()}</contexto_extra>`] : []),
+      ...(filledFieldsLines.length > 0 ? [`  <outros_campos_ja_preenchidos>`, ...filledFieldsLines, `  </outros_campos_ja_preenchidos>`] : []),
       `</contexto>`,
       ...(pedagogicMemory ? [pedagogicMemory] : []),
       ...(bnccContexto ? [`<habilidades_bncc>\n${bnccContexto}\n</habilidades_bncc>`] : []),
@@ -406,14 +425,17 @@ Responda SOMENTE com JSON válido:
         if (isQuotaError(err)) {
           console.warn("[PlanoMagistra/ia/campo] Gemini quota, fallback não-streaming...");
           try {
-            const { text: rawText } = await generateSuggestions(systemInstruction, prompt);
+            const { text: rawText, provider: fbProvider } = await generateSuggestions(systemInstruction, prompt);
+            if (fbProvider !== "gemini") {
+              console.warn(`[PlanoMagistra/ia/campo] Fallback ativo: provider=${fbProvider} field=${fieldKey}`);
+            }
             const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
             const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
             const sugestoes = validateSugestoes(raw, { templateId, fieldKey });
             if (cacheKey && sugestoes.length > 0) {
               void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
             }
-            return NextResponse.json({ sugestoes });
+            return NextResponse.json({ sugestoes, provider: fbProvider });
           } catch {
             return NextResponse.json({ error: "Cota da IA esgotada. Tente novamente mais tarde." }, { status: 429 });
           }
@@ -455,15 +477,22 @@ Responda SOMENTE com JSON válido:
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-cache, no-store",
           "X-Accel-Buffering": "no",
+          "X-AI-Provider": "gemini",
         },
       });
     }
 
     // ── Batch path (existing) ─────────────────────────────────────────────────
     let rawText: string;
+    let aiProvider: import("../../../../lib/ai/provider").AiProvider = "gemini";
     try {
       const genResult = await generateSuggestions(systemInstruction, prompt);
       rawText = genResult.text;
+      aiProvider = genResult.provider;
+
+      if (aiProvider !== "gemini") {
+        console.warn(`[PlanoMagistra/ia/campo] Fallback ativo: provider=${aiProvider} field=${fieldKey}`);
+      }
 
       void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
         void logUsage({
@@ -504,7 +533,7 @@ Responda SOMENTE com JSON válido:
       void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
     }
 
-    return NextResponse.json({ sugestoes });
+    return NextResponse.json({ sugestoes, provider: aiProvider });
   } catch (error) {
     console.error("[PlanoMagistra/api/ia/campo] Erro:", error);
     return NextResponse.json({ error: "Falha ao gerar sugestões para o campo." }, { status: 500 });

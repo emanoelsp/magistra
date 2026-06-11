@@ -681,6 +681,11 @@ export function removePlaceholder(docxBuffer: Buffer, fieldKey: string): Buffer 
  *     This avoids falling back to injectPlaceholders() which uses label
  *     matching and may place the variable in the wrong cell.
  *
+ * appendToLabel (default false): when true and in text-fingerprint mode, the
+ *   placeholder is APPENDED to the matched cell's label paragraph instead of
+ *   replacing the cell content. Used when the user typed {{key}} inline after
+ *   existing label text so the label is preserved on regeneration.
+ *
  * Returns the buffer unchanged only when no matching cell is found.
  */
 export function injectAtCell(
@@ -688,6 +693,7 @@ export function injectAtCell(
   cellText: string,
   ordinal: number,
   fieldKey: string,
+  appendToLabel = false,
 ): Buffer {
   const zip = new PizZip(docxBuffer);
   const xmlPath = "word/document.xml";
@@ -725,7 +731,18 @@ export function injectAtCell(
     if (normText(text) === normText(cellText)) {
       if (hits === ordinal) {
         if (tcXml.includes(placeholder)) return docxBuffer; // already there
-        const newTc = setCellContent(tcXml, placeholder);
+        let newTc: string;
+        if (appendToLabel) {
+          // Inline-suffix pattern: user typed {{key}} after label text.
+          // Preserve the label and append the placeholder to its paragraph.
+          newTc = appendToParagraph(tcXml, normText(cellText), fieldKey);
+          if (newTc === tcXml) {
+            // appendToParagraph didn't find the paragraph (unusual XML) — fall back
+            newTc = clearAndSetCellText(tcXml, `${cellText.trim()} {{${fieldKey}}}`);
+          }
+        } else {
+          newTc = setCellContent(tcXml, placeholder);
+        }
         xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + tcXml.length);
         zip.file(xmlPath, xml);
         return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;

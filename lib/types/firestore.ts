@@ -111,6 +111,9 @@ export interface PlanoRecord {
   status: PlanoStatus;
   schema_campos?: TemplateFieldSchema[];
   downloads?: number;
+  /** Snapshotted at finalization so download survives template deletion or file replacement. */
+  arquivo_url?: string;
+  arquivo_fillable_url?: string;
 }
 
 export interface CreatePlanoInput {
@@ -120,12 +123,16 @@ export interface CreatePlanoInput {
   status: PlanoStatus;
   data_geracao?: string;
   schema_campos?: TemplateFieldSchema[];
+  arquivo_url?: string;
+  arquivo_fillable_url?: string;
 }
 
 export interface UpdatePlanoInput {
   template_id?: string;
   conteudo_gerado?: Record<string, unknown>;
   status?: PlanoStatus;
+  arquivo_url?: string;
+  arquivo_fillable_url?: string;
 }
 
 export interface DashboardStats {
