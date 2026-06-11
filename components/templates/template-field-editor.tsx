@@ -238,7 +238,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     setPhase("loading");
     bufferRef.current = null;
     let cancelled = false;
-    fetch(`/api/templates/${templateId}/arquivo?fillable=1&v=${previewVersion}`)
+    fetch(`/api/templates/${templateId}/arquivo?fresh=1&v=${previewVersion}`)
       .then((r) => r.ok ? r : fetch(`/api/templates/${templateId}/arquivo?v=${previewVersion}`))
       .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
       .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })

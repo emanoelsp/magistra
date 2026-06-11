@@ -957,6 +957,34 @@ export function injectColoredPlaceholders(
 
   let xml = zip.files[xmlPath].asText();
 
+  // Pre-split Format C runs (single <w:r> containing multiple visual lines separated
+  // by <w:br/>) into per-line runs. Without this, the mixed-text colorization would
+  // move the colored {{key}} token outside all the line-break separators.
+  xml = xml.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (runXml) => {
+    if (!runXml.includes("<w:br")) return runXml;
+    const rOpenMatch = runXml.match(/^<w:r(\s[^>]*)?>/);
+    const rAttrs = rOpenMatch?.[1] ?? "";
+    const rPr = runXml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
+    const openTagLen = rOpenMatch?.[0].length ?? 4;
+    const innerEnd = runXml.lastIndexOf("</w:r>");
+    const inner = runXml.slice(openTagLen, innerEnd);
+    const innerContent = rPr ? inner.replace(rPr, "") : inner;
+
+    const chunks: string[] = [];
+    let pos = 0;
+    for (const brM of [...innerContent.matchAll(/<w:br(?:\s[^>]*)?\/?>/g)]) {
+      chunks.push(innerContent.slice(pos, brM.index! + brM[0].length));
+      pos = brM.index! + brM[0].length;
+    }
+    if (pos < innerContent.length) chunks.push(innerContent.slice(pos));
+
+    const openTag = `<w:r${rAttrs}>`;
+    return chunks
+      .filter((c) => c.includes("<w:t") || c.includes("<w:br"))
+      .map((c) => `${openTag}${rPr}${c}</w:r>`)
+      .join("");
+  });
+
   // Walk each <w:r> element (runs don't nest in DOCX)
   xml = xml.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (runXml) => {
     for (const field of schema) {
@@ -988,24 +1016,30 @@ export function injectColoredPlaceholders(
       }
 
       // Mixed text e.g. "Professor(a): {{professor}}"
-      // Split into: label run (unchanged) | colored {{key}} run | optional tail run
+      // Split into: label run | colored {{key}} run | optional tail run
       const pIdx = tText.indexOf(placeholder);
       const before = tText.slice(0, pIdx);
       const after = tText.slice(pIdx + placeholder.length);
       const origRPr = runXml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
 
-      // Keep original run but replace its <w:t> with the "before" text only
       const beforeT = before
         ? `<w:t xml:space="preserve">${before}</w:t>`
         : `<w:t/>`;
-      let result = runXml.replace(tMatch[0], beforeT);
 
-      // Colored run for the placeholder
+      // If the run still has <w:br/> (post-split residual), remove it and re-add
+      // AFTER the colored token so the line break falls after {{key}}, not before.
+      const brElements = runXml.match(/<w:br(?:\s[^>]*)?\/?>/g);
+      const runBase = brElements
+        ? runXml.replace(/<w:br(?:\s[^>]*)?\/?>/g, "")
+        : runXml;
+
+      let result = runBase.replace(tMatch[0], beforeT);
       result += `<w:r><w:rPr><w:color w:val="${color}"/></w:rPr><w:t xml:space="preserve">${placeholder}</w:t></w:r>`;
-
-      // Tail run for any text after the placeholder
       if (after) {
         result += `<w:r>${origRPr}<w:t xml:space="preserve">${after}</w:t></w:r>`;
+      }
+      if (brElements) {
+        result += `<w:r>${origRPr}${brElements.join("")}</w:r>`;
       }
 
       return result;

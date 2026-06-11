@@ -16,6 +16,7 @@ export async function GET(
     const { id } = await params;
     const { searchParams } = new URL(request.url);
     const wantFillable = searchParams.get("fillable") === "1";
+    const wantFresh = searchParams.get("fresh") === "1"; // regenerate from original every time
 
     const db = getAdminDb();
     const snap = await db.collection("magis_templates").doc(id).get();
@@ -25,6 +26,28 @@ export async function GET(
     }
 
     const template = snap.data() as TemplateRecord;
+
+    // fresh=1: always regenerate placeholders from the original DOCX (never use cached fillable)
+    if (wantFresh && template.arquivo_url) {
+      const isDocx = /\.(docx|doc)(\?|$)/i.test(template.arquivo_url);
+      const schema = Array.isArray(template.schema_campos) ? template.schema_campos : [];
+      if (isDocx && schema.length > 0) {
+        try {
+          const { injectPlaceholders } = await import("../../../../../lib/utils/docx-filler");
+          const rawBuffer = await downloadFile(template.arquivo_url);
+          const freshBuffer = injectPlaceholders(rawBuffer, schema);
+          return new NextResponse(new Uint8Array(freshBuffer), {
+            headers: {
+              "Content-Type": DOCX_CT,
+              "Content-Disposition": `attachment; filename="template-fresh-${id.slice(0, 8)}.docx"`,
+              "Cache-Control": "private, no-store",
+            },
+          });
+        } catch (e) {
+          console.warn("[arquivo] fresh regeneration falhou, retornando original:", e);
+        }
+      }
+    }
 
     // If fillable requested and not yet generated, generate on-the-fly from original
     if (wantFillable && !template.arquivo_fillable_url && template.arquivo_url) {

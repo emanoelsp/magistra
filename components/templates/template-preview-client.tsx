@@ -155,7 +155,8 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/templates/${templateId}/arquivo`)
+    // Use fresh-injected DOCX so {{key}} tokens are at exact positions
+    fetch(`/api/templates/${templateId}/arquivo?fresh=1`)
       .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
       .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
       .catch(() => { if (!cancelled) setPhase("error"); });
@@ -181,15 +182,12 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
     return () => { cancelled = true; };
   }, [phase]);
 
-  // Inject {{key}} chips into the document
+  // Replace {{key}} text nodes with colored chips — precise because we render
+  // the fresh-injected DOCX which already contains {{key}} at the right positions.
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
-    container.querySelectorAll("[data-field-chip]").forEach((el) => el.remove());
-
-    const allTds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
-    const allPs = Array.from(container.querySelectorAll("p")) as HTMLElement[];
-    const candidates = [...allTds, ...allPs];
+    const roleMap = new Map(schema.map((f) => [f.key, f.role]));
 
     function makeChip(key: string, isIa: boolean) {
       const chip = document.createElement("span");
@@ -206,54 +204,31 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
       return chip;
     }
 
-    for (const field of schema) {
-      const terms = [field.label, field.defaultValue].filter(
-        (t): t is string => typeof t === "string" && t.trim().length > 2,
-      );
-      if (!terms.length) continue;
-
-      let labelEl: HTMLElement | null = null;
-      let bestScore = 0;
-      for (const el of candidates) {
-        if (el.querySelector("[data-field-chip]")) continue;
-        const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
-        if (!text) continue;
-        for (const term of terms) {
-          if (text.toLowerCase().includes(term.toLowerCase())) {
-            const score = term.length / Math.max(text.length, 1);
-            if (score > bestScore) { bestScore = score; labelEl = el; }
-          }
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const hits: Text[] = [];
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const parent = (node as Text).parentElement;
+      if (parent?.hasAttribute("data-field-chip")) continue;
+      if (/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test((node as Text).textContent ?? "")) {
+        hits.push(node as Text);
+      }
+    }
+    for (const textNode of hits) {
+      const text = textNode.textContent ?? "";
+      const parts = text.split(/(\{\{[A-Za-z_][A-Za-z0-9_]*\}\})/);
+      if (parts.length <= 1) continue;
+      const frag = document.createDocumentFragment();
+      for (const part of parts) {
+        const m = part.match(/^\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}$/);
+        if (m) {
+          const isIa = (roleMap.get(m[1]) ?? "manual") === "ia_sugerida";
+          frag.appendChild(makeChip(m[1], isIa));
+        } else {
+          frag.appendChild(document.createTextNode(part));
         }
       }
-      if (!labelEl || bestScore < 0.25) continue;
-
-      const isIa = field.role === "ia_sugerida";
-      let targetEl: HTMLElement | null = null;
-
-      if (labelEl.tagName === "TD") {
-        const tr = labelEl.closest("tr");
-        if (tr) {
-          const tds = Array.from(tr.querySelectorAll("td")) as HTMLElement[];
-          const idx = tds.indexOf(labelEl);
-          for (let i = idx + 1; i < tds.length; i++) {
-            if (!(tds[i].textContent ?? "").trim()) { targetEl = tds[i]; break; }
-          }
-          if (!targetEl) {
-            const nextTr = tr.nextElementSibling as HTMLElement | null;
-            if (nextTr) {
-              const nextTds = Array.from(nextTr.querySelectorAll("td")) as HTMLElement[];
-              for (const td of nextTds) {
-                if (!(td.textContent ?? "").trim() && !td.querySelector("[data-field-chip]")) {
-                  targetEl = td; break;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (targetEl) targetEl.appendChild(makeChip(field.key, isIa));
-      else labelEl.appendChild(makeChip(field.key, isIa));
+      textNode.parentNode?.replaceChild(frag, textNode);
     }
   }, [phase, schema]);
 
