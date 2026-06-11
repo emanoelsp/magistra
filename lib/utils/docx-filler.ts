@@ -34,6 +34,44 @@ function normText(s: string): string {
     .trim();
 }
 
+// ── Semantic alias dictionary (Item 2) ──────────────────────────────────────
+// Maps normText()-normalized label variants → canonical schema field key.
+// Checked as a fallback in matchField when fuzzy scoring is below threshold.
+// Extend this list to cover regional or school-specific naming conventions.
+const LABEL_ALIASES: Record<string, string> = {
+  // Teacher / instructor
+  "docente":               "professor",
+  "prof":                  "professor",
+  "orientador":            "professor",
+  "regente":               "professor",
+  "ministrante":           "professor",
+  "formador":              "professor",
+  // Subject / component
+  "disciplina":            "area_componente",
+  "componente":            "area_componente",
+  "componente curricular": "area_componente",
+  "materia":               "area_componente",
+  // Grade / class
+  "ano":                   "turma",
+  "serie":                 "turma",
+  "classe":                "turma",
+  "ano serie":             "turma",
+  // Date / period
+  "data":                  "data_realizacao",
+  "periodo":               "data_realizacao",
+  "data inicio":           "data_inicio",
+  "data fim":              "data_fim",
+  // Workload
+  "ch":                    "carga_horaria",
+  "horas":                 "carga_horaria",
+  "ch prevista":           "carga_horaria",
+  "carga horaria prevista":"chprevista",
+  // School / institution
+  "escola":                "unidade_escolar",
+  "colegio":               "unidade_escolar",
+  "instituicao":           "unidade_escolar",
+};
+
 /**
  * Returns true when a text block is an instructional/observational note rather
  * than a field anchor.  Blocks starting with "Obs:", "Nota:", "Observação:" etc.
@@ -75,6 +113,44 @@ function parseRows(xml: string): Row[] {
     const cells = [...rowXml.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map((c) => c[0]);
     return { xml: rowXml, cells, cellTexts: cells.map(extractText) };
   });
+}
+
+// ── Cell span helpers (Item 1: GridSpan / vMerge Awareness) ─────────────────
+
+/** Returns the number of grid columns a cell spans (1 = no merge). */
+function getCellGridSpan(cellXml: string): number {
+  const m = cellXml.match(/<w:gridSpan\s+w:val="(\d+)"/);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+/**
+ * Returns true when a cell is a vertical-merge continuation (not the first
+ * cell in the merged group). Continuation cells carry <w:vMerge/> without
+ * w:val="restart" — they are visually empty because their content lives in
+ * the restart cell above. Skipping them prevents treating the empty XML as a
+ * label or value slot during injection.
+ */
+function isVMergeContinuation(cellXml: string): boolean {
+  const m = cellXml.match(/<w:vMerge(?:\s[^>]*)?\/?>/);
+  if (!m) return false;
+  return !m[0].includes('w:val="restart"');
+}
+
+/**
+ * Returns the virtual column index for each physical cell in a row.
+ * A cell with <w:gridSpan w:val="N"/> advances the column counter by N, so the
+ * next cell starts at the correct visual column even if earlier cells are merged.
+ * Used to match label cells to value cells across rows when the two rows have
+ * different gridSpan layouts.
+ */
+function computeVirtualColIndices(cells: string[]): number[] {
+  const indices: number[] = [];
+  let vcol = 0;
+  for (const cell of cells) {
+    indices.push(vcol);
+    vcol += getCellGridSpan(cell);
+  }
+  return indices;
 }
 
 // ── Label detector ────────────────────────────────────────────────────────────
@@ -166,6 +242,21 @@ function matchField(
     if (score > bestScore && score >= 0.4) {
       bestScore = score;
       best = field;
+    }
+  }
+
+  // Alias fallback (Item 2): if no field scored above threshold, check the
+  // semantic alias dictionary for common label synonyms before giving up.
+  if (!best) {
+    for (const [alias, targetKey] of Object.entries(LABEL_ALIASES)) {
+      const matches =
+        needle === alias ||
+        (alias.length >= 3 && needle.includes(alias)) ||
+        (needle.length >= 3 && alias.includes(needle));
+      if (matches) {
+        const aliasField = schema.find((f) => !used.has(f.key) && f.key === targetKey);
+        if (aliasField) return aliasField;
+      }
     }
   }
 
@@ -776,6 +867,10 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     let rowModified = false;
 
     for (let ci = 0; ci < cells.length; ci++) {
+      // Item 1: skip vertical-merge continuation cells — they have no content
+      // and no label; treating them as value slots corrupts column alignment.
+      if (isVMergeContinuation(cells[ci] ?? "")) continue;
+
       // Primary match: try the full cell text
       let field = matchField(cellTexts[ci], schema, used);
 
@@ -869,16 +964,34 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       const nextCellTexts = [...nextRow.cellTexts];
       let nextModified = false;
 
-      for (let ci = 0; ci < cells.length && ci < nextCells.length; ci++) {
+      // Item 1 (GridSpan Awareness): compute virtual column indices for both
+      // rows so a label at grid column V is paired with the value cell also at
+      // virtual column V, regardless of how many merged cells exist in either row.
+      const labelVCols = computeVirtualColIndices(cells);
+      const nextVCols  = computeVirtualColIndices(nextRow.cells);
+      // Build reverse map: virtual column → first physical cell index in next row
+      const vColToNextIdx = new Map<number, number>();
+      for (let i = 0; i < nextVCols.length; i++) {
+        if (!vColToNextIdx.has(nextVCols[i])) vColToNextIdx.set(nextVCols[i], i);
+      }
+
+      for (let ci = 0; ci < cells.length; ci++) {
+        // Skip vMerge continuation cells — they carry no label text
+        if (isVMergeContinuation(cells[ci] ?? "")) continue;
+
         let field = matchField(cellTexts[ci], schema, used);
 
         // Rule 2 (Sparse Matrix): period markers "1º" / "2º" / "3º" may score below
         // the 0.4 threshold against labels like "1º Trimestre". Fall back to
-        // position-based matching: 1st period column → tr1, 2nd → tr2, 3rd → tr3.
+        // ordinal position among period columns: 1st → tr1, 2nd → tr2, 3rd → tr3.
+        // vMerge continuations are excluded from the ordinal count.
         if (!field && looksLikePeriodMarker(cellTexts[ci].trim())) {
           const periodPosition = cells
             .slice(0, ci + 1)
-            .filter((_, idx) => looksLikePeriodMarker(cellTexts[idx].trim()))
+            .filter((_, idx) =>
+              !isVMergeContinuation(cells[idx] ?? "") &&
+              looksLikePeriodMarker(cellTexts[idx].trim()),
+            )
             .length - 1; // 0-based: 0 → tr1, 1 → tr2, 2 → tr3
           const trNum = periodPosition + 1;
           field = schema.find(
@@ -887,16 +1000,22 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
         }
 
         if (!field) continue;
+
+        // Find the value cell by virtual column (handles mismatched gridSpan layouts)
+        const targetVCol = labelVCols[ci] ?? ci;
+        const valueIdx   = vColToNextIdx.get(targetVCol) ?? ci;
+        if (valueIdx >= nextCells.length) continue;
+
         // Only inject into genuinely empty value slots — skip label-looking cells
         // and cells with substantial content (likely a pre-filled value or sub-header)
-        const fallbackTarget = nextCellTexts[ci].trim();
+        const fallbackTarget = nextCellTexts[valueIdx].trim();
         if (looksLikeLabel(fallbackTarget)) continue;
         if (fallbackTarget.length > 10) continue;
-        const origCell = nextCells[ci];
+        const origCell = nextCells[valueIdx];
         const newCell = setCellContent(origCell, `{{${field.key}}}`);
         nextRowXml = replaceFirst(nextRowXml, origCell, newCell);
-        nextCells[ci] = newCell;
-        nextCellTexts[ci] = `{{${field.key}}}`;
+        nextCells[valueIdx] = newCell;
+        nextCellTexts[valueIdx] = `{{${field.key}}}`;
         used.add(field.key);
         nextModified = true;
       }
@@ -1153,14 +1272,6 @@ export function injectColoredPlaceholders(
 
   zip.file(xmlPath, xml);
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
-}
-
-// ── Cell helpers ─────────────────────────────────────────────────────────────
-
-/** Returns the number of grid columns a cell spans (1 = no merge). */
-function getCellGridSpan(cellXml: string): number {
-  const m = cellXml.match(/<w:gridSpan\s+w:val="(\d+)"/);
-  return m ? parseInt(m[1], 10) : 1;
 }
 
 // ── Structural pre-scan ──────────────────────────────────────────────────────
@@ -1503,16 +1614,17 @@ export function fillDocx(
     linebreaks: true,
     delimiters: { start: "{{", end: "}}" },
     nullGetter: () => "",
-    // Preserve document structure by not parsing as XML
     parser: (tag: string) => ({
       get: (scope: Record<string, unknown>) => {
         const value = scope[tag];
+        // Item 3: boolean values must pass through as-is for {#has_X}/{^has_X} blocks
+        if (typeof value === "boolean") return value;
         return typeof value === "string" ? value : "";
       },
     }),
   });
 
-  const data: Record<string, string> = {};
+  const data: Record<string, string | boolean> = {};
   for (const field of schema) {
     data[field.key] = (values[field.key] ?? "").trim();
   }
@@ -1528,6 +1640,22 @@ export function fillDocx(
   };
   for (const [sysKey, sysVal] of Object.entries(SYSTEM_VARS)) {
     if (!data[sysKey]) data[sysKey] = sysVal;
+  }
+
+  // Item 3 — Boolean flags for conditional blocks (orphan node elimination).
+  // For every schema field X, auto-generates has_X = true/false based on whether
+  // the field has content. Use {{#has_X}}...{{/has_X}} in the Word template to
+  // conditionally show/hide entire sections (e.g. a heading + its value block),
+  // and {{^has_X}}...{{/has_X}} for the empty case. This prevents orphaned
+  // section headings when the field is not filled in.
+  //
+  // Example Word markup:
+  //   {{#has_adaptacao}}
+  //   Adaptações necessárias: {{adaptacao}}
+  //   {{/has_adaptacao}}
+  for (const field of schema) {
+    const val = data[field.key];
+    data[`has_${field.key}`] = typeof val === "string" ? val.trim().length > 0 : !!val;
   }
 
   doc.render(data);
