@@ -1759,6 +1759,111 @@ export function scanPlaceholders(docxBuffer: Buffer): string[] {
   return [...found];
 }
 
+// ── Strip non-schema tokens ──────────────────────────────────────────────────
+
+/**
+ * Removes {{key}} tokens whose key is NOT in validKeys from the DOCX XML.
+ *
+ * Two-pass approach:
+ *   Pass 1 – regex over the raw XML string handles non-fragmented tokens
+ *             (the common case when the user typed {{variable}} directly in Word).
+ *   Pass 2 – paragraph-level defragmentation catches tokens split across <w:r>
+ *             boundaries (e.g. by Word's spell-check or auto-format).
+ *
+ * This is the safest way to honour the Immutable Base Pattern when the original
+ * DOCX already contains pre-typed {{placeholders}}: we only keep tokens whose
+ * keys are still in the active schema.
+ */
+export function stripNonSchemaTokens(docxBuffer: Buffer, validKeys: Set<string>): Buffer {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  let xml = zip.files[xmlPath].asText();
+
+  // ── Pass 1: non-fragmented tokens ──────────────────────────────────────────
+  xml = xml.replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (match, key: string) =>
+    validKeys.has(key) ? match : "",
+  );
+
+  // ── Pass 2: fragmented tokens ─────────────────────────────────────────────
+  // Within each <w:p>…</w:p> block, concatenate the text of all <w:t> nodes.
+  // If the paragraph text contains {{key}} for a non-valid key, rewrite each
+  // <w:t> by stripping the characters that belong to the stray token.
+  xml = xml.replace(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g, (para) => {
+    // Collect all <w:t> occurrences with their captured text.
+    type WtMatch = { full: string; text: string; index: number };
+    const wtMatches: WtMatch[] = [];
+    const wtRe = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
+    let m: RegExpExecArray | null;
+    while ((m = wtRe.exec(para)) !== null) {
+      wtMatches.push({ full: m[0], text: m[1], index: m.index });
+    }
+    if (wtMatches.length === 0) return para;
+
+    const paraText = wtMatches.map((w) => w.text).join("");
+    // Check if any stray token exists in the joined text
+    const strayTokenRe = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+    let hasStraToken = false;
+    let tm: RegExpExecArray | null;
+    while ((tm = strayTokenRe.exec(paraText)) !== null) {
+      if (!validKeys.has(tm[1])) { hasStraToken = true; break; }
+    }
+    if (!hasStraToken) return para;
+
+    // Build a char→run mapping so we can rewrite the runs
+    type CharRun = { runIdx: number; charInRun: number };
+    const charMap: CharRun[] = [];
+    for (let ri = 0; ri < wtMatches.length; ri++) {
+      const t = wtMatches[ri].text;
+      for (let ci = 0; ci < t.length; ci++) {
+        charMap.push({ runIdx: ri, charInRun: ci });
+      }
+    }
+
+    // Find char ranges to blank out
+    const blankRanges: [number, number][] = [];
+    const re2 = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+    let m2: RegExpExecArray | null;
+    while ((m2 = re2.exec(paraText)) !== null) {
+      if (!validKeys.has(m2[1])) {
+        blankRanges.push([m2.index, m2.index + m2[0].length - 1]);
+      }
+    }
+    if (blankRanges.length === 0) return para;
+
+    // Mark characters to blank
+    const blanked = new Set<number>();
+    for (const [start, end] of blankRanges) {
+      for (let i = start; i <= end; i++) blanked.add(i);
+    }
+
+    // Rebuild runs with blanked characters removed
+    const newRunTexts = wtMatches.map((w) => w.text.split(""));
+    for (let ci = 0; ci < charMap.length; ci++) {
+      if (blanked.has(ci)) {
+        const { runIdx, charInRun } = charMap[ci];
+        newRunTexts[runIdx][charInRun] = "";
+      }
+    }
+
+    // Replace each <w:t> in the paragraph with the rewritten version
+    let result = para;
+    // Process in reverse to keep indices stable
+    for (let ri = wtMatches.length - 1; ri >= 0; ri--) {
+      const { full, index } = wtMatches[ri];
+      const newText = newRunTexts[ri].join("");
+      const preserveAttr = full.includes("xml:space") ? "" : (newText !== newText.trim() ? ' xml:space="preserve"' : "");
+      const newWt = newText.length === 0 ? "<w:t/>" : `<w:t${preserveAttr}>${newText}</w:t>`;
+      result = result.slice(0, index) + newWt + result.slice(index + full.length);
+    }
+    return result;
+  });
+
+  zip.file(xmlPath, xml);
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
 // ── Fill with docxtemplater ──────────────────────────────────────────────────
 
 /**

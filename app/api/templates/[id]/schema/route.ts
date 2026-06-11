@@ -12,6 +12,7 @@ import {
   injectAtCell,
   injectPlaceholders,
   reportInjections,
+  stripNonSchemaTokens,
 } from "../../../../../lib/utils/docx-filler";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
 import type { TemplateFieldSchema } from "../../../../../lib/types/firestore";
@@ -102,10 +103,17 @@ export async function PATCH(
     //      scores a different cell.
     //   3. State accumulation — each save compounds errors from prior saves.
     //
-    // With the original as base, the fillable is always a pure function of
-    // (original DOCX, current schema, current positions). Deleted fields simply
-    // aren't injected. Impossible to have ghost variables by construction.
+    // With the original as base + stripNonSchemaTokens pre-pass, the fillable
+    // is always a pure function of (original DOCX, current schema, current positions).
+    // Pre-existing {{tokens}} typed by the user in the original are removed for
+    // deleted keys, making ghost variables impossible even for pre-annotated files.
     let buffer = await downloadFile(arquivoUrl);
+
+    // ── Strip tokens not in the new schema ───────────────────────────────────
+    // The original DOCX may already contain {{placeholders}} typed by the user.
+    // Remove any token whose key is not in newKeys so deleted fields are truly
+    // gone even when they were pre-existing in the uploaded file.
+    buffer = stripNonSchemaTokens(buffer, newKeys);
 
     // ── Merge field positions: Firestore (historical) + request (this save) ─
     // field_positions are persisted so manual cell-click placements survive
