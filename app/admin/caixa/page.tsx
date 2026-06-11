@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getAdminDb } from "../../../lib/firebase/admin";
 import type { BalanceteRecord } from "../../../lib/types/firestore";
 import { BalanceteCard, FecharCaixaButton } from "./caixa-client";

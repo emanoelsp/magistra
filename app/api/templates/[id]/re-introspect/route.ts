@@ -312,15 +312,14 @@ function buildPrompt(
 
 // ── AI generation ───────────────────────────────────────────────────────────
 
-async function generateSchema(promptStr: string): Promise<string> {
-  const { text } = await callAIWithFallbacks({
+async function generateSchema(promptStr: string): Promise<{ text: string; provider: import("../../../../../lib/ai/provider").AiProvider }> {
+  return callAIWithFallbacks({
     systemInstruction: SYSTEM_INSTRUCTION,
     prompt: promptStr,
     temperature: 0.1,
     topP: 0.6,
     geminiSchema: INTROSPECT_RESPONSE_SCHEMA,
   });
-  return text;
 }
 
 function parseSchema(raw: string): unknown {
@@ -405,7 +404,7 @@ export async function POST(
     // ── AI extraction ────────────────────────────────────────────────────────
     const extracted = await extractContent(fileBuffer, arquivoUrl);
     const prompt = buildPrompt(extracted, structuralPairs, confirmedFields, corrections);
-    const raw = await generateSchema(prompt);
+    const { text: raw, provider: aiProvider } = await generateSchema(prompt);
 
     let schema: unknown;
     try {
@@ -417,6 +416,18 @@ export async function POST(
     if (!Array.isArray(schema)) {
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
+
+    void import("../../../../../lib/services/usage-logger").then(({ logUsage }) => {
+      void logUsage({
+        userId: tData.user_id as string,
+        action: "introspect",
+        model: "re-introspect",
+        provider: aiProvider,
+        tokensInput: 0,
+        tokensOutput: 0,
+        metadata: { template_id: id },
+      });
+    });
 
     // Merge: pre-annotated {{key}} patterns in the DOCX take priority over AI inference
     const scannedKeys = isDocx ? scanPlaceholders(fileBuffer) : [];

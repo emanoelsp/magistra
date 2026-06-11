@@ -120,15 +120,14 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
 </contrato_de_saida>`;
 
-async function generateSchema(promptStr: string): Promise<string> {
-  const { text } = await callAIWithFallbacks({
+async function generateSchema(promptStr: string): Promise<{ text: string; provider: import("../../../../lib/ai/provider").AiProvider }> {
+  return callAIWithFallbacks({
     systemInstruction: SYSTEM_INSTRUCTION,
     prompt: promptStr,
     temperature: 0.1,
     topP: 0.6,
     geminiSchema: INTROSPECT_RESPONSE_SCHEMA,
   });
-  return text;
 }
 
 function parseSchema(raw: string): unknown {
@@ -261,7 +260,7 @@ export async function POST(request: Request) {
       `</documento>`,
     ].join("\n");
 
-    const raw = await generateSchema(promptStr);
+    const { text: raw, provider: aiProvider } = await generateSchema(promptStr);
 
     let schema: unknown;
     try {
@@ -273,6 +272,18 @@ export async function POST(request: Request) {
     if (!Array.isArray(schema)) {
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
+
+    void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
+      void logUsage({
+        userId: user.uid,
+        action: "introspect",
+        model: MODEL_NAME,
+        provider: aiProvider,
+        tokensInput: 0,
+        tokensOutput: 0,
+        metadata: { template_id: templateId ?? undefined },
+      });
+    });
 
     await db.collection("magis_templates").doc(templateId).update({
       schema_campos: schema,

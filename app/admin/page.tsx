@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getAdminDb } from "../../lib/firebase/admin";
 import { PLAN_PRICES_BRL, PLAN_LABELS } from "../../lib/services/limits";
 import { DollarSign, FileText, Sparkles, Users, TrendingUp, Server, TrendingDown, Activity } from "lucide-react";

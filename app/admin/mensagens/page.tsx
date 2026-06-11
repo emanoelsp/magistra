@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getAdminDb } from "../../../lib/firebase/admin";
 import { Inbox } from "lucide-react";
 import { MensagensClient, type AdminMensagem } from "./mensagens-client";

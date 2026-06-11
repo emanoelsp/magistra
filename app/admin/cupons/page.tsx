@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getAdminDb } from "../../../lib/firebase/admin";
 import type { CouponRecord } from "../../../lib/types/firestore";
 import { CuponManager } from "./cupon-manager";

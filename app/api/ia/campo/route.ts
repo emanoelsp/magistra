@@ -110,15 +110,15 @@ function makeLocalGeminiModel(systemInstruction: string) {
   });
 }
 
-async function generateSuggestions(systemInstruction: string, prompt: string): Promise<string> {
-  const { text } = await callAIWithFallbacks({
+async function generateSuggestions(systemInstruction: string, prompt: string): Promise<{ text: string; provider: import("../../../../lib/ai/provider").AiProvider }> {
+  const result = await callAIWithFallbacks({
     systemInstruction,
     prompt,
     temperature: 0.35,
     topP: 0.8,
     geminiSchema: SUGESTAO_RESPONSE_SCHEMA,
   });
-  return text;
+  return result;
 }
 
 export async function POST(request: Request) {
@@ -406,7 +406,7 @@ Responda SOMENTE com JSON válido:
         if (isQuotaError(err)) {
           console.warn("[PlanoMagistra/ia/campo] Gemini quota, fallback não-streaming...");
           try {
-            const rawText = await generateSuggestions(systemInstruction, prompt);
+            const { text: rawText } = await generateSuggestions(systemInstruction, prompt);
             const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
             const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
             const sugestoes = validateSugestoes(raw, { templateId, fieldKey });
@@ -462,13 +462,15 @@ Responda SOMENTE com JSON válido:
     // ── Batch path (existing) ─────────────────────────────────────────────────
     let rawText: string;
     try {
-      rawText = await generateSuggestions(systemInstruction, prompt);
+      const genResult = await generateSuggestions(systemInstruction, prompt);
+      rawText = genResult.text;
 
       void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
         void logUsage({
           userId: user.uid,
           action: "ia_campo",
           model: MODEL_NAME,
+          provider: genResult.provider,
           tokensInput: 0,
           tokensOutput: 0,
           metadata: { template_id: templateId, field_key: fieldKey },

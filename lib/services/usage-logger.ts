@@ -2,15 +2,21 @@ import "server-only";
 
 import { getAdminDb } from "../firebase/admin";
 import type { UsageAction } from "../types/firestore";
+import type { AiProvider } from "../ai/provider";
 
-// Gemini 2.0 Flash pricing (USD per 1M tokens)
-const DEFAULT_INPUT_COST_PER_1M = 0.075;
-const DEFAULT_OUTPUT_COST_PER_1M = 0.30;
+// Pricing per 1M tokens (USD)
+const COST_RATES: Record<string, { input: number; output: number }> = {
+  gemini:  { input: 0.075, output: 0.30 },
+  openai:  { input: 0.15,  output: 0.60 },  // gpt-4o-mini
+  groq:    { input: 0,     output: 0 },      // free tier
+};
+const DEFAULT_RATES = COST_RATES.gemini;
 
 interface LogUsageParams {
   userId: string;
   action: UsageAction;
   model: string;
+  provider?: AiProvider;
   tokensInput: number;
   tokensOutput: number;
   metadata?: {
@@ -24,11 +30,18 @@ export async function logUsage(params: LogUsageParams): Promise<void> {
   try {
     const db = getAdminDb();
 
-    // Fetch current cost config (fall back to defaults if not set)
-    const configSnap = await db.collection("magis_admin_config").doc("singleton").get();
-    const config = configSnap.data() ?? {};
-    const inputRate = (config.gemini_input_cost_per_1m as number) ?? DEFAULT_INPUT_COST_PER_1M;
-    const outputRate = (config.gemini_output_cost_per_1m as number) ?? DEFAULT_OUTPUT_COST_PER_1M;
+    const provider = params.provider ?? "gemini";
+    const rates = COST_RATES[provider] ?? DEFAULT_RATES;
+
+    // For Gemini, also check admin-configured rates
+    let inputRate = rates.input;
+    let outputRate = rates.output;
+    if (provider === "gemini") {
+      const configSnap = await db.collection("magis_admin_config").doc("singleton").get();
+      const config = configSnap.data() ?? {};
+      inputRate = (config.gemini_input_cost_per_1m as number) ?? inputRate;
+      outputRate = (config.gemini_output_cost_per_1m as number) ?? outputRate;
+    }
 
     const tokensTotal = params.tokensInput + params.tokensOutput;
     const costUsd =
@@ -39,6 +52,7 @@ export async function logUsage(params: LogUsageParams): Promise<void> {
       user_id: params.userId,
       action: params.action,
       model: params.model,
+      provider,
       tokens_input: params.tokensInput,
       tokens_output: params.tokensOutput,
       tokens_total: tokensTotal,
