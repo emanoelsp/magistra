@@ -725,6 +725,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         .then((r) => r.json())
         .then((d: { campos_sem_placeholder?: string[] }) => {
           if (d.campos_sem_placeholder) setCamposSemPlaceholder(d.campos_sem_placeholder);
+          setPreviewVersion((v) => v + 1);
         })
         .catch(() => { /* silent auto-save fail */ })
         .finally(() => setAutoSaving(false));
