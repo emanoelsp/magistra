@@ -317,6 +317,11 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const [isFinalized, setIsFinalized] = useState(false);
   const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
 
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(false);
+  // Always holds the latest savePlano to avoid stale closures in the debounce timer
+  const latestSavePlanoRef = useRef<((status: "rascunho" | "gerado") => Promise<string>) | null>(null);
+
   const hasDocx =
     (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
 
@@ -465,6 +470,24 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metadataComplete]);
 
+  // Auto-save draft 3s after values change (prevents losing work on accidental close)
+  useEffect(() => {
+    if (!isMountedRef.current) { isMountedRef.current = true; return; }
+    if (isFinalized) return;
+    const hasContent = Object.values(values).some((v) => v.trim().length > 0);
+    if (!hasContent) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      const fn = latestSavePlanoRef.current;
+      if (!fn) return;
+      void fn("rascunho")
+        .then(() => { setSaveStatus("saved"); setTimeout(() => setSaveStatus("idle"), 2500); })
+        .catch(() => {/* silent auto-save fail */});
+    }, 3000);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values]);
+
   function trackSugestaoAceita(sugestaoId: string, tipo: "titulo" | "completo") {
     void fetch("/api/ia/aceitar", {
       method: "POST",
@@ -557,6 +580,9 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     setPlanoId(id);
     return id;
   }
+
+  // Keep latestSavePlanoRef pointing to the current savePlano on every render
+  latestSavePlanoRef.current = savePlano;
 
   function handleSaveRascunho() {
     setSaveStatus("saving");

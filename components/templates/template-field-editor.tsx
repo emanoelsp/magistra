@@ -674,6 +674,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(false);
   const [autoSaving, setAutoSaving] = useState(false);
+  const [autoSaved, setAutoSaved] = useState(false);
 
   // Item 13: schema version history
   const [showVersions, setShowVersions] = useState(false);
@@ -726,6 +727,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         .then((d: { campos_sem_placeholder?: string[] }) => {
           if (d.campos_sem_placeholder) setCamposSemPlaceholder(d.campos_sem_placeholder);
           setPreviewVersion((v) => v + 1);
+          setAutoSaved(true);
+          setTimeout(() => setAutoSaved(false), 2000);
         })
         .catch(() => { /* silent auto-save fail */ })
         .finally(() => setAutoSaving(false));
@@ -1330,6 +1333,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             <h2 className="text-sm font-semibold text-slate-900">
               Campos detectados ({fields.length})
               {autoSaving && <span className="ml-2 text-[10px] font-normal text-slate-400">salvando…</span>}
+              {!autoSaving && autoSaved && <span className="ml-2 text-[10px] font-medium text-emerald-500">✓ salvo</span>}
             </h2>
             <p className="text-xs text-slate-500">
               {mode === "confirm"
