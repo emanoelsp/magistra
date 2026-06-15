@@ -10,6 +10,7 @@ import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
   appendOrphanField,
   injectAtCell,
+  injectRawCell,
   injectPlaceholders,
   reportInjections,
   stripNonSchemaTokens,
@@ -22,11 +23,18 @@ interface FieldPosition {
   ordinal: number;
 }
 
+interface CellEdit {
+  cellText: string;    // original cell text (may include {{key}} chips from prior saves)
+  ordinal: number;
+  newContent: string;  // full edited cell text with all {{key}} tokens
+}
+
 interface SchemaBody {
   nome?: string;
   estado?: string | null;
   schema_campos?: TemplateFieldSchema[];
   field_positions?: Record<string, FieldPosition>;
+  cell_edits?: CellEdit[];
 }
 
 export async function PATCH(
@@ -134,12 +142,31 @@ export async function PATCH(
       if (!newKeys.has(key)) delete allPositions[key]; // stale cleanup
     }
 
-    // 1. Apply all known positions via injectAtCell (most precise — exact cell).
+    // 1a. Apply verbatim cell-content overrides from the interactive editor.
+    // Handles the case where the user typed multiple {{key}} tokens into one cell:
+    // all tokens are written together in one shot so they can't overwrite each other.
+    // cellText may contain {{key}} chips from a prior save — strip them before matching
+    // against the original DOCX (which has no tokens yet).
+    const cellEditsPayload: CellEdit[] = Array.isArray(body.cell_edits) ? body.cell_edits : [];
+    const placedByCellEdits = new Set<string>();
+    for (const edit of cellEditsPayload) {
+      if (!edit.newContent?.trim()) continue;
+      const cleanCellText = (edit.cellText ?? "")
+        .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+      const keysInEdit = [...edit.newContent.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]);
+      for (const k of keysInEdit) placedByCellEdits.add(k);
+    }
+
+    // 1b. Apply all known positions via injectAtCell (most precise — exact cell).
     // Strip {{key}} from the stored cellText fingerprint so it matches the original
     // DOCX (which has no placeholder yet). When the user typed {{key}} inline after
     // label text, pass appendToLabel=true so the label is preserved on regeneration.
+    // Skip keys already placed by cell edits to avoid double-injection.
     for (const [key, pos] of Object.entries(allPositions)) {
-      if (newKeys.has(key)) {
+      if (newKeys.has(key) && !placedByCellEdits.has(key)) {
         const phToken = `{{${key}}}`;
         const hasInlineToken = pos.cellText.includes(phToken);
         const cleanCellText = pos.cellText

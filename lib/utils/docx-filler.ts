@@ -754,6 +754,65 @@ export function injectAtCell(
   return docxBuffer; // no match — caller falls back to injectPlaceholders
 }
 
+/**
+ * Overwrites the full text content of the target <w:tc> with `newContent`.
+ *
+ * Unlike injectAtCell (which injects a single {{key}} token and replaces the
+ * cell on each call), this function writes the complete edited text in one
+ * shot — necessary when the user has typed multiple {{key}} tokens into the
+ * same cell so all tokens survive instead of each call overwriting the last.
+ *
+ * Matching logic is identical to injectAtCell:
+ *   • Non-empty cellText: the `ordinal`-th <w:tc> whose normalised text matches
+ *     cellText (strip all {{key}} tokens from cellText before comparing).
+ *   • Empty cellText: global <w:tc> index mode.
+ */
+export function injectRawCell(
+  docxBuffer: Buffer,
+  cellText: string,
+  ordinal: number,
+  newContent: string,
+): Buffer {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  let xml = zip.files[xmlPath].asText();
+  const tcRegex = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
+  let match: RegExpExecArray | null;
+
+  if (!cellText.trim()) {
+    // Empty-cell mode: ordinal is the global <w:tc> index
+    let cellCount = 0;
+    while ((match = tcRegex.exec(xml)) !== null) {
+      if (cellCount === ordinal) {
+        const newTc = clearAndSetCellText(match[0], newContent);
+        xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + match[0].length);
+        zip.file(xmlPath, xml);
+        return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+      }
+      cellCount++;
+    }
+    return docxBuffer;
+  }
+
+  let hits = 0;
+  while ((match = tcRegex.exec(xml)) !== null) {
+    const text = extractText(match[0]).trim();
+    if (normText(text) === normText(cellText)) {
+      if (hits === ordinal) {
+        const newTc = clearAndSetCellText(match[0], newContent);
+        xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + match[0].length);
+        zip.file(xmlPath, xml);
+        return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+      }
+      hits++;
+    }
+  }
+
+  return docxBuffer;
+}
+
 // ── Main: inject placeholders ────────────────────────────────────────────────
 
 /**
@@ -1535,8 +1594,16 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
     }
 
     // ── All-label header row → column_header or period_column ────────────
-    const nonEmpty = row.cellTexts.filter((t) => t.trim());
-    const allLabels = nonEmpty.length > 0 && nonEmpty.every((t) => looksLikeLabel(t.trim()));
+    // Require ≥2 non-empty cells AND every non-empty cell must look like a label
+    // (colon/ALL-CAPS/bold). Single-non-empty-cell rows like [Escola: | empty] are
+    // adjacent_right pairs whose value slot is blank — they must NOT trigger this
+    // block or the N-cell adjacent scan is skipped and the field goes undetected.
+    const nonEmpty = row.cellTexts
+      .map((t, i) => ({ t: t.trim(), i }))
+      .filter(({ t }) => t);
+    const allLabels = nonEmpty.length > 1 && nonEmpty.every(({ t, i }) =>
+      looksLikeLabel(t) || (t.length > 1 && hasBoldText(row.cells[i] ?? ""))
+    );
     if (allLabels && ri + 1 < rows.length) {
       const nextRow = rows[ri + 1];
 
@@ -1650,8 +1717,10 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       const cellIsLabel = looksLikeLabel(t) || (t.length > 1 && hasBoldText(row.cells[ci] ?? ""));
       if (!cellIsLabel) { ci++; continue; }
 
-      // Item 3: if label cell spans ≥60% of the row, it's likely a section header
-      // whose value is in the next row (adjacent_below), not the cell to the right.
+      // Item 3: if label cell spans ≥60% of the row, prefer adjacent_below.
+      // But if the row below starts with another label, fall through to try
+      // adjacent_right — the value slot is in the same row (common in dense
+      // header-blocks like [Escola: | empty], [Professor(a): | empty]).
       const labelSpanRatio = totalSpan > 0 ? (cellSpans[ci] ?? 1) / totalSpan : 0;
       if (labelSpanRatio >= 0.6 && ri + 1 < rows.length) {
         const belowText = (rows[ri + 1].cellTexts[0] ?? "").trim();
@@ -1663,9 +1732,10 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
             valuePreview: cellBlockPreview(belowCellXml, 120),
             pattern: "adjacent_below",
           });
+          ci++;
+          continue;
         }
-        ci++;
-        continue;
+        // Row below is also a label → fall through to adjacent_right check below
       }
 
       const nextText = row.cellTexts[ci + 1].trim();

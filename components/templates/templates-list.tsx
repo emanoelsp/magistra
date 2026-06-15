@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Edit2, Eye, FileText, FilePen, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Edit2, Eye, FileText, FilePen, Plus, Sparkles, Trash2 } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateOption } from "../../lib/types/firestore";
@@ -28,6 +28,7 @@ interface TemplatesListProps {
 
 export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps) {
   const router = useRouter();
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -36,6 +37,7 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   const visibleTemplates = templates.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   async function handleDelete(templateId: string) {
+    setConfirmDeleteId(null);
     setError(null);
     setDeletingId(templateId);
     try {
@@ -48,8 +50,72 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
     }
   }
 
+  const confirmDeleteTemplate = templates.find((t) => t.id === confirmDeleteId);
+
+  const deleteConfirmModal = confirmDeleteId && confirmDeleteTemplate && (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      onClick={() => setConfirmDeleteId(null)}
+    >
+      <style>{`
+        @keyframes magis-pop {
+          from { opacity: 0; transform: scale(0.7) translateY(24px); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+      `}</style>
+      <div
+        className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-white p-8 shadow-2xl"
+        style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-rose-100 shadow-lg shadow-rose-100">
+          <Trash2 className="h-7 w-7 text-rose-600" />
+          <span
+            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-400"
+            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}
+          >
+            <AlertTriangle className="h-3 w-3 text-white" />
+          </span>
+        </div>
+
+        <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
+          <div className="mb-1.5 flex items-center justify-center gap-1.5">
+            <Sparkles className="h-3 w-3 text-violet-500" />
+            <span className="text-xs font-bold text-violet-700">Magis</span>
+          </div>
+          <p className="text-sm font-medium leading-relaxed text-slate-800">
+            Tem certeza que deseja excluir{" "}
+            <span className="font-semibold text-slate-900">{confirmDeleteTemplate.nome}</span>?
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Essa ação é permanente e não pode ser desfeita. Os planos criados com este template não serão afetados.
+          </p>
+        </div>
+
+        <div className="flex w-full gap-3">
+          <button
+            type="button"
+            onClick={() => setConfirmDeleteId(null)}
+            className="flex-1 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDelete(confirmDeleteId)}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-rose-500"
+          >
+            <Trash2 className="h-4 w-4" />
+            Excluir template
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <>
+      {deleteConfirmModal}
       {error && (
         <p className="mb-3 rounded-xl bg-rose-50 px-4 py-2 text-xs text-rose-700">{error}</p>
       )}
@@ -160,7 +226,7 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
 
                 <button
                   type="button"
-                  onClick={() => void handleDelete(template.id)}
+                  onClick={() => setConfirmDeleteId(template.id)}
                   disabled={deletingId === template.id}
                   className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:border-rose-500 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >

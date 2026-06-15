@@ -83,6 +83,12 @@ interface DocxEdit {
   label: string;      // human label (adjacent cell text or derived from key)
 }
 
+interface CellEdit {
+  cellText: string;    // original cell text from the DOM (may include {{key}} chips from prior saves)
+  ordinal: number;     // occurrence index
+  newContent: string;  // full edited cell text including all {{key}} tokens
+}
+
 interface DocxInteractiveProps {
   templateId: string;
   fields: TemplateFieldSchema[];
@@ -92,7 +98,7 @@ interface DocxInteractiveProps {
   previewVersion?: number;
   zoom?: number;
   onZoomChange?: (z: number) => void;
-  onSaveEdits: (edits: DocxEdit[], scanOrder: string[], removedKeys: string[]) => void;
+  onSaveEdits: (edits: DocxEdit[], scanOrder: string[], removedKeys: string[], cellEdits: CellEdit[]) => void;
 }
 
 const TOOLBAR_FONTS = ["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"];
@@ -159,6 +165,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     const existingKeys = new Set(fields.map((f) => f.key));
     const textOrdinalsMap = new Map<string, number>();
     const edits: DocxEdit[] = [];
+    const cellEdits: CellEdit[] = [];
     const processedKeys = new Set<string>();
     const scanOrder: string[] = [];
     const seenInScan = new Set<string>();
@@ -212,6 +219,19 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label });
       }
 
+      // Collect a full-cell override for any cell that has {{key}} patterns and a
+      // non-empty original text. This lets the server write ALL tokens in one shot
+      // instead of calling injectAtCell once per key (which overwrites the cell each
+      // time, causing only the first key to survive in multi-key cells).
+      if (matches.length > 0 && originalText.trim()) {
+        const alreadyRecorded = cellEdits.some(
+          (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
+        );
+        if (!alreadyRecorded) {
+          cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: currentText.trim() });
+        }
+      }
+
       // Detect bare snake_case identifiers typed without {{ }} (must contain underscore)
       if (matches.length === 0) {
         const bare = currentText.trim().match(/^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/);
@@ -230,7 +250,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     // Fields that existed before but are no longer found anywhere in the document
     const removedKeys = [...existingKeys].filter((k) => !seenInScan.has(k));
 
-    onSaveEdits(edits, scanOrder, removedKeys);
+    onSaveEdits(edits, scanOrder, removedKeys, cellEdits);
     if (edits.length > 0) setSaveCount((n) => n + edits.length);
   }
 
@@ -881,7 +901,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     };
   }
 
-  function handleSaveDocEdits(edits: DocxEdit[], scanOrder: string[], removedKeys: string[]) {
+  function handleSaveDocEdits(edits: DocxEdit[], scanOrder: string[], removedKeys: string[], cellEdits: CellEdit[]) {
     const newFields: TemplateFieldSchema[] = [];
     const newPositions: Record<string, { cellText: string; ordinal: number }> = {};
 
@@ -902,7 +922,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       if (!removedSet.has(k)) basePositions[k] = v;
     }
 
-    if (newFields.length === 0 && removedKeys.length === 0) {
+    if (newFields.length === 0 && removedKeys.length === 0 && cellEdits.length === 0) {
       // No structural changes — metadata-only save. Still refresh the preview so
       // any positional edits the user made in the Word editor become visible.
       void fetch(`/api/templates/${template.id}/schema`, {
@@ -938,7 +958,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       setActiveFieldKey(newFields[0].key);
     }
 
-    handleSave(mergedFields, mergedPositions, true);
+    handleSave(mergedFields, mergedPositions, true, cellEdits);
   }
 
   function removeField(index: number) {
@@ -972,6 +992,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     overrideFields?: TemplateFieldSchema[],
     overridePositions?: Record<string, { cellText: string; ordinal: number }>,
     switchToPreview = false,
+    overrideCellEdits?: CellEdit[],
   ) {
     const fieldsToSave = overrideFields ?? fields;
     const positionsToSave = overridePositions ?? fieldPositions;
@@ -1000,6 +1021,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           estado: estado || null,
           schema_campos: fieldsToSave,
           field_positions: positionsToSave,
+          ...(overrideCellEdits && overrideCellEdits.length > 0 ? { cell_edits: overrideCellEdits } : {}),
         }),
       })
         .then(async (res) => {
