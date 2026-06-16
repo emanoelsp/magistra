@@ -331,6 +331,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
     }
 
+    // Deterministic injection_pattern enrichment: match structural pairs to schema fields
+    // by label and copy pattern where AI left injection_pattern null/undefined.
+    if (structuralPairs.length > 0 && Array.isArray(schema)) {
+      const normLabel = (s: string) =>
+        s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+      for (const field of schema as import("../../../../lib/types/firestore").TemplateFieldSchema[]) {
+        if (field.injection_pattern) continue;
+        const fn = normLabel(field.label);
+        const match = structuralPairs.find((p) => {
+          const pn = normLabel(p.label);
+          return pn === fn || (fn.length >= 3 && pn.endsWith(fn)) || (fn.length >= 4 && fn.includes(pn)) || (pn.length >= 4 && pn.includes(fn));
+        });
+        if (match) (field as unknown as Record<string, unknown>).injection_pattern = match.pattern;
+      }
+    }
+
     void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
       void logUsage({
         userId: user.uid,

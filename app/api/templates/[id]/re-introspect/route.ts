@@ -78,8 +78,9 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
           required:       { type: SchemaType.BOOLEAN },
           role:           { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
           group:          { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
-          defaultValue:   { type: SchemaType.STRING, nullable: true },
-          aiInstructions: { type: SchemaType.STRING, nullable: true },
+          defaultValue:      { type: SchemaType.STRING, nullable: true },
+          aiInstructions:    { type: SchemaType.STRING, nullable: true },
+          injection_pattern: { type: SchemaType.STRING, nullable: true, format: "enum", enum: ["adjacent_right", "adjacent_below", "inline_colon", "column_header", "period_column"] },
         },
       },
     },
@@ -133,6 +134,7 @@ Você é um analista de currículo escolar sênior especializado em documentos p
    • recuperacao_paralela → "Proponha atividades diferenciadas baseadas nas dificuldades previstas pelos objetivos e avaliação."
    • Outros campos ia_sugerida → "Seja específico ao contexto da turma, disciplina e período descritos no plano."
    Campos role "manual" → aiInstructions = "".
+13. PADRÃO DE INJEÇÃO (injection_pattern) — OBRIGATÓRIO quando <estrutura_detectada> estiver disponível: para cada campo, encontre o par correspondente em <estrutura_detectada> pelo label e copie seu "pattern" para o campo "injection_pattern" do JSON de saída. Se não houver par correspondente, use null. Mapeamento direto: "adjacent_right" | "adjacent_below" | "inline_colon" | "column_header" | "period_column". Este metadado é usado pelo sistema de injeção para posicionar os placeholders sem re-derivar a estrutura.
 </regras>
 <estrutura_pre_processada>
 Quando a mensagem contém <estrutura_detectada>, essa seção lista os pares rótulo→valor já extraídos automaticamente via análise XML do documento — use-a como FONTE PRIMÁRIA para labels e posições. Os padrões indicam onde o valor aparece:
@@ -416,6 +418,24 @@ export async function POST(
         metadata: { template_id: id },
       });
     });
+
+    // Deterministic injection_pattern enrichment: for fields where the AI left
+    // injection_pattern null/undefined, match by label against the structural scan
+    // and copy the pattern. This is immune to AI hallucination and covers cases
+    // where the AI response schema didn't include injection_pattern before.
+    if (structuralPairs.length > 0) {
+      const normLabel = (s: string) =>
+        s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+      for (const field of schema as TemplateFieldSchema[]) {
+        if (field.injection_pattern) continue;
+        const fn = normLabel(field.label);
+        const match = structuralPairs.find((p) => {
+          const pn = normLabel(p.label);
+          return pn === fn || (fn.length >= 3 && pn.endsWith(fn)) || (fn.length >= 4 && fn.includes(pn)) || (pn.length >= 4 && pn.includes(fn));
+        });
+        if (match) (field as unknown as Record<string, unknown>).injection_pattern = match.pattern;
+      }
+    }
 
     // Merge: pre-annotated {{key}} patterns in the DOCX take priority over AI inference
     const scannedKeys = isDocx ? scanPlaceholders(fileBuffer) : [];

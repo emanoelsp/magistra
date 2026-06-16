@@ -316,7 +316,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         return renderAsync(bufferRef.current, container, undefined, {
           inWrapper: true, ignoreWidth: false, ignoreHeight: true,
           ignoreFonts: false, breakPages: true, useBase64URL: true,
-          renderEndnotes: true, renderFooters: true, renderFootnotes: true, renderHeaders: true,
+          renderEndnotes: true, renderFooters: false, renderFootnotes: false, renderHeaders: false,
         });
       })
       .then(() => { if (!cancelled) setPhase("done"); })
@@ -621,7 +621,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   }, [phase, placementKey]);
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <style>{`
         .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
         .docx-html-preview table { border-collapse: collapse; }
@@ -2160,13 +2160,13 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         </div>
 
         {/* Split view */}
-        <div className="flex gap-6" style={{ minHeight: "calc(100vh - 320px)" }}>
+        <div className="flex gap-6" style={{ height: "calc(100vh - 320px)", minHeight: "480px" }}>
           {/* Left: editor — hidden on mobile, shown on xl+ (or when mobile tab = document) */}
           <div className={`overflow-hidden rounded-3xl border border-slate-200 ${
             mobileTab === "document" ? "flex flex-col w-full xl:w-auto" : "hidden xl:flex xl:flex-col"
           } ${panelCollapsed ? "xl:flex-1" : "xl:w-[62%] xl:shrink-0"}`}>
             {/* Viewer content */}
-            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {viewMode === "preview" ? (
                 <OfficeInlineViewer
                   key={previewVersion}
@@ -2197,7 +2197,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
           {/* Item 16: collapsible right panel */}
           {!panelCollapsed ? (
-            <div ref={panelScrollRef} className={`min-w-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none] ${
+            <div ref={panelScrollRef} className={`min-h-0 min-w-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none] ${
               mobileTab === "campos" ? "flex-1 flex flex-col" : "hidden xl:flex xl:flex-col xl:flex-1"
             }`}>
               {/* Collapse button */}
