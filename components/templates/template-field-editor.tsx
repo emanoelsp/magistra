@@ -109,12 +109,15 @@ interface DocxInteractiveProps {
   zoom?: number;
   onZoomChange?: (z: number) => void;
   onSaveEdits: (edits: DocxEdit[], scanOrder: string[], removedKeys: string[], cellEdits: CellEdit[]) => void;
+  placementKey?: string | null;
+  onCancelPlacement?: () => void;
+  onPlace?: (key: string, coord: string | undefined, cellText: string, ordinal: number) => void;
 }
 
 const TOOLBAR_FONTS = ["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"];
 const TOOLBAR_SIZES = ["8", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36"];
 
-function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
@@ -569,6 +572,54 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
+  // Placement mode: when placementKey is set, suspend contenteditable and turn cells into click targets
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current || !placementKey) return;
+    const container = containerRef.current;
+
+    // Suspend existing contenteditable
+    const editables = Array.from(container.querySelectorAll<HTMLElement>("[contenteditable='true']"));
+    for (const el of editables) el.contentEditable = "false";
+
+    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[]).filter(
+      (td) => !td.closest("header") && !td.closest("footer"),
+    );
+
+    // Build per-cell ordinal mapping (mirrors handleSaveEdits counting)
+    const textCounts = new Map<string, number>();
+    const cellInfo = new Map<HTMLElement, { text: string; ordinal: number }>();
+    for (const td of tds) {
+      const text = originalTextsRef.current.get(td) ?? "";
+      const ordinal = textCounts.get(text) ?? 0;
+      textCounts.set(text, ordinal + 1);
+      cellInfo.set(td, { text, ordinal });
+    }
+
+    function handleClick(e: Event) {
+      e.stopPropagation();
+      const td = e.currentTarget as HTMLElement;
+      const { text, ordinal } = cellInfo.get(td) ?? { text: "", ordinal: 0 };
+      const coord = td.getAttribute("data-xml-coord") ?? undefined;
+      onPlace?.(placementKey!, coord, text, ordinal);
+    }
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onCancelPlacement?.();
+    }
+
+    container.classList.add("docx-placement-mode");
+    document.addEventListener("keydown", handleKeyDown);
+    for (const td of tds) td.addEventListener("click", handleClick);
+
+    return () => {
+      container.classList.remove("docx-placement-mode");
+      document.removeEventListener("keydown", handleKeyDown);
+      for (const td of tds) td.removeEventListener("click", handleClick);
+      for (const el of editables) el.contentEditable = "true";
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, placementKey]);
+
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
       <style>{`
@@ -584,28 +635,50 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
           outline: 2px solid rgba(139,92,246,0.6) !important;
           border-radius: 2px;
         }
+        .docx-placement-mode td { cursor: pointer !important; user-select: none; }
+        .docx-placement-mode td:hover { background: rgba(99,102,241,0.12) !important; outline: 2px dashed rgba(99,102,241,0.5) !important; border-radius: 2px; }
       `}</style>
 
       {/* Header line */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-violet-100 bg-violet-50 px-3 py-2">
-        <p className="flex-1 text-[11px] text-violet-600">
-          Clique em qualquer célula para editar &bull; Para posicionar um campo:{" "}
-          <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{nome_do_campo}}`}</code>
-        </p>
-        {saveCount > 0 && (
-          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-            {saveCount} campo{saveCount !== 1 ? "s" : ""} adicionado{saveCount !== 1 ? "s" : ""}
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={handleSaveEdits}
-          className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
-        >
-          <Save className="h-3 w-3" />
-          Salvar edições
-        </button>
-      </div>
+      {placementKey ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-indigo-200 bg-indigo-600 px-3 py-2.5">
+          <MousePointer2 className="h-3.5 w-3.5 shrink-0 text-white" />
+          <p className="flex-1 text-[11px] text-white">
+            Clique numa célula para posicionar{" "}
+            <strong>«{fields.find((f) => f.key === placementKey)?.label ?? placementKey}»</strong>
+            {" "}·{" "}
+            <kbd className="rounded bg-white/20 px-1 text-[10px] font-mono">Esc</kbd>{" "}
+            para cancelar
+          </p>
+          <button
+            type="button"
+            onClick={onCancelPlacement}
+            className="flex shrink-0 items-center justify-center rounded-lg p-1 text-white/70 hover:bg-white/20 hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex shrink-0 items-center gap-2 border-b border-violet-100 bg-violet-50 px-3 py-2">
+          <p className="flex-1 text-[11px] text-violet-600">
+            Clique em qualquer célula para editar &bull; Para posicionar um campo:{" "}
+            <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{nome_do_campo}}`}</code>
+          </p>
+          {saveCount > 0 && (
+            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+              {saveCount} campo{saveCount !== 1 ? "s" : ""} adicionado{saveCount !== 1 ? "s" : ""}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleSaveEdits}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
+          >
+            <Save className="h-3 w-3" />
+            Salvar edições
+          </button>
+        </div>
+      )}
 
       {/* Rich-text formatting toolbar + zoom (single row) */}
       {phase === "done" && (
@@ -752,6 +825,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [previewVersion, setPreviewVersion] = useState(0);
   const [viewMode, setViewMode] = useState<"preview" | "interactive">("interactive");
   const [roleFilter, setRoleFilter] = useState<"manual" | "ia_sugerida" | null>(null);
+  const [showOnlyMissing, setShowOnlyMissing] = useState(false);
 
   // Item 5: diff modal state
   const [pendingExtract, setPendingExtract] = useState<ReExtractResult | null>(null);
@@ -785,6 +859,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   // Item 15: zoom
   const [zoom, setZoom] = useState(100);
+
+  // Placement mode
+  const [placementKey, setPlacementKey] = useState<string | null>(null);
 
   // Item 16: collapsible panel
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
@@ -1166,6 +1243,22 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     handleSave(prev, undefined, true);
   }
 
+  function handlePlace(key: string, coord: string | undefined, cellText: string, ordinal: number) {
+    setPlacementKey(null);
+    const newPos: Record<string, { cellText: string; ordinal: number; coord?: string }> = {
+      ...fieldPositions,
+      [key]: { cellText, ordinal, ...(coord ? { coord } : {}) },
+    };
+    setFieldPositions(newPos);
+    const cellEdit: CellEdit = {
+      cellText,
+      ordinal,
+      newContent: cellText.trim() ? `${cellText.trim()} {{${key}}}` : `{{${key}}}`,
+      coord,
+    };
+    handleSave(fields, newPos, true, [cellEdit]);
+  }
+
   async function handleAdvanceToReview() {
     setError(null);
     const emptyLabel = fields.find((f) => !f.label.trim());
@@ -1446,6 +1539,33 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       {helpModal}
 
       <div>
+        {fields.length > 0 && (
+          <div className="mb-3 flex items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2">
+            <div className="flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-slate-700">
+                  {fields.length - camposSemPlaceholder.length} de {fields.length} campos posicionados
+                </span>
+                {camposSemPlaceholder.length === 0 && (
+                  <span className="text-emerald-500 text-xs">✓</span>
+                )}
+              </div>
+              {camposSemPlaceholder.length > 0 && (
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-full rounded-full bg-emerald-500 transition-all"
+                    style={{ width: `${Math.round(((fields.length - camposSemPlaceholder.length) / fields.length) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+            {camposSemPlaceholder.length > 0 && (
+              <span className="shrink-0 rounded-lg bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                {camposSemPlaceholder.length} sem posição
+              </span>
+            )}
+          </div>
+        )}
         {progressBar}
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
@@ -1528,6 +1648,19 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                 >
                   Magis
                 </button>
+                {camposSemPlaceholder.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowOnlyMissing((v) => !v)}
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition ${
+                      showOnlyMissing
+                        ? "bg-amber-600 text-white"
+                        : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                    }`}
+                  >
+                    ⚠ Sem posição
+                  </button>
+                )}
               </div>
 
               {template.arquivo_url && (
@@ -1543,7 +1676,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               )}
             </div>
 
-            {fields.filter((f) => !roleFilter || f.role === roleFilter).map((field) => {
+            {fields.filter((f) => {
+              if (roleFilter && f.role !== roleFilter) return false;
+              if (showOnlyMissing && !camposSemPlaceholder.includes(f.key)) return false;
+              return true;
+            }).map((field) => {
               const index = fields.indexOf(field);
               const isExpanded = expandedField === field.key;
               const isActive = activeFieldKey === field.key;
@@ -1626,63 +1763,70 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   {isExpanded && (
                     <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
 
-                      {/* New-field configuration prompt */}
+                      {/* New-field notification (simplified — inputs are now always visible below) */}
                       {isNew && (
-                        <div className="rounded-2xl border-2 border-violet-200 bg-violet-50 p-3 space-y-2.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-xs font-semibold text-violet-800">
-                              Novo campo adicionado — configure antes de salvar
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => setPendingConfigKeys((prev) => { const next = new Set(prev); next.delete(field.key); return next; })}
-                              className="shrink-0 rounded-lg p-0.5 text-violet-400 hover:text-violet-700"
-                              title="Fechar"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                          <label className="block">
-                            <span className="text-[11px] font-semibold text-violet-700">Nome do campo *</span>
-                            <input
-                              type="text"
-                              value={field.label}
-                              onChange={(e) => updateField(index, { label: e.target.value })}
-                              placeholder="Ex.: Turma, Objetivos de aprendizagem…"
-                              autoFocus
-                              className="mt-1 w-full rounded-xl border border-violet-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-500 focus:ring-1 focus:ring-violet-200"
-                            />
-                          </label>
-                          <label className="block">
-                            <span className="text-[11px] font-semibold text-violet-700">Categoria</span>
-                            <select
-                              value={field.group ?? "outros"}
-                              onChange={(e) => preserveScroll(() => updateField(index, { group: e.target.value as TemplateFieldSchema["group"] }))}
-                              className="mt-1 w-full rounded-xl border border-violet-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-200"
-                            >
-                              {Object.entries(GROUP_LABELS).map(([k, v]) => (
-                                <option key={k} value={k}>{v}</option>
-                              ))}
-                            </select>
-                          </label>
+                        <div className="flex items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2">
+                          <p className="text-[11px] font-semibold text-violet-800">
+                            Novo campo — preencha o nome abaixo
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setPendingConfigKeys((prev) => { const next = new Set(prev); next.delete(field.key); return next; })}
+                            className="shrink-0 rounded-lg p-0.5 text-violet-400 hover:text-violet-700"
+                            title="Fechar"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       )}
 
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-slate-400">Grupo:</span>
-                          <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-                            {GROUP_LABELS[field.group ?? "outros"] ?? "Outros"}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-slate-400">Código:</span>
-                          <code className="rounded border border-slate-100 bg-slate-50 px-2 py-0.5 font-mono text-[10px] text-slate-500">{`{{${field.key}}}`}</code>
-                        </div>
-                      </div>
+                      {/* Label — always editable */}
+                      <label className="block">
+                        <span className="text-[11px] font-semibold text-slate-600">Nome do campo</span>
+                        <input
+                          type="text"
+                          value={field.label}
+                          onChange={(e) => updateField(index, { label: e.target.value })}
+                          placeholder="Ex.: Turma, Objetivos de aprendizagem…"
+                          autoFocus={isNew}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-200"
+                        />
+                        <span className="mt-0.5 block font-mono text-[10px] text-slate-400">{`{{${field.key}}}`}</span>
+                      </label>
 
+                      {/* Group — always editable */}
+                      <label className="block">
+                        <span className="text-[11px] font-semibold text-slate-600">Categoria</span>
+                        <select
+                          value={field.group ?? "outros"}
+                          onChange={(e) => preserveScroll(() => updateField(index, { group: e.target.value as TemplateFieldSchema["group"] }))}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-violet-400 focus:ring-1 focus:ring-violet-200"
+                        >
+                          {Object.entries(GROUP_LABELS).map(([k, v]) => (
+                            <option key={k} value={k}>{v}</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {/* Posicionar no documento (only for missing fields) */}
+                      {isPlaceholderMissing && (
+                        <button
+                          type="button"
+                          onClick={() => { setPlacementKey(field.key); setViewMode("interactive"); setPanelCollapsed(false); }}
+                          className={`flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                            placementKey === field.key
+                              ? "border-indigo-400 bg-indigo-600 text-white"
+                              : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                          }`}
+                        >
+                          <MousePointer2 className="h-3.5 w-3.5" />
+                          {placementKey === field.key ? "Aguardando clique no documento…" : "Posicionar no documento"}
+                        </button>
+                      )}
+
+                      {/* Role toggle */}
                       <div>
-                        <span className="text-xs font-medium text-slate-600">Quem preenche este campo?</span>
+                        <span className="text-[11px] font-semibold text-slate-600">Quem preenche este campo?</span>
                         <div className="mt-1.5 flex gap-2">
                           <button
                             type="button"
@@ -1715,11 +1859,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </div>
                       </div>
 
+                      {/* AI instructions — ia_sugerida only */}
                       {field.role === "ia_sugerida" && (
                         <label className="block">
-                          <span className="text-xs font-semibold text-violet-700">Contexto para a Magis</span>
+                          <span className="text-[11px] font-semibold text-violet-700">Contexto para a Magis</span>
                           <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
-                            Dê instruções específicas para a Magis ao sugerir conteúdo neste campo.
+                            Instruções específicas para a Magis ao sugerir conteúdo neste campo.
                           </p>
                           <textarea
                             value={field.aiInstructions ?? ""}
@@ -1731,9 +1876,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </label>
                       )}
 
+                      {/* Default value — manual only */}
                       {field.role !== "ia_sugerida" && (
                         <label className="block">
-                          <span className="text-xs font-semibold text-amber-700">Valor padrão</span>
+                          <span className="text-[11px] font-semibold text-amber-700">Valor padrão</span>
                           <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
                             Aparece pré-preenchido em todos os planos gerados com este template.
                           </p>
@@ -1746,6 +1892,22 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                           />
                         </label>
                       )}
+
+                      {/* Helper text — visible to professor when filling the plan */}
+                      <label className="block">
+                        <span className="text-[11px] font-semibold text-slate-600">Dica para o professor</span>
+                        <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
+                          Texto de ajuda exibido abaixo do campo ao preencher o plano.
+                        </p>
+                        <textarea
+                          value={field.helperText ?? ""}
+                          onChange={(e) => preserveScroll(() => updateField(index, { helperText: e.target.value || undefined }))}
+                          rows={2}
+                          placeholder="Ex.: Informe o componente curricular e a série/ano…"
+                          className="mt-0.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
+                        />
+                      </label>
+
                     </div>
                   )}
                 </div>
@@ -2025,6 +2187,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   zoom={zoom}
                   onZoomChange={setZoom}
                   onSaveEdits={handleSaveDocEdits}
+                  placementKey={placementKey}
+                  onCancelPlacement={() => setPlacementKey(null)}
+                  onPlace={handlePlace}
                 />
               )}
             </div>
