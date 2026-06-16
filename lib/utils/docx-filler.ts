@@ -813,6 +813,62 @@ export function injectRawCell(
   return docxBuffer;
 }
 
+/**
+ * Injects `content` into the exact cell identified by a structural coordinate
+ * string "T{tableIdx}R{rowIdx}C{cellIdx}" — all 0-based, within word/document.xml.
+ *
+ * This is the authoritative injection path when the client sends a coord
+ * (assigned by assignDocxCellCoords in lib/utils/docx-coord.ts). It avoids
+ * all text-matching ambiguity and is immune to header/footer index offsets.
+ */
+export function injectAtCoord(
+  docxBuffer: Buffer,
+  coord: string,
+  content: string,
+): Buffer {
+  const m = coord.match(/^T(\d+)R(\d+)C(\d+)$/);
+  if (!m) return docxBuffer;
+
+  const targetTi = parseInt(m[1], 10);
+  const targetRi = parseInt(m[2], 10);
+  const targetCi = parseInt(m[3], 10);
+
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+
+  let xml = zip.files[xmlPath].asText();
+
+  let ti = 0;
+  let injected = false;
+
+  xml = xml.replace(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g, (tblXml) => {
+    if (injected || ti !== targetTi) { ti++; return tblXml; }
+    ti++;
+
+    let ri = 0;
+    const newTbl = tblXml.replace(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g, (trXml) => {
+      if (injected || ri !== targetRi) { ri++; return trXml; }
+      ri++;
+
+      let ci = 0;
+      const newTr = trXml.replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g, (tcXml) => {
+        if (injected || ci !== targetCi) { ci++; return tcXml; }
+        ci++;
+        injected = true;
+        return clearAndSetCellText(tcXml, content);
+      });
+      return newTr;
+    });
+    return newTbl;
+  });
+
+  if (!injected) return docxBuffer;
+
+  zip.file(xmlPath, xml);
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
 // ── Main: inject placeholders ────────────────────────────────────────────────
 
 /**

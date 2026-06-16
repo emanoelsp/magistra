@@ -84,17 +84,19 @@ function newField(): TemplateFieldSchema {
 // mammoth/docx-preview renderer with inline-edit support.
 
 interface DocxEdit {
-  text: string;       // original cell text (for server-side injectAtCell)
+  text: string;       // original cell text (for server-side injectAtCell fallback)
   ordinal: number;    // occurrence index among cells with same original text
   key: string;        // variable name
   role: "manual" | "ia_sugerida";
   label: string;      // human label (adjacent cell text or derived from key)
+  coord?: string;     // "T{ti}R{ri}C{ci}" — preferred over text/ordinal when present
 }
 
 interface CellEdit {
-  cellText: string;    // original cell text from the DOM (may include {{key}} chips from prior saves)
+  cellText: string;    // original cell text (stripped of {{key}} chips)
   ordinal: number;     // occurrence index
   newContent: string;  // full edited cell text including all {{key}} tokens
+  coord?: string;      // "T{ti}R{ri}C{ci}" — preferred over text/ordinal when present
 }
 
 interface DocxInteractiveProps {
@@ -169,11 +171,14 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     if (!containerRef.current) return;
     const container = containerRef.current;
 
-    // Mirror the same selector logic used in the contenteditable setup effect
-    const tds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
+    // Mirror the same selector logic used in the contenteditable setup effect:
+    // exclude header/footer cells (they live in separate DOCX XML files and
+    // their DOM indices don't correspond to document.xml cell indices).
+    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
+      .filter((td) => !td.closest("header") && !td.closest("footer"));
     const standaloneParagraphs = (
       Array.from(container.querySelectorAll("p")) as HTMLElement[]
-    ).filter((p) => !p.closest("td"));
+    ).filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
     const els = [...tds, ...standaloneParagraphs];
 
     const existingKeys = new Set(fields.map((f) => f.key));
@@ -210,9 +215,9 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       const ordinal = textOrdinalsMap.get(originalText) ?? 0;
       textOrdinalsMap.set(originalText, ordinal + 1);
 
-      // When the cell was empty, use the global <td> index as ordinal so the
-      // server can find the exact cell by position (injectAtCell empty-cell mode).
-      // For cells with text, use the text-occurrence ordinal (existing behaviour).
+      // Prefer XML structural coord (set by assignDocxCellCoords) for empty cells.
+      // Fall back to global <td> index only when coord is unavailable.
+      const coord = el.tagName === "TD" ? (el.getAttribute("data-xml-coord") ?? undefined) : undefined;
       const tdGlobalIndex = el.tagName === "TD" ? tds.indexOf(el) : -1;
       const effectiveOrdinal = !originalText.trim() && tdGlobalIndex >= 0
         ? tdGlobalIndex
@@ -234,16 +239,15 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const label = !originalText.trim()
           ? (adjacentLabel(el) || key.replace(/_/g, " "))
           : (originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " "));
-        edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label });
+        edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label, coord });
       }
 
-      // Collect a full-cell override for any cell that has {{key}} patterns and a
-      // non-empty original text. This lets the server write ALL tokens in one shot
-      // instead of calling injectAtCell once per key (which overwrites the cell each
-      // time, causing only the first key to survive in multi-key cells).
+      // Collect a full-cell override for any cell that has {{key}} patterns.
+      // This lets the server write ALL tokens in one shot so they don't overwrite
+      // each other in multi-key cells.
       // Strip chips for keys no longer in the schema so deleted-field placeholders
       // don't get re-injected into the fillable via injectRawCell.
-      if (matches.length > 0 && originalText.trim()) {
+      if (matches.length > 0) {
         const cleanedContent = currentText
           .replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (full, k) => (existingKeys.has(k) ? full : ""))
           .replace(/\s+/g, " ")
@@ -254,7 +258,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
           );
           if (!alreadyRecorded) {
-            cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: cleanedContent });
+            cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: cleanedContent, coord });
           }
         }
       }
@@ -268,7 +272,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
           if (!existingKeys.has(key) && !processedKeys.has(key)) {
             processedKeys.add(key);
             const label = adjacentLabel(el) || key.replace(/_/g, " ");
-            edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label });
+            edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label, coord });
           }
         }
       }
@@ -491,6 +495,21 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     }
   }, [phase, fieldPositions, fields]);
 
+  // Assign XML structural coordinates to DOM cells (enables precise server-side injection).
+  // Runs after chip effects so coords land on the final rendered cells.
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current || !bufferRef.current) return;
+    let cancelled = false;
+    const buf = bufferRef.current;
+    const cont = containerRef.current;
+    import("../../lib/utils/docx-coord")
+      .then(({ assignDocxCellCoords }) => {
+        if (!cancelled) return assignDocxCellCoords(buf, cont);
+      })
+      .catch(() => {/* non-fatal */});
+    return () => { cancelled = true; };
+  }, [phase]);
+
   // Contenteditable — make cells editable, avoiding nested contenteditable
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
@@ -499,16 +518,26 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     // Only td elements + standalone p elements (not inside td) become contenteditable.
     // Nested contenteditable (td AND p inside td) causes browser to render stacked
     // focus rings at every level, creating the "concentric rings" visual artifact.
-    const tds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
+    //
+    // Exclude header/footer <td>s: they are in separate DOCX XML files so their
+    // global DOM index does NOT correspond to indices in word/document.xml.
+    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
+      .filter((td) => !td.closest("header") && !td.closest("footer"));
     const standaloneParagraphs = (
       Array.from(container.querySelectorAll("p")) as HTMLElement[]
-    ).filter((p) => !p.closest("td"));
+    ).filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
     const editableEls = [...tds, ...standaloneParagraphs];
 
-    // Store original text content BEFORE user edits
+    // Capture original text BEFORE user edits, stripping {{key}} chip text so
+    // ordinal counting in handleSaveEdits matches the clean original DOCX text
+    // that the server uses for injectRawCell / injectAtCell fallback paths.
     originalTextsRef.current = new Map();
     for (const el of editableEls) {
-      originalTextsRef.current.set(el, el.textContent?.trim() ?? "");
+      const clean = (el.textContent ?? "")
+        .replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      originalTextsRef.current.set(el, clean);
     }
 
     for (const el of editableEls) {
@@ -719,7 +748,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [locateKey, setLocateKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
   const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
-  const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number }>>({});
+  const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number; coord?: string }>>({});
   const [previewVersion, setPreviewVersion] = useState(0);
   const [viewMode, setViewMode] = useState<"preview" | "interactive">("interactive");
   const [roleFilter, setRoleFilter] = useState<"manual" | "ia_sugerida" | null>(null);
@@ -949,14 +978,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   function handleSaveDocEdits(edits: DocxEdit[], scanOrder: string[], removedKeys: string[], cellEdits: CellEdit[]) {
     const newFields: TemplateFieldSchema[] = [];
-    const newPositions: Record<string, { cellText: string; ordinal: number }> = {};
+    const newPositions: Record<string, { cellText: string; ordinal: number; coord?: string }> = {};
 
     for (const edit of edits) {
       const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label);
       if (!fields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
         newFields.push(f);
-        // Store position using cell text as anchor; for empty cells use ordinal alone
-        newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal };
+        // Store position: prefer coord (structural, unambiguous) over text/ordinal
+        newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal, ...(edit.coord ? { coord: edit.coord } : {}) };
       }
     }
 
