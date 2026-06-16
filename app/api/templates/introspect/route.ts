@@ -90,7 +90,7 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
    Exemplos de TÍTULOS: "CEDUP HERMANN HERING", "PLANO DE AULA".
    Exemplos de CAMPOS: "HABILIDADES:" → campo. "Professor(a):" → campo. "- Carga horária prevista:" → campo.
 8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" em 9 colunas → um único campo {{turma}}.
-9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; bimestres) e MÚLTIPLAS LINHAS de dados — uma por período — crie chaves com sufixo _tr1/_tr2/_tr3 (ou _bim1/_bim2). Exemplo: coluna "HABILIDADES" com 3 linhas de dados → habilidades_tr1, habilidades_tr2, habilidades_tr3. Células de marcação de trimestre (✓, "x", texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}.
+9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; bimestres), analise a estrutura via injection_pattern: (a) Se o cabeçalho de conteúdo (HABILIDADES, CONCEITOS etc.) tem injection_pattern "adjacent_below" → a coluna tem UMA ÚNICA célula de valor diretamente abaixo → 1 campo por coluna sem sufixo. (b) Se o cabeçalho tem injection_pattern "period_column" → existem MÚLTIPLAS LINHAS de dados, uma por período → sufixo _tr1/_tr2/_tr3. (c) Marcadores de período (1º, 2º, 3º — células de ✓ ou texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}.
 10. RANGE DE DATAS: Se o valor de um campo contém um intervalo ("13/07/2026 a 09/08/2026" ou "DD/MM - DD/MM"), declare DOIS campos separados: {base}_inicio e {base}_fim.
 11. ESCOPO DE BLOCO: Campos do tipo textarea têm conteúdo que se estende até o próximo título em caixa alta ou próxima seção. Marque esses campos com type "textarea" — nunca "text" para seções de conteúdo pedagógico.
 12. DEPENDÊNCIAS — aiInstructions: Para campos role "ia_sugerida", preencha 'aiInstructions' com 1 frase curta indicando quais outros campos servem de contexto. Use o mapeamento:
@@ -238,7 +238,7 @@ export async function POST(request: Request) {
         nota: "Regra 10: 'Data ou período de realização: 13/07/2026 a 09/08/2026' → dois campos data_inicio + data_fim.",
       },
       {
-        descricao: "Planejamento anual com 3 trimestres (EMIEP-2026). Regra 8: colunas repetidas → 1 campo. Regra 9: 3 linhas de dados → sufixos _tr1/_tr2/_tr3. Regra 16: 'PROJETOS INTEGRADORES' (ALL CAPS + linha vazia abaixo) → campo adjacent_below. Regra 17: rodapé 'Blumenau, data' → campo data_atual (auto-preenchido).",
+        descricao: "Planejamento anual com 3 trimestres (EMIEP-2026). Regra 8: colunas repetidas → 1 campo. Regra 9: CONCEITOS/HABILIDADES/OBJETO têm célula vazia diretamente abaixo (adjacent_below) → 1 campo único por coluna. Marcadores 1º/2º/3º (period_column) → tr1/tr2/tr3. Regra 16: PROJETOS INTEGRADORES → adjacent_below.",
         campos: [
           { key: "professor_a", label: "PROFESSOR (A)", type: "text", required: true, role: "manual", group: "dados_turma" },
           { key: "nome_curso", label: "CURSO", type: "text", required: true, role: "manual", group: "dados_turma" },
@@ -250,17 +250,11 @@ export async function POST(request: Request) {
           { key: "objetivo_geral_componente", label: "OBJETIVO GERAL DO COMPONENTE", type: "textarea", required: true, role: "ia_sugerida", group: "objetivos" },
           { key: "competencias_gerais_bncc", label: "COMPETÊNCIAS GERAIS BNCC", type: "textarea", required: true, role: "ia_sugerida", group: "competencias" },
           { key: "competencias_especificas_area", label: "COMPETÊNCIAS ESPECÍFICAS DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "competencias" },
-          { key: "conceitos_estruturantes_tr1", label: "CONCEITOS ESTRUTURANTES DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
-          { key: "habilidades_tr1", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
-          { key: "objeto_conhecimento_tr1", label: "OBJETO DE CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "conceitos_estruturantes", label: "CONCEITOS ESTRUTURANTES DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
+          { key: "habilidades", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
+          { key: "objeto_conhecimento", label: "OBJETO DE CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
           { key: "tr1", label: "1º Trimestre", type: "text", required: false, role: "manual", group: "dados_turma" },
-          { key: "conceitos_estruturantes_tr2", label: "CONCEITOS ESTRUTURANTES DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
-          { key: "habilidades_tr2", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
-          { key: "objeto_conhecimento_tr2", label: "OBJETO DE CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
           { key: "tr2", label: "2º Trimestre", type: "text", required: false, role: "manual", group: "dados_turma" },
-          { key: "conceitos_estruturantes_tr3", label: "CONCEITOS ESTRUTURANTES DA ÁREA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
-          { key: "habilidades_tr3", label: "HABILIDADES", type: "textarea", required: true, role: "ia_sugerida", group: "habilidades" },
-          { key: "objeto_conhecimento_tr3", label: "OBJETO DE CONHECIMENTO", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
           { key: "tr3", label: "3º Trimestre", type: "text", required: false, role: "manual", group: "dados_turma" },
           { key: "metodologia", label: "METODOLOGIA", type: "textarea", required: true, role: "ia_sugerida", group: "conteudos" },
           { key: "avaliacao", label: "AVALIAÇÃO", type: "textarea", required: true, role: "ia_sugerida", group: "avaliacao" },
@@ -270,7 +264,8 @@ export async function POST(request: Request) {
         ],
         notas: [
           "Regra 8: PROFESSOR (A), Turma(s) etc. repetem em 9-10 colunas → 1 campo cada.",
-          "Regra 9: HABILIDADES/CONCEITOS/OBJETO aparecem em 3 linhas (uma por trimestre) → sufixos _tr1/_tr2/_tr3.",
+          "Regra 9: CONCEITOS/HABILIDADES/OBJETO têm adjacent_below (célula vazia diretamente abaixo) → 1 campo único cada, NÃO _tr1/_tr2/_tr3.",
+          "Regra 9: 1º/2º/3º são period_column → campos tr1/tr2/tr3 (marcação de trimestre).",
           "Regra 16: 'PROJETOS INTEGRADORES' (ALL CAPS, sem ':', linha vazia abaixo) → campo adjacent_below.",
           "Regra 17: rodapé com data (ex: 'Blumenau, DD/MM/AAAA') → campo data_atual auto-preenchido pelo sistema.",
         ],

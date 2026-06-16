@@ -1058,6 +1058,27 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       // ALL CAPS + empty below falls through to the adjacent_below injection path below.
       if (!hasMixedCase && !hasColon && !hasEmptyBelow) { continue; }
 
+      // "City, " date footer — "Blumenau," "Porto Alegre," etc. → inject {{data_atual}} inline.
+      // Must be checked BEFORE the mixed-case title skip, since "Blumenau," has mixed case
+      // and no colon, which would otherwise be classified as a section title.
+      if (/^[A-ZÀ-Ú][a-zA-ZÀ-ú]{2,}(?:\s+[A-ZÀ-Ú][a-zA-ZÀ-ú]+)*, ?$/.test(singleCellText)) {
+        const dateField = schema.find(f => !used.has(f.key) && f.key === "data_atual");
+        if (dateField) {
+          const origCell = row.cells[0] ?? "";
+          const run = `<w:r><w:t xml:space="preserve"> {{${dateField.key}}}</w:t></w:r>`;
+          const lastPClose = origCell.lastIndexOf("</w:p>");
+          const newCell = lastPClose !== -1
+            ? origCell.slice(0, lastPClose) + run + origCell.slice(lastPClose)
+            : origCell;
+          const newRowXml = replaceFirst(row.xml, origCell, newCell);
+          xml = replaceFirst(xml, row.xml, newRowXml);
+          rows[ri] = { xml: newRowXml, cells: [newCell], cellTexts: [extractText(newCell)] };
+          used.add(dateField.key);
+          console.info(`[inject pass2-city_comma] ${dateField.key} in "${singleCellText}"`);
+        }
+        continue;
+      }
+
       // Mixed-case + no colon + no adjacent empty → section title (Rule 13)
       const isMixedCaseTitle = hasMixedCase && !hasColon && !hasEmptyBelow;
       if (isMixedCaseTitle) { continue; }
@@ -1107,6 +1128,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     const cellTexts = [...row.cellTexts];
     let rowXml = row.xml;
     let rowModified = false;
+    // Virtual column indices for this row — needed for merged-cell-aware below lookup
+    const rowVcols = computeVirtualColIndices(cells);
 
     for (let ci = 0; ci < cells.length; ci++) {
       // Item 1: skip vertical-merge continuation cells — they have no content
@@ -1140,10 +1163,34 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       const hasNextCell = ci + 1 < cells.length;
 
       // When next cell is also a label (structural or schema match), or there is
-      // no next cell at all, inject the placeholder inline in the current cell.
-      // This handles rows like [Professor(a): | Área/Componente: | Turma:] where
-      // every cell is a label with the value expected after the colon in the same cell.
+      // no next cell at all, the value slot is NOT to the right — it's either
+      // inline (colon-label like "Professor(a):") or in the row below (column
+      // header like "Experiências de ensino e aprendizagem").
+      // Rule: prefer injecting into an empty cell directly below before falling
+      // back to inline. This handles bold column headers correctly.
       if (!hasNextCell || looksLikeLabel(cellTexts[ci + 1])) {
+        const belowRow = ri + 1 < rows.length ? rows[ri + 1] : null;
+        // Use virtual columns to find the correct below cell — physical index ci is wrong
+        // when the label row has merged cells (gridSpan>1) above it.
+        const labelVCol1 = rowVcols[ci] ?? ci;
+        const belowVCols1 = belowRow ? computeVirtualColIndices(belowRow.cells) : [];
+        const belowIdx1 = belowVCols1.findIndex((vc) => vc === labelVCol1);
+        const belowCellXml = belowIdx1 >= 0 ? (belowRow!.cells[belowIdx1] ?? null) : null;
+        const belowCellText = belowCellXml ? extractText(belowCellXml).trim() : "x";
+        if (belowCellXml && !belowCellText && !isVMergeContinuation(belowCellXml)) {
+          // Empty cell directly below → inject there (column-header pattern)
+          const newBelow = setCellContent(belowCellXml, `{{${field.key}}}`);
+          const newBelowRowXml = replaceFirst(belowRow!.xml, belowCellXml, newBelow);
+          xml = replaceFirst(xml, belowRow!.xml, newBelowRowXml);
+          const bc = [...belowRow!.cells];
+          const bt = [...belowRow!.cellTexts];
+          bc[belowIdx1] = newBelow;
+          bt[belowIdx1] = `{{${field.key}}}`;
+          rows[ri + 1] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
+          used.add(field.key);
+          continue;
+        }
+        // No empty cell below — inject inline (colon-label pattern)
         const origCell = cells[ci];
         // Resolve the precise paragraph/line norm so appendToParagraph finds the right spot
         // (avoids the bug where normText(cellText) = "cedup heringprofessor a" but no
@@ -1163,7 +1210,28 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       const excluded = new Set([...used, field.key]);
       const nextAlsoLabel = !!matchField(cellTexts[ci + 1], schema, excluded);
       if (nextAlsoLabel) {
-        // Next cell matches a schema field — inject inline rather than overwriting it
+        // Next cell also matches a schema field — check for empty cell below first
+        // (column-header pattern: "Experiências" | "Recursos" with value row below)
+        const belowRow = ri + 1 < rows.length ? rows[ri + 1] : null;
+        // Virtual column lookup — physical ci is wrong when label row has merged cells
+        const labelVCol2 = rowVcols[ci] ?? ci;
+        const belowVCols2 = belowRow ? computeVirtualColIndices(belowRow.cells) : [];
+        const belowIdx2 = belowVCols2.findIndex((vc) => vc === labelVCol2);
+        const belowCellXml = belowIdx2 >= 0 ? (belowRow!.cells[belowIdx2] ?? null) : null;
+        const belowCellText = belowCellXml ? extractText(belowCellXml).trim() : "x";
+        if (belowCellXml && !belowCellText && !isVMergeContinuation(belowCellXml)) {
+          const newBelow = setCellContent(belowCellXml, `{{${field.key}}}`);
+          const newBelowRowXml = replaceFirst(belowRow!.xml, belowCellXml, newBelow);
+          xml = replaceFirst(xml, belowRow!.xml, newBelowRowXml);
+          const bc = [...belowRow!.cells];
+          const bt = [...belowRow!.cellTexts];
+          bc[belowIdx2] = newBelow;
+          bt[belowIdx2] = `{{${field.key}}}`;
+          rows[ri + 1] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
+          used.add(field.key);
+          continue;
+        }
+        // No empty cell below — inject inline rather than overwriting the next schema cell
         const origCell = cells[ci];
         const labelNorm = resolveLabelNormFromCell(origCell, field) ?? normText(cellTexts[ci]);
         const newCell = appendToParagraph(origCell, labelNorm, field.key);
@@ -1616,7 +1684,7 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       if (periodCols.length >= 2) {
         const periodColSet = new Set(periodCols.map((p) => p.ci));
         const seenContent = new Set<string>();
-        // Content columns: all columns that are NOT period markers (unique by normalized label)
+        // Content columns: all columns from this row that are NOT at period-marker positions
         const contentCols = row.cellTexts
           .map((t, ci) => ({ ci, label: t.replace(/:+$/, "").trim() }))
           .filter(({ ci, label }) => label && !periodColSet.has(ci))
@@ -1627,13 +1695,22 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
             return true;
           });
 
+        // Content cols: adjacent_below when the cell below is empty; skip if the cell
+        // below is a period marker (TRIMESTRE-type header spans period columns).
+        for (const { ci: colIdx, label } of contentCols) {
+          const belowText = (nextRow.cellTexts[colIdx] ?? "").trim();
+          if (looksLikePeriodMarker(belowText)) continue;
+          addPair({
+            label,
+            valuePreview: belowText.slice(0, 60),
+            pattern: belowText ? "column_header" : "adjacent_below",
+          });
+        }
+
+        // Actual period markers (1º, 2º, 3º): emit period_column so the AI generates
+        // trimestre-keyed fields; injection happens via the fallback block.
         periodCols.forEach((period, idx) => {
-          const suffix = `_tr${idx + 1}`;
-          for (const { label } of contentCols) {
-            addPair({ label, valuePreview: "", pattern: "period_column", periodSuffix: suffix });
-          }
-          // Period marker cell itself (checkbox/marking per trimester)
-          addPair({ label: period.label, valuePreview: period.label, pattern: "period_column", periodSuffix: suffix });
+          addPair({ label: period.label, valuePreview: period.label, pattern: "period_column", periodSuffix: `_tr${idx + 1}` });
         });
         continue;
       }
@@ -1678,6 +1755,12 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
 
       const nextText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "sentinel";
       const hasEmptyBelow = nextText === "";
+
+      // "City, " date footer — "Blumenau," etc. → data_atual pair for AI introspection.
+      if (/^[A-ZÀ-Ú][a-zA-ZÀ-ú]{2,}(?:\s+[A-ZÀ-Ú][a-zA-ZÀ-ú]+)*, ?$/.test(t)) {
+        addPair({ label: "data_atual", valuePreview: t, pattern: "inline_colon" });
+        continue;
+      }
 
       // ALL CAPS + no colon: title unless followed by empty row.
       // Empty below signals a section field anchor (Rule 3 — e.g. "PROJETOS INTEGRADORES").
@@ -1739,7 +1822,10 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       }
 
       const nextText = row.cellTexts[ci + 1].trim();
-      if (looksLikeLabel(nextText) || hasBoldText(row.cells[ci + 1] ?? "")) { ci++; continue; }
+      // Require non-empty text for bold check: DOCX table cells can inherit bold
+      // from style even when empty (e.g. "Escola:" + empty right cell). Treating
+      // an empty bold cell as a label would silently skip the adjacent_right pair.
+      if (looksLikeLabel(nextText) || (nextText.length > 1 && hasBoldText(row.cells[ci + 1] ?? ""))) { ci++; continue; }
       // Period markers are column identifiers, not field values — skip
       if (looksLikePeriodMarker(nextText)) { ci++; continue; }
       // Image cells are not fillable value slots — skip (prevents header logo detection)

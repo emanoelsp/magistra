@@ -316,6 +316,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   // users from editing and re-downloading without consuming a new plan from their limit
   const [isFinalized, setIsFinalized] = useState(false);
   const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
+  const [downloadToast, setDownloadToast] = useState<"docx" | "pdf" | null>(null);
 
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(false);
@@ -611,6 +612,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             format === "pdf"
               ? `/api/planos/${id}/download?format=pdf`
               : `/api/planos/${id}/download`;
+          setDownloadToast(format);
+          setTimeout(() => setDownloadToast(null), 4000);
           void triggerDownload(url).then((info) => {
             if (info) setDownloadLimitInfo(info);
           }).catch(() => { window.open(url, "_blank"); });
@@ -759,10 +762,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 .doc-view ul, .doc-view ol { padding-left:18px; margin:2px 0; }
                 .doc-view li { margin:1px 0; }
 
-                /* ── Campos editáveis — sempre visíveis ── */
+                /* ── Campos editáveis — base ── */
                 .doc-view td[data-field-key] {
-                  background:#faf5ff !important;
-                  border-left:3px solid #8b5cf6 !important;
                   cursor:text;
                   position:relative;
                   min-height:2em;
@@ -777,14 +778,59 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 .doc-view td[data-field-key] em,
                 .doc-view td[data-field-key] i { font-style:italic; }
                 .doc-view td[data-field-key] u { text-decoration:underline; }
-                .doc-view td[data-field-key]:hover {
+
+                /* ── Campo manual (professor preenche) — âmbar ── */
+                .doc-view td[data-field-role="manual"] {
+                  background:#fffbeb !important;
+                  border-left:3px solid #f59e0b !important;
+                }
+                .doc-view td[data-field-role="manual"]:hover {
+                  background:#fef3c7 !important;
+                }
+                .doc-view td[data-field-role="manual"]:focus,
+                .doc-view td[data-field-role="manual"]:focus-within {
+                  background:#fef3c7 !important;
+                  box-shadow:inset 0 0 0 2px #d97706;
+                  outline:none;
+                }
+                .doc-view td[data-field-role="manual"]::after {
+                  background:#d97706;
+                }
+
+                /* ── Campo IA (Magis sugere) — violeta ── */
+                .doc-view td[data-field-role="ia_sugerida"] {
+                  background:#faf5ff !important;
+                  border-left:3px solid #8b5cf6 !important;
+                }
+                .doc-view td[data-field-role="ia_sugerida"]:hover {
                   background:#ede9fe !important;
                 }
-                .doc-view td[data-field-key]:focus,
-                .doc-view td[data-field-key]:focus-within {
+                .doc-view td[data-field-role="ia_sugerida"]:focus,
+                .doc-view td[data-field-role="ia_sugerida"]:focus-within {
                   background:#ede9fe !important;
                   box-shadow:inset 0 0 0 2px #7c3aed;
                   outline:none;
+                }
+                .doc-view td[data-field-role="ia_sugerida"]::after {
+                  background:#7c3aed;
+                }
+
+                /* ── Fallback (sem role) — cinza ── */
+                .doc-view td[data-field-key]:not([data-field-role]) {
+                  background:#f8fafc !important;
+                  border-left:3px solid #94a3b8 !important;
+                }
+                .doc-view td[data-field-key]:not([data-field-role]):hover {
+                  background:#f1f5f9 !important;
+                }
+                .doc-view td[data-field-key]:not([data-field-role]):focus,
+                .doc-view td[data-field-key]:not([data-field-role]):focus-within {
+                  background:#f1f5f9 !important;
+                  box-shadow:inset 0 0 0 2px #64748b;
+                  outline:none;
+                }
+                .doc-view td[data-field-key]:not([data-field-role])::after {
+                  background:#64748b;
                 }
 
                 /* Badge com nome do campo (aparece no hover/foco) */
@@ -793,7 +839,6 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                   position:absolute;
                   top:2px;
                   right:3px;
-                  background:#7c3aed;
                   color:#fff;
                   font-size:8px;
                   font-weight:700;
@@ -832,6 +877,19 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 .doc-view-preview td[data-field-key] u { text-decoration:underline; }
                 .doc-view-preview td[data-field-key]::after { display:none; }
               `}</style>
+              {!previewMode && (
+                <div className="mb-3 flex flex-wrap items-center gap-3 text-xs">
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-3 w-3 rounded-sm bg-amber-400" />
+                    <span className="text-slate-600">Você preenche</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-3 w-3 rounded-sm bg-violet-500" />
+                    <span className="text-slate-600">Magis sugere</span>
+                  </span>
+                  <span className="ml-auto text-slate-400">Clique em qualquer campo colorido para editar</span>
+                </div>
+              )}
               <div ref={docContainerRef}>
                 {previewMode ? (
                   <PreviewDocView html={docHtml} values={values} />
@@ -953,6 +1011,20 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         )}
       </div>
     </div>
+
+    {downloadToast && (
+      <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 shadow-lg">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600">
+          <Download className="h-4 w-4 text-white" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-emerald-900">Download iniciado</p>
+          <p className="text-xs text-emerald-700">
+            Seu plano em {downloadToast === "pdf" ? "PDF" : "Word"} está sendo baixado.
+          </p>
+        </div>
+      </div>
+    )}
 
     {downloadLimitInfo && (
       <DownloadLimitDialog
@@ -1143,9 +1215,9 @@ function AIChatPanel({
         {!fieldLabel && (
           <ChatBubble>
             <p className="text-sm text-slate-700">
-              Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica. Clique em qualquer campo{" "}
-              <span className="font-semibold text-blue-600">com borda azul</span> para
-              eu sugerir conteúdo específico para ele.
+              Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica.
+              Os campos <span className="font-semibold text-amber-600">amarelos</span> você preenche.
+              Os <span className="font-semibold text-violet-600">roxos</span> eu sugiro o conteúdo para você — clique neles para começar!
             </p>
           </ChatBubble>
         )}

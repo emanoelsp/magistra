@@ -175,33 +175,55 @@ export async function fixDocxAnchorImages(
         continue;
       }
 
-      // ── Y: trust docx-preview's natural vertical placement ──────────────────
-      // The wrapper div lives in the paragraph flow at the correct vertical
-      // position, so use its getBoundingClientRect top relative to the section.
+      // ── Table-cell check ─────────────────────────────────────────────────────
+      // If the anchor image lives inside a <td> (e.g. a header logo table), DO NOT
+      // move it to the section. Moving it breaks the table layout: the SC logo text
+      // separates from the flag image, and the CEDUP logo disappears off-screen.
+      // Instead: unwrap the zero-size/float wrapper and let the image render inline
+      // inside its cell at the correct dimensions.
+      const tdAncestor = (() => {
+        let e: HTMLElement | null = img.parentElement;
+        while (e && e !== container) {
+          if (e.tagName === "TD") return e as HTMLElement;
+          e = e.parentElement;
+        }
+        return null;
+      })();
+
+      if (tdAncestor) {
+        if (wrapper) {
+          wrapper.style.float = "none";
+          wrapper.style.width = "auto";
+          wrapper.style.height = "auto";
+          wrapper.style.display = "block";
+          wrapper.style.overflow = "visible";
+          wrapper.style.position = "static";
+        }
+        img.style.width = `${anchor.width_mm}mm`;
+        img.style.height = `${anchor.height_mm}mm`;
+        img.style.maxWidth = "none";
+        img.style.display = "block";
+        img.style.position = "static";
+        img.style.margin = "0 auto";
+        console.info(LOG, `inline-fixed (td) ${anchor.imagePath}`, {
+          w: `${anchor.width_mm.toFixed(1)}mm`,
+          h: `${anchor.height_mm.toFixed(1)}mm`,
+        });
+        continue;
+      }
+
+      // ── Free-floating anchor: absolute positioning relative to section ────────
+
+      // Y: trust docx-preview's natural vertical placement.
       const ref = wrapper ?? img;
       const refRect = ref.getBoundingClientRect();
       const sectionRect = sectionEl.getBoundingClientRect();
       const topMm = (refRect.top - sectionRect.top) / 3.7795;
 
-      // ── X: use section's computed padding-left as column origin ──────────────
-      // getComputedStyle gives the section's actual padding-left in CSS px.
-      // Converting to mm gives the distance from the section's padding-edge
-      // (= position:absolute origin) to the column left edge.
-      // For column-relative anchors: left = columnLeft_mm + posX_mm.
+      // X: use section's computed padding-left as column origin.
       const sectionCS = getComputedStyle(sectionEl);
       const sectionPL_px = parseFloat(sectionCS.paddingLeft || "0");
       const columnLeft_mm = sectionPL_px / 3.7795;
-
-      // Log rects for debugging
-      const headerRect = headerEl?.getBoundingClientRect();
-      console.debug(LOG, `rects for ${anchor.imagePath}`, {
-        sectionLeft: sectionRect.left.toFixed(0),
-        headerLeft: headerRect ? headerRect.left.toFixed(0) : "n/a",
-        wrapperLeft: refRect.left.toFixed(0),
-        sectionPaddingLeft_px: sectionPL_px.toFixed(1),
-        columnLeft_mm: columnLeft_mm.toFixed(1),
-        "headerLeft - sectionLeft (px)": headerRect ? (headerRect.left - sectionRect.left).toFixed(1) : "n/a",
-      });
 
       let leftMm: number;
       if (anchor.relFromH === "column") {
@@ -209,27 +231,22 @@ export async function fixDocxAnchorImages(
       } else if (anchor.relFromH === "margin") {
         leftMm = anchor.posX_mm;
       } else {
-        // "page" or unknown: posX is from page/section left edge
         leftMm = anchor.posX_mm;
       }
 
-      console.info(LOG, `fixing ${anchor.imagePath}`, {
+      console.info(LOG, `absolute-fixed ${anchor.imagePath}`, {
         relFromH: anchor.relFromH,
-        columnLeft_mm: columnLeft_mm.toFixed(1),
-        posX_mm: anchor.posX_mm.toFixed(1),
         left: `${leftMm.toFixed(1)}mm`,
         top: `${topMm.toFixed(1)}mm`,
         w: `${anchor.width_mm.toFixed(1)}mm`,
         h: `${anchor.height_mm.toFixed(1)}mm`,
       });
 
-      // Make section a positioning context
       if (getComputedStyle(sectionEl).position === "static") {
         sectionEl.style.position = "relative";
       }
       sectionEl.style.overflow = "visible";
 
-      // Move img to section and apply absolute position
       sectionEl.appendChild(img);
 
       img.style.position = "absolute";
@@ -240,15 +257,11 @@ export async function fixDocxAnchorImages(
       img.style.maxWidth = "none";
       img.style.zIndex = "1";
 
-      // Hide empty drawing wrapper to eliminate ghost float/block space
       if (wrapper) {
         wrapper.style.display = "none";
       }
 
-      // Track anchors for the text-constraint pass below.
-      // Prefer a <header> ancestor if found; for body-level anchors (where the
-      // anchor is in word/document.xml body instead of a header XML file) fall
-      // back to the nearest <table>, <tr>, or <p> ancestor inside the section.
+      // Track for text-raising pass (only free-floating anchors need it).
       const constraintEl: HTMLElement | null = (() => {
         if (headerEl) return headerEl;
         let e: HTMLElement | null = (wrapper ?? img).parentElement;

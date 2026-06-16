@@ -2,13 +2,32 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { LockKeyhole } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole } from "lucide-react";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 
 import { firebaseAuth, firebaseDb } from "../../lib/firebase/client";
 
 type Mode = "login" | "signup" | "forgot";
+
+function authErrorPt(err: unknown): string {
+  const code = (err as { code?: string }).code ?? "";
+  const map: Record<string, string> = {
+    "auth/invalid-email":           "E-mail inválido. Verifique o endereço digitado.",
+    "auth/user-not-found":          "Não encontramos uma conta com este e-mail.",
+    "auth/wrong-password":          "Senha incorreta. Tente novamente.",
+    "auth/invalid-credential":      "E-mail ou senha incorretos. Verifique os dados e tente novamente.",
+    "auth/email-already-in-use":    "Este e-mail já está cadastrado. Faça login ou use outro e-mail.",
+    "auth/weak-password":           "A senha deve ter no mínimo 6 caracteres.",
+    "auth/user-disabled":           "Esta conta foi desativada. Entre em contato com o suporte.",
+    "auth/too-many-requests":       "Muitas tentativas. Aguarde alguns minutos antes de tentar novamente.",
+    "auth/network-request-failed":  "Problema de conexão. Verifique sua internet e tente novamente.",
+    "auth/requires-recent-login":   "Por segurança, faça login novamente para continuar.",
+    "auth/operation-not-allowed":   "Este método de login não está disponível no momento.",
+    "auth/popup-closed-by-user":    "Login cancelado. Tente novamente.",
+  };
+  return map[code] ?? "Ocorreu um erro inesperado. Tente novamente.";
+}
 
 export default function LoginPage() {
   return (
@@ -27,6 +46,7 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forgotSent, setForgotSent] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -79,8 +99,7 @@ function LoginForm() {
       router.refresh();
     } catch (err) {
       console.error(err);
-      const message = err instanceof Error ? err.message : "Erro ao autenticar. Verifique os dados digitados.";
-      setError(message);
+      setError(authErrorPt(err));
     } finally {
       setLoading(false);
     }
@@ -94,14 +113,7 @@ function LoginForm() {
       await sendPasswordResetEmail(firebaseAuth, email);
       setForgotSent(true);
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
-        setError("Não encontramos uma conta com este e-mail.");
-      } else if (code === "auth/invalid-email") {
-        setError("E-mail inválido.");
-      } else {
-        setError("Não foi possível enviar o e-mail. Tente novamente.");
-      }
+      setError(authErrorPt(err));
     } finally {
       setLoading(false);
     }
@@ -210,15 +222,25 @@ function LoginForm() {
                     </button>
                   )}
                 </div>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  minLength={6}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className="block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-0 transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                />
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={6}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    className="block w-full rounded-xl border border-slate-200 px-3 py-2 pr-10 text-sm outline-none ring-0 transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-700"
+                    aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               {error && <p className="text-sm text-red-600">{error}</p>}

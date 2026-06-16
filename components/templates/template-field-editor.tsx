@@ -8,12 +8,10 @@ import {
   AlignLeft,
   AlignRight,
   ArrowLeft,
-  ArrowRight,
   Bold,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  ClipboardCopy,
   Clock,
   Crosshair,
   GripVertical,
@@ -57,6 +55,16 @@ interface SchemaVersion {
   salvo_em: string;
   tipo: string;
 }
+
+const GROUP_LABELS: Record<string, string> = {
+  dados_turma: "Dados da Turma",
+  objetivos: "Objetivos",
+  competencias: "Competências",
+  habilidades: "Habilidades",
+  conteudos: "Conteúdo",
+  avaliacao: "Avaliação",
+  outros: "Outros",
+};
 
 function newField(): TemplateFieldSchema {
   return {
@@ -110,6 +118,12 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   const bufferRef = useRef<ArrayBuffer | null>(null);
   const originalTextsRef = useRef<Map<HTMLElement, string>>(new Map());
   const savedSelRef = useRef<Range | null>(null);
+  // Snapshot of field keys and doc-visible keys at the moment the doc was last rendered.
+  // Lets handleSaveEdits distinguish:
+  //   - Fields deleted from sidebar (in initialFieldKeys, absent from current fields)
+  //   - Fields added via sidebar but not yet placed in doc (in fields, absent from initialDocKeys)
+  const initialFieldKeysRef = useRef<Set<string>>(new Set());
+  const initialDocKeysRef = useRef<Set<string>>(new Set());
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
   const [saveCount, setSaveCount] = useState(0);
 
@@ -212,6 +226,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const key = match[1];
         if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
         if (existingKeys.has(key) || processedKeys.has(key)) continue;
+        // Key is in doc but not in current schema.
+        // If it was in schema at render time → it was deleted from sidebar and
+        // the chip is stale — skip to avoid re-adding it.
+        if (initialFieldKeysRef.current.has(key)) continue;
         processedKeys.add(key);
         const label = !originalText.trim()
           ? (adjacentLabel(el) || key.replace(/_/g, " "))
@@ -223,12 +241,21 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       // non-empty original text. This lets the server write ALL tokens in one shot
       // instead of calling injectAtCell once per key (which overwrites the cell each
       // time, causing only the first key to survive in multi-key cells).
+      // Strip chips for keys no longer in the schema so deleted-field placeholders
+      // don't get re-injected into the fillable via injectRawCell.
       if (matches.length > 0 && originalText.trim()) {
-        const alreadyRecorded = cellEdits.some(
-          (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
-        );
-        if (!alreadyRecorded) {
-          cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: currentText.trim() });
+        const cleanedContent = currentText
+          .replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (full, k) => (existingKeys.has(k) ? full : ""))
+          .replace(/\s+/g, " ")
+          .trim();
+        const hasValidKey = /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(cleanedContent);
+        if (hasValidKey) {
+          const alreadyRecorded = cellEdits.some(
+            (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
+          );
+          if (!alreadyRecorded) {
+            cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: cleanedContent });
+          }
         }
       }
 
@@ -247,8 +274,12 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       }
     }
 
-    // Fields that existed before but are no longer found anywhere in the document
-    const removedKeys = [...existingKeys].filter((k) => !seenInScan.has(k));
+    // Fields that were visible in the doc at render time but are no longer found.
+    // Keys that are in the schema but were never placed in the doc (e.g. just added
+    // via sidebar) are NOT in initialDocKeys and must NOT be treated as removed.
+    const removedKeys = [...existingKeys].filter(
+      (k) => !seenInScan.has(k) && initialDocKeysRef.current.has(k),
+    );
 
     onSaveEdits(edits, scanOrder, removedKeys, cellEdits);
     if (edits.length > 0) setSaveCount((n) => n + edits.length);
@@ -494,8 +525,23 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
+  // Capture the schema keys and doc-visible keys each time the doc finishes rendering.
+  // No `fields` dep — intentionally captures the snapshot at render time so that
+  // subsequent sidebar changes (add/remove) are detectable in handleSaveEdits.
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    initialFieldKeysRef.current = new Set(fields.map((f) => f.key));
+    const allText = containerRef.current.textContent ?? "";
+    const docKeys = new Set<string>();
+    for (const m of allText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)) {
+      docKeys.add(m[1]);
+    }
+    initialDocKeysRef.current = docKeys;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   return (
-    <div className="relative flex flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
       <style>{`
         .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
         .docx-html-preview table { border-collapse: collapse; }
@@ -514,8 +560,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       {/* Header line */}
       <div className="flex shrink-0 items-center gap-2 border-b border-violet-100 bg-violet-50 px-3 py-2">
         <p className="flex-1 text-[11px] text-violet-600">
-          <span className="font-semibold">Editor de campos:</span> clique em qualquer célula, insira valor ou{" "}
-          <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{variavel}}`}</code>
+          Clique em qualquer célula para editar &bull; Para posicionar um campo:{" "}
+          <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{nome_do_campo}}`}</code>
         </p>
         {saveCount > 0 && (
           <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
@@ -1001,6 +1047,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setSaved(false);
 
     // Item 11: validation
+    if (!nome.trim()) { setError("Dê um nome ao template antes de salvar."); return; }
+    if (!estado) { setError("Selecione o estado (currículo regional) antes de salvar."); return; }
     const emptyLabel = fieldsToSave.find((f) => !f.label.trim());
     if (emptyLabel) { setError("Todos os campos precisam ter um nome."); return; }
     const keysSeen = new Set<string>();
@@ -1121,8 +1169,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       <div className="relative flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
           <div>
-            <h2 className="text-base font-bold text-slate-950">Resultado da re-extração</h2>
-            <p className="mt-0.5 text-xs text-slate-400">Revise as mudanças antes de aplicar</p>
+            <h2 className="text-base font-bold text-slate-950">Resultado da reanálise</h2>
+            <p className="mt-0.5 text-xs text-slate-400">Revise as mudanças antes de confirmar</p>
           </div>
           <button type="button" onClick={() => setPendingExtract(null)} className="rounded-xl border border-slate-200 p-1.5 text-slate-400 hover:border-slate-950 hover:text-slate-950">
             <X className="h-4 w-4" />
@@ -1132,7 +1180,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           <div className="grid grid-cols-3 gap-4">
             {/* Mantidos */}
             <div>
-              <p className="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Mantidos ({pendingExtract.diff.mantidos.length})</p>
+              <p className="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wide">Sem alteração ({pendingExtract.diff.mantidos.length})</p>
               <div className="space-y-1">
                 {pendingExtract.diff.mantidos.map((k) => {
                   const f = pendingExtract.schema.find((s) => s.key === k);
@@ -1147,7 +1195,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             </div>
             {/* Adicionados */}
             <div>
-              <p className="mb-2 text-xs font-bold text-emerald-600 uppercase tracking-wide">Adicionados ({pendingExtract.diff.adicionados.length})</p>
+              <p className="mb-2 text-xs font-bold text-emerald-600 uppercase tracking-wide">Novos campos ({pendingExtract.diff.adicionados.length})</p>
               <div className="space-y-1">
                 {pendingExtract.diff.adicionados.map((k) => {
                   const f = pendingExtract.schema.find((s) => s.key === k);
@@ -1156,7 +1204,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                       <p className="text-xs font-medium text-slate-700 truncate">{f?.label ?? k}</p>
                       <div className="flex items-center gap-1">
                         <code className="text-[10px] text-emerald-600">{`{{${k}}}`}</code>
-                        {camposBaixaConfianca.includes(k) && <span className="text-[9px] text-amber-600 font-semibold">⚠ baixa confiança</span>}
+                        {camposBaixaConfianca.includes(k) && <span className="text-[9px] text-amber-600 font-semibold">⚠ verificar posição</span>}
                       </div>
                     </div>
                   );
@@ -1166,7 +1214,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             </div>
             {/* Removidos */}
             <div>
-              <p className="mb-2 text-xs font-bold text-rose-500 uppercase tracking-wide">Removidos ({pendingExtract.diff.removidos.length})</p>
+              <p className="mb-2 text-xs font-bold text-rose-500 uppercase tracking-wide">Campos removidos ({pendingExtract.diff.removidos.length})</p>
               <div className="space-y-1">
                 {pendingExtract.diff.removidos.map((k) => {
                   const f = fields.find((s) => s.key === k);
@@ -1189,7 +1237,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           <button type="button" onClick={() => applyExtractResult(pendingExtract)}
             className="flex items-center gap-2 rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-violet-500">
             <CheckCircle2 className="h-4 w-4" />
-            Aplicar ({pendingExtract.schema.length} campos)
+            Confirmar ({pendingExtract.schema.length} campos)
           </button>
         </div>
       </div>
@@ -1353,14 +1401,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-slate-900">
-              Campos detectados ({fields.length})
+              Campos do template ({fields.length})
               {autoSaving && <span className="ml-2 text-[10px] font-normal text-slate-400">salvando…</span>}
               {!autoSaving && autoSaved && <span className="ml-2 text-[10px] font-medium text-emerald-500">✓ salvo</span>}
             </h2>
             <p className="text-xs text-slate-500">
               {mode === "confirm"
-                ? "Confirme, ajuste ou remova os campos extraídos pela IA."
-                : "Metadados fixos e campos que a IA sugere."}
+                ? "Confira se os campos estão corretos e clique em Confirmar."
+                : "Campos que serão preenchidos no plano de aula."}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -1395,7 +1443,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-60"
                 >
                   {isReExtracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  {isReExtracting ? "Extraindo…" : "Re-extrair do arquivo"}
+                  {isReExtracting ? "Analisando…" : "Reanalisar template"}
                 </button>
               )}
               <button type="button" onClick={addField} className="text-sm font-medium text-slate-600 hover:text-slate-950">
@@ -1441,7 +1489,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-slate-400 hover:text-slate-900 disabled:opacity-50"
                 >
                   {isReExtracting ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  Re-extrair
+                  Reanalisar
                 </button>
               )}
             </div>
@@ -1450,16 +1498,19 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               const index = fields.indexOf(field);
               const isExpanded = expandedField === field.key;
               const isActive = activeFieldKey === field.key;
-              // Item 17: status badge
               const hasEmptyLabel = !field.label.trim();
               const isPlaceholderMissing = camposSemPlaceholder.includes(field.key);
               const isLowConfidence = camposBaixaConfianca.includes(field.key);
-              const statusDot = hasEmptyLabel
-                ? "bg-rose-500"
+              const statusText = hasEmptyLabel
+                ? "⚠ Dê um nome a este campo"
                 : isPlaceholderMissing
-                ? "bg-amber-400"
-                : "bg-emerald-400";
-              const statusTitle = hasEmptyLabel ? "Campo sem nome" : isPlaceholderMissing ? "Sem placeholder no documento" : "Placeholder encontrado no documento";
+                ? (isLowConfidence ? "⚠ Verificar posição no documento" : "⚠ Não encontrado no documento")
+                : "✓ Localizado no documento";
+              const statusColor = hasEmptyLabel
+                ? "text-rose-500"
+                : isPlaceholderMissing
+                ? "text-amber-600"
+                : "text-emerald-600";
 
               // Item 6: drag-and-drop
               const isDragging = draggingKey === field.key;
@@ -1486,23 +1537,18 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                     }}
                   >
                     <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-slate-300 active:cursor-grabbing" />
-                    {/* Item 17: status dot */}
-                    <div className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} title={statusTitle} />
-                    {isLowConfidence && (
-                      <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-700" title="Sem respaldo estrutural — verifique">⚠</span>
-                    )}
                     <div className="flex-1 min-w-0">
-                      <p className="line-clamp-2 break-words text-sm font-medium leading-snug text-slate-900">
-                        {field.label || <span className="italic text-slate-400">sem nome</span>}
+                      <p className="line-clamp-2 break-words text-sm font-semibold leading-snug text-slate-900">
+                        {field.label || <span className="italic font-normal text-slate-400">sem nome</span>}
                       </p>
-                      <p className="text-xs text-slate-400">
-                        {field.role === "ia_sugerida" ? "IA sugere" : "Manual"} · {field.group ?? "outros"}
+                      <p className={`mt-0.5 text-[11px] leading-none ${statusColor}`}>
+                        {statusText}
                       </p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                       field.role === "ia_sugerida" ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-700"
                     }`}>
-                      {field.role === "ia_sugerida" ? "IA" : "Fixo"}
+                      {field.role === "ia_sugerida" ? "Magis" : "Professor"}
                     </span>
                     {/* Item 8: locate in document */}
                     <button
@@ -1531,19 +1577,19 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                     <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-slate-400">Campo:</span>
-                          <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700">
-                            {field.label || <em className="text-slate-400">sem nome</em>}
+                          <span className="text-[10px] text-slate-400">Grupo:</span>
+                          <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                            {GROUP_LABELS[field.group ?? "outros"] ?? "Outros"}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-slate-400">Variável:</span>
-                          <code className="rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-1 font-mono text-[11px] text-violet-600">{`{{${field.key}}}`}</code>
+                          <span className="text-[10px] text-slate-400">Código:</span>
+                          <code className="rounded border border-slate-100 bg-slate-50 px-2 py-0.5 font-mono text-[10px] text-slate-500">{`{{${field.key}}}`}</code>
                         </div>
                       </div>
 
                       <div>
-                        <span className="text-xs font-medium text-slate-600">Papel</span>
+                        <span className="text-xs font-medium text-slate-600">Quem preenche este campo?</span>
                         <div className="mt-1.5 flex gap-2">
                           <button
                             type="button"
@@ -1557,7 +1603,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                             <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${field.role !== "ia_sugerida" ? "border-amber-500 bg-amber-500" : "border-slate-300"}`}>
                               {field.role !== "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
                             </span>
-                            Fixo / Manual
+                            Professor preenche
                           </button>
                           <button
                             type="button"
@@ -1571,7 +1617,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                             <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${field.role === "ia_sugerida" ? "border-violet-500 bg-violet-500" : "border-slate-300"}`}>
                               {field.role === "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
                             </span>
-                            Sugestão / Magis
+                            Magis sugere
                           </button>
                         </div>
                       </div>
@@ -1623,27 +1669,28 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         </p>
       )}
       {camposSemPlaceholder.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <p className="mb-2 font-semibold">
-            {camposSemPlaceholder.length} campo{camposSemPlaceholder.length !== 1 ? "s" : ""} sem placeholder no documento:
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="mb-1 text-sm font-semibold text-amber-800">
+            {camposSemPlaceholder.length} campo{camposSemPlaceholder.length !== 1 ? "s" : ""} não {camposSemPlaceholder.length !== 1 ? "foram encontrados" : "foi encontrado"} no documento
           </p>
-          <p className="mb-2 text-xs text-amber-700">
-            Clique em uma variável abaixo para copiar e cole na célula correta do documento.
+          <p className="mb-3 text-xs text-amber-700">
+            Clique em um campo para localizar onde ele deve aparecer no documento:
           </p>
-          {/* Item 9: clickable copy buttons */}
           <div className="flex flex-wrap gap-1.5">
-            {camposSemPlaceholder.map((k) => (
-              <button
-                key={k}
-                type="button"
-                title="Clique para copiar"
-                onClick={() => { void navigator.clipboard.writeText(`{{${k}}}`); }}
-                className="flex items-center gap-1 rounded-lg bg-amber-100 px-2 py-1 font-mono text-[11px] text-amber-800 hover:bg-amber-200 transition"
-              >
-                <ClipboardCopy className="h-2.5 w-2.5" />
-                {`{{${k}}}`}
-              </button>
-            ))}
+            {camposSemPlaceholder.map((k) => {
+              const f = fields.find((fi) => fi.key === k);
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => { setActiveFieldKey(k); setLocateKey(`${k}:${Date.now()}`); setExpandedField(k); }}
+                  className="flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-200"
+                >
+                  <Crosshair className="h-3 w-3 shrink-0" />
+                  {f?.label || k}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1654,10 +1701,23 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       )}
 
       {reviewMode && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-          <p className="text-sm font-semibold text-emerald-800">Documento preparado — revise e confirme</p>
-          <p className="mt-0.5 text-xs text-emerald-600">Confira o documento à esquerda com os placeholders inseridos. Clicando em Confirmar o template fica ativo para uso nos planos de aula.</p>
-        </div>
+        camposSemPlaceholder.length === 0 ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-800">✅ Template configurado com sucesso!</p>
+            <p className="mt-0.5 text-xs text-emerald-600">
+              Todos os {fields.length} campos foram localizados no documento. Clique em <strong>Confirmar</strong> para ativar o template.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-800">
+              ⚠️ {camposSemPlaceholder.length} campo{camposSemPlaceholder.length !== 1 ? "s" : ""} ainda não {camposSemPlaceholder.length !== 1 ? "foram localizados" : "foi localizado"}
+            </p>
+            <p className="mt-0.5 text-xs text-amber-700">
+              Você pode confirmar assim mesmo ou voltar e posicionar os campos manualmente no documento.
+            </p>
+          </div>
+        )
       )}
 
       <div className="flex justify-end gap-3">
@@ -1714,8 +1774,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               disabled={isAdvancing}
               className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
             >
-              {isAdvancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-              Avançar para revisão
+              {isAdvancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Verificar template
             </button>
           </>
         )}
@@ -1782,10 +1842,13 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
         {/* Header bar: nome + estado */}
         <div className="rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50 to-slate-50 p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">1</span>
-            <p className="text-xs font-semibold text-violet-700">Preencha os dados do template antes de configurar os campos</p>
-          </div>
+          <style>{`
+            @keyframes field-glow {
+              0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+              50%       { box-shadow: 0 0 0 5px rgba(99,102,241,0.25); }
+            }
+            .field-glow-anim { animation: field-glow 2s ease-in-out infinite; }
+          `}</style>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
             <div className="flex-1">
               <label className="block text-xs font-bold text-slate-700">
@@ -1796,25 +1859,26 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                 value={nome}
                 onChange={(e) => setNome(e.target.value)}
                 placeholder="Ex.: Plano de aula semanal — Ensino Médio"
-                className={`mt-1.5 w-full rounded-2xl border px-4 py-2.5 text-sm text-slate-950 outline-none transition focus:ring-2 focus:ring-violet-100 ${
+                className={`field-glow-anim mt-1.5 w-full rounded-2xl border-2 px-4 py-2.5 text-sm text-slate-950 outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
                   !nome.trim()
-                    ? "border-amber-300 bg-amber-50 placeholder:text-amber-400 focus:border-violet-400"
-                    : "border-slate-300 bg-white focus:border-violet-400"
+                    ? "border-violet-400 bg-white placeholder:text-slate-400"
+                    : "border-slate-300 bg-white focus:border-violet-500"
                 }`}
               />
             </div>
-            <div className="sm:w-60">
+            <div className="sm:w-64">
               <label className="block text-xs font-bold text-slate-700">
-                Estado <span className="text-xs font-normal text-violet-600">(currículo regional da IA)</span>
+                Estado <span className="text-xs font-normal text-rose-500">*</span>
+                <span className="ml-1 font-normal text-violet-600">(currículo regional da IA)</span>
               </label>
               <div className="relative mt-1.5">
                 <select
                   value={estado}
                   onChange={(e) => setEstado(e.target.value)}
-                  className={`w-full appearance-none rounded-2xl border px-4 py-2.5 pr-10 text-sm outline-none transition focus:ring-2 focus:ring-violet-100 ${
+                  className={`field-glow-anim w-full appearance-none rounded-2xl border-2 px-4 py-2.5 pr-10 text-sm outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
                     !estado
-                      ? "border-amber-300 bg-amber-50 text-slate-500 focus:border-violet-400"
-                      : "border-slate-300 bg-white text-slate-950 focus:border-violet-400"
+                      ? "border-violet-400 bg-white text-slate-400 focus:border-violet-500"
+                      : "border-slate-300 bg-white text-slate-950 focus:border-violet-500"
                   }`}
                 >
                   <option value="">— Selecione o estado —</option>
@@ -1847,7 +1911,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             mobileTab === "document" ? "flex flex-col w-full xl:w-auto" : "hidden xl:flex xl:flex-col"
           } ${panelCollapsed ? "xl:flex-1" : "xl:w-[62%] xl:shrink-0"}`}>
             {/* Viewer content */}
-            <div className="flex flex-1 flex-col overflow-hidden">
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               {viewMode === "preview" ? (
                 <OfficeInlineViewer
                   key={previewVersion}

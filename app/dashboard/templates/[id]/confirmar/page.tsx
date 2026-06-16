@@ -77,10 +77,6 @@ export default async function ConfirmarTemplatePage({ params }: PageProps) {
             {template.escola_nome && (
               <p className="text-sm text-slate-500">{template.escola_nome}</p>
             )}
-            <p className="mt-1 text-sm leading-relaxed text-slate-600">
-              A IA extraiu os campos abaixo do seu template. Confirme, ajuste ou adicione campos antes
-              de usar o template para gerar planos.
-            </p>
           </div>
         </div>
       </header>
