@@ -1,7 +1,6 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import mammoth from "mammoth";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile } from "../../../../../lib/storage/blob";
@@ -54,8 +53,6 @@ export async function GET(
 
     const templateSnap = await db.collection("magis_templates").doc(planoData.template_id).get();
     const template = templateSnap.exists ? (templateSnap.data() as TemplateRecord) : null;
-    const templateNome = template?.nome ?? "Plano";
-    // Prefer schema snapshot saved at plan creation; fall back to current template schema
     const schema: TemplateFieldSchema[] =
       Array.isArray(planoData.schema_campos) && planoData.schema_campos.length > 0
         ? planoData.schema_campos
@@ -65,29 +62,10 @@ export async function GET(
 
     const arquivoUrl = template?.arquivo_url ?? "";
     const ext = arquivoUrl.split(".").pop()?.toLowerCase() ?? "";
-    const isDocx = ext === "docx" || ext === "doc";
-
-    if (!isDocx || !arquivoUrl) {
-      // No DOCX available — return minimal HTML with field list
-      const rows = schema
-        .map((f) => {
-          const val = conteudo[f.key] || "—";
-          return `<tr><th>${f.label}</th><td>${val}</td></tr>`;
-        })
-        .join("");
-      const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-        <style>body{font-family:Arial,sans-serif;padding:40px}
-        h1{font-size:16px;text-align:center}
-        table{width:100%;border-collapse:collapse}
-        th,td{border:1px solid #ccc;padding:6px 10px;font-size:13px;vertical-align:top}
-        th{font-weight:bold;width:40%;background:#f5f5f5}</style></head>
-        <body><h1>${templateNome}</h1><table>${rows}</table></body></html>`;
-      return new NextResponse(html, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
+    if ((ext !== "docx" && ext !== "doc") || !arquivoUrl) {
+      return new NextResponse("Template DOCX não disponível.", { status: 404 });
     }
 
-    // Fill the DOCX
     const fillableUrl = template?.arquivo_fillable_url ?? "";
     let docxBuffer: Buffer;
 
@@ -106,64 +84,14 @@ export async function GET(
     );
     const filledBuffer = fillDocx(docxBuffer, schema, safeConteudo);
 
-    // Convert filled DOCX to HTML via mammoth
-    const { value: bodyHtml } = await mammoth.convertToHtml(
-      { buffer: Buffer.from(filledBuffer) },
-      {
-        styleMap: [
-          "p[style-name='Heading 1'] => h1:fresh",
-          "p[style-name='Heading 2'] => h2:fresh",
-          "b => strong",
-        ],
-      },
-    );
-
-    const fullHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: Arial, sans-serif;
-      font-size: 12px;
-      padding: 32px 40px;
-      color: #111;
-      background: #fff;
-    }
-    h1 { font-size: 15px; margin: 12px 0 8px; }
-    h2 { font-size: 13px; margin: 10px 0 6px; }
-    p { margin: 4px 0; line-height: 1.5; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 8px 0;
-    }
-    td, th {
-      border: 1px solid #555;
-      padding: 4px 8px;
-      vertical-align: top;
-      text-align: left;
-    }
-    img { max-width: 100%; height: auto; display: block; margin: 0 auto 8px; }
-    ul, ol { padding-left: 20px; margin: 4px 0; }
-    li { margin: 2px 0; }
-    strong { font-weight: bold; }
-  </style>
-</head>
-<body>
-${bodyHtml}
-</body>
-</html>`;
-
-    return new NextResponse(fullHtml, {
+    return new NextResponse(filledBuffer.buffer as ArrayBuffer, {
       headers: {
-        "Content-Type": "text/html; charset=utf-8",
+        "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "Cache-Control": "private, no-store",
       },
     });
   } catch (error) {
-    console.error("[PlanoMagistra/preview] Erro:", error);
-    return new NextResponse("Erro ao gerar preview.", { status: 500 });
+    console.error("[PlanoMagistra/preview-docx] Erro:", error);
+    return new NextResponse("Erro ao gerar pré-visualização.", { status: 500 });
   }
 }

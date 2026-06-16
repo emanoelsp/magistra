@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { PlanEditor, type PlanEditorHandle } from "./plan-editor";
+import { DocxPreview } from "./docx-preview";
 import { planosService } from "../../lib/services/firestore/planos.service";
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateFieldSchema, TemplateOption, TemplateRecord } from "../../lib/types/firestore";
@@ -119,8 +120,6 @@ export function PlanGenerationWizard({
   );
   const [savedPlanoId, setSavedPlanoId] = useState<string | null>(resumeData?.planoId ?? null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
-  const [officePreviewUrl, setOfficePreviewUrl] = useState<string | null>(null);
-  const [officePreviewLoading, setOfficePreviewLoading] = useState(false);
   const [isFinalized, setIsFinalized] = useState(false);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -131,26 +130,6 @@ export function PlanGenerationWizard({
   const editorRef = useRef<PlanEditorHandle>(null);
   const hasAppliedResumeRef = useRef(false);
 
-  // Fetch Office Online preview URL when step 4 opens with a saved plan
-  useEffect(() => {
-    if (currentStep !== 3 || !savedPlanoId || officePreviewUrl || officePreviewLoading) return;
-    const isLocalhost = typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-    if (isLocalhost) return; // Office Online can't reach localhost
-
-    setOfficePreviewLoading(true);
-    fetch(`/api/planos/${savedPlanoId}/preview-token`)
-      .then((r) => r.json())
-      .then(({ token, exp }: { token: string; exp: number }) => {
-        const previewPath = `/api/planos/${savedPlanoId}/preview-publico?token=${encodeURIComponent(token)}&exp=${exp}`;
-        const previewUrl = `${window.location.origin}${previewPath}`;
-        setOfficePreviewUrl(
-          `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`,
-        );
-      })
-      .catch(() => { /* fall back to HTML preview silently */ })
-      .finally(() => setOfficePreviewLoading(false));
-  }, [currentStep, savedPlanoId, officePreviewUrl, officePreviewLoading]);
 
   const selectedTemplate = availableTemplates.find((t) => t.id === selectedTemplateId) ?? null;
 
@@ -742,38 +721,15 @@ export function PlanGenerationWizard({
             </div>
           )}
 
-          {/* Preview — Office Online (produção) ou HTML (localhost/fallback) */}
+          {/* Preview — renderizado com docx-preview (fidelidade total ao formato do template) */}
           <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" style={{ height: "72vh" }}>
-            {isAutoSaving || !savedPlanoId || officePreviewLoading ? (
+            {isAutoSaving || !savedPlanoId ? (
               <div className="flex h-full items-center justify-center gap-3 text-slate-500">
                 <LoaderCircle className="h-5 w-5 animate-spin text-violet-500" />
-                <span className="text-sm">
-                  {officePreviewLoading ? "Carregando preview Word…" : "Preparando pré-visualização…"}
-                </span>
+                <span className="text-sm">Preparando pré-visualização…</span>
               </div>
-            ) : officePreviewUrl ? (
-              /* Clip top toolbar and bottom toolbar via overflow:hidden */
-              <iframe
-                key={officePreviewUrl}
-                src={officePreviewUrl}
-                title="Pré-visualização do plano"
-                allowFullScreen
-                style={{
-                  position: "absolute",
-                  top: "-56px",
-                  left: 0,
-                  width: "100%",
-                  height: "calc(100% + 100px)",
-                  border: "none",
-                }}
-              />
             ) : (
-              <iframe
-                key={savedPlanoId}
-                src={`/api/planos/${savedPlanoId}/preview`}
-                className="h-full w-full border-0"
-                title="Pré-visualização do plano"
-              />
+              <DocxPreview key={savedPlanoId} planoId={savedPlanoId} />
             )}
           </div>
         </div>

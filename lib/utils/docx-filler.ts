@@ -1988,6 +1988,44 @@ export function scanPlaceholders(docxBuffer: Buffer): string[] {
   return [...found];
 }
 
+/**
+ * Scans the final injected DOCX and returns a map of fieldKey → structural
+ * coordinate "T{ti}R{ri}C{ci}" for every {{key}} found in word/document.xml.
+ *
+ * Used after the full injection pipeline to persist coords for ALL fields —
+ * including those placed by injectPlaceholders (auto-detection) — so that
+ * subsequent saves can use injectAtCoord instead of fragile text matching.
+ *
+ * Only the FIRST occurrence of each key is recorded (duplicates are ignored).
+ */
+export function extractFieldCoords(docxBuffer: Buffer): Record<string, string> {
+  const zip = new PizZip(docxBuffer);
+  const xml = zip.files["word/document.xml"]?.asText() ?? "";
+  const coords: Record<string, string> = {};
+
+  let ti = 0;
+  for (const tblM of xml.matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)) {
+    let ri = 0;
+    for (const trM of tblM[0].matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)) {
+      let ci = 0;
+      for (const tcM of trM[0].matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)) {
+        const cellText = extractText(tcM[0]);
+        for (const m of cellText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)) {
+          const key = m[1];
+          if (!(key in coords)) {
+            coords[key] = `T${ti}R${ri}C${ci}`;
+          }
+        }
+        ci++;
+      }
+      ri++;
+    }
+    ti++;
+  }
+
+  return coords;
+}
+
 // ── Strip non-schema tokens ──────────────────────────────────────────────────
 
 /**
@@ -2108,6 +2146,22 @@ export function fillDocx(
   values: Record<string, string>,
 ): Buffer {
   const zip = new PizZip(docxBuffer);
+
+  // Strip paragraph-level alignment from cells containing {{placeholders}}
+  // so values default to left-aligned instead of inheriting the DOCX template
+  // centering (e.g. <w:jc w:val="center"/>). Explicit alignment set by the user
+  // in non-placeholder paragraphs is preserved.
+  const docXmlEntry = zip.files["word/document.xml"];
+  if (docXmlEntry) {
+    const stripped = docXmlEntry.asText().replace(
+      /<w:p[ >][\s\S]*?<\/w:p>/g,
+      (para) => {
+        if (!/{{\s*[A-Za-z_][A-Za-z0-9_]*\s*}}/.test(para)) return para;
+        return para.replace(/<w:jc[^/]*\/>/g, "");
+      }
+    );
+    zip.file("word/document.xml", stripped);
+  }
 
   const doc = new Docxtemplater(zip, {
     paragraphLoop: true,

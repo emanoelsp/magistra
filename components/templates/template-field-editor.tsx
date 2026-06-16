@@ -765,6 +765,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
+  // Track fields that were just added and need label/role/group configuration
+  const [pendingConfigKeys, setPendingConfigKeys] = useState<Set<string>>(new Set());
+
   // Item 12: auto-save debounce
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(false);
@@ -943,6 +946,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setFields((prev) => [...prev, f]);
     setExpandedField(f.key);
     setActiveFieldKey(f.key);
+    setPendingConfigKeys((prev) => new Set([...prev, f.key]));
   }
 
   function addFieldFromEdit(rawText: string, ordinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida", explicitLabel?: string) {
@@ -1031,6 +1035,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     if (newFields.length > 0) {
       setExpandedField(newFields[0].key);
       setActiveFieldKey(newFields[0].key);
+      // Fields whose label was auto-derived (key starts with campo_) need explicit configuration
+      const autoKeys = newFields.filter((f) => f.key.startsWith("campo_")).map((f) => f.key);
+      if (autoKeys.length > 0) {
+        setPendingConfigKeys((prev) => new Set([...prev, ...autoKeys]));
+      }
     }
 
     handleSave(mergedFields, mergedPositions, true, cellEdits);
@@ -1050,13 +1059,24 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         if (i !== index) return f;
         const updated = { ...f, ...patch };
         if (patch.label !== undefined && f.key.startsWith("campo_")) {
-          updated.key =
+          const newKey =
             patch.label
               .toLowerCase()
               .normalize("NFD")
               .replace(/[̀-ͯ]/g, "")
               .replace(/[^a-z0-9]+/g, "_")
               .replace(/^_|_$/g, "") || f.key;
+          updated.key = newKey;
+          // When a label is set for a campo_ field, clear its pending-config state
+          // (the key may change, so clear both old and new key)
+          if (patch.label.trim()) {
+            setPendingConfigKeys((prev) => {
+              const next = new Set(prev);
+              next.delete(f.key);
+              next.delete(newKey);
+              return next;
+            });
+          }
         }
         return updated;
       }),
@@ -1527,6 +1547,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               const index = fields.indexOf(field);
               const isExpanded = expandedField === field.key;
               const isActive = activeFieldKey === field.key;
+              const isNew = pendingConfigKeys.has(field.key);
               const hasEmptyLabel = !field.label.trim();
               const isPlaceholderMissing = camposSemPlaceholder.includes(field.key);
               const isLowConfidence = camposBaixaConfianca.includes(field.key);
@@ -1555,7 +1576,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   onDrop={() => handleDrop(field.key)}
                   onDragEnd={handleDragEnd}
                   className={`rounded-2xl border bg-white transition-all ${
-                    isDragging ? "opacity-40 scale-95" : isDragOver ? "border-violet-400 ring-2 ring-violet-200" : isActive ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"
+                    isDragging ? "opacity-40 scale-95" : isDragOver ? "border-violet-400 ring-2 ring-violet-200" : isNew ? "border-violet-400 ring-2 ring-violet-100" : isActive ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"
                   }`}
                 >
                   <div
@@ -1604,6 +1625,49 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
                   {isExpanded && (
                     <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
+
+                      {/* New-field configuration prompt */}
+                      {isNew && (
+                        <div className="rounded-2xl border-2 border-violet-200 bg-violet-50 p-3 space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs font-semibold text-violet-800">
+                              Novo campo adicionado — configure antes de salvar
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setPendingConfigKeys((prev) => { const next = new Set(prev); next.delete(field.key); return next; })}
+                              className="shrink-0 rounded-lg p-0.5 text-violet-400 hover:text-violet-700"
+                              title="Fechar"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <label className="block">
+                            <span className="text-[11px] font-semibold text-violet-700">Nome do campo *</span>
+                            <input
+                              type="text"
+                              value={field.label}
+                              onChange={(e) => updateField(index, { label: e.target.value })}
+                              placeholder="Ex.: Turma, Objetivos de aprendizagem…"
+                              autoFocus
+                              className="mt-1 w-full rounded-xl border border-violet-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-500 focus:ring-1 focus:ring-violet-200"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-[11px] font-semibold text-violet-700">Categoria</span>
+                            <select
+                              value={field.group ?? "outros"}
+                              onChange={(e) => preserveScroll(() => updateField(index, { group: e.target.value as TemplateFieldSchema["group"] }))}
+                              className="mt-1 w-full rounded-xl border border-violet-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-200"
+                            >
+                              {Object.entries(GROUP_LABELS).map(([k, v]) => (
+                                <option key={k} value={k}>{v}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      )}
+
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                         <div className="flex items-center gap-1.5">
                           <span className="text-[10px] text-slate-400">Grupo:</span>

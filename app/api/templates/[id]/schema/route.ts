@@ -9,6 +9,7 @@ import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
   appendOrphanField,
+  extractFieldCoords,
   injectAtCell,
   injectAtCoord,
   injectRawCell,
@@ -218,6 +219,20 @@ export async function PATCH(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
 
+    // 5b. Extract structural coords from the final DOCX and merge into allPositions.
+    // This ensures every {{key}} — including those placed by injectPlaceholders
+    // (auto-detection) — gets a coord stored in Firestore. On the next save the
+    // injectAtCoord path will be used instead of fragile text matching.
+    const extractedCoords = extractFieldCoords(buffer);
+    for (const [key, coord] of Object.entries(extractedCoords)) {
+      if (allPositions[key]) {
+        allPositions[key] = { ...allPositions[key], coord };
+      } else {
+        // Field was placed by injectPlaceholders — create a position entry with coord only
+        allPositions[key] = { cellText: "", ordinal: 0, coord };
+      }
+    }
+
     // 6. Update Firestore (persist merged positions + corrections audit log)
     const firestoreUpdate: Record<string, unknown> = {
       nome,
@@ -225,7 +240,7 @@ export async function PATCH(
       schema_campos: newSchema,
       arquivo_fillable_url: newFillableUrl,
       fillable_status: "pronto",
-      field_positions: allPositions,    // source of truth for placement
+      field_positions: allPositions,    // source of truth for placement, now includes coords
     };
     if (corrections.length > 0) {
       firestoreUpdate.campo_corrections = FieldValue.arrayUnion(...corrections);
