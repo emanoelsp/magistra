@@ -66,7 +66,7 @@ export async function getDashboardStats(user: UserProfile): Promise<DashboardSta
   const adminDb = getAdminDb();
   const [templatesSnapshot, planosSnapshot] = await Promise.all([
     adminDb.collection("magis_templates").where("user_id", "==", user.uid).get(),
-    adminDb.collection("magis_planos").where("user_id", "==", user.uid).get(),
+    adminDb.collection("magins_planos_aula").where("user_id", "==", user.uid).get(),
   ]);
 
   const monthStart = new Date();
@@ -164,7 +164,7 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
 
 export async function getUserPlanos(userId: string): Promise<PlanoRecord[]> {
   const adminDb = getAdminDb();
-  const snapshot = await adminDb.collection("magis_planos").where("user_id", "==", userId).get();
+  const snapshot = await adminDb.collection("magins_planos_aula").where("user_id", "==", userId).get();
 
   return snapshot.docs
     .map((doc) => {
@@ -195,7 +195,7 @@ export async function getUserPlanosComNome(
   page = 1,
 ): Promise<{ items: PlanoComNome[]; total: number }> {
   const adminDb = getAdminDb();
-  const snapshot = await adminDb.collection("magis_planos").where("user_id", "==", userId).get();
+  const snapshot = await adminDb.collection("magins_planos_aula").where("user_id", "==", userId).get();
 
   // Sort all in memory (Firestore orderBy needs composite index; this is safe at current scale)
   const allPlanos = snapshot.docs
@@ -292,7 +292,7 @@ export async function getPlanoDetalhes(
   userId: string,
 ): Promise<PlanoDetalhes | null> {
   const adminDb = getAdminDb();
-  const planoSnap = await adminDb.collection("magis_planos").doc(planoId).get();
+  const planoSnap = await adminDb.collection("magins_planos_aula").doc(planoId).get();
   if (!planoSnap.exists) return null;
 
   const d = planoSnap.data()!;

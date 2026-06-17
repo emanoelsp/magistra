@@ -35,7 +35,7 @@ async function getStats(): Promise<Stats> {
 
   const [usersSnap, planosSnap, logsSnap, configSnap] = await Promise.all([
     db.collection("magis_users").get(),
-    db.collection("magis_planos").get(),
+    db.collection("magins_planos_aula").get(),
     db.collection("magis_usage_logs").where("timestamp", ">=", startOfMonth).get(),
     db.collection("magis_admin_config").doc("singleton").get(),
   ]);

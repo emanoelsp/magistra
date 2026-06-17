@@ -21,7 +21,7 @@ export async function GET() {
     const [usersSnap, templatesSnap, planosSnap, logsSnap] = await Promise.all([
       db.collection("magis_users").orderBy("email").get(),
       db.collection("magis_templates").get(),
-      db.collection("magis_planos").get(),
+      db.collection("magins_planos_aula").get(),
       db.collection("magis_usage_logs").get(),
     ]);
 

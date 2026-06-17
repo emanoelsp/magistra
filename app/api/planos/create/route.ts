@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     }
 
     const now = FieldValue.serverTimestamp();
-    const docRef = await db.collection("magis_planos").add({
+    const docRef = await db.collection("magins_planos_aula").add({
       user_id: user.uid,
       template_id,
       conteudo_gerado: conteudo_gerado ?? {},

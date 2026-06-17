@@ -17,7 +17,7 @@ export async function POST(
     const db = getAdminDb();
 
     // Verify ownership
-    const planoSnap = await db.collection("magis_planos").doc(planoId).get();
+    const planoSnap = await db.collection("magins_planos_aula").doc(planoId).get();
     if (!planoSnap.exists || planoSnap.data()?.user_id !== user.uid) {
       return NextResponse.json({ ok: true }); // silently ignore — don't leak info
     }
@@ -25,7 +25,7 @@ export async function POST(
     const body = (await request.json()) as { conteudo_gerado?: Record<string, unknown> };
     const conteudo = body.conteudo_gerado ?? {};
 
-    const versoesRef = db.collection("magis_planos").doc(planoId).collection("versoes");
+    const versoesRef = db.collection("magins_planos_aula").doc(planoId).collection("versoes");
 
     // Save new version
     await versoesRef.add({
@@ -57,13 +57,13 @@ export async function GET(
     const { id: planoId } = await params;
 
     const db = getAdminDb();
-    const planoSnap = await db.collection("magis_planos").doc(planoId).get();
+    const planoSnap = await db.collection("magins_planos_aula").doc(planoId).get();
     if (!planoSnap.exists || planoSnap.data()?.user_id !== user.uid) {
       return NextResponse.json({ versoes: [] });
     }
 
     const snap = await db
-      .collection("magis_planos")
+      .collection("magins_planos_aula")
       .doc(planoId)
       .collection("versoes")
       .orderBy("saved_at", "desc")

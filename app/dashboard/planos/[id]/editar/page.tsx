@@ -16,7 +16,7 @@ export default async function EditarPlanoPage({ params }: PageProps) {
   const user = await requireCurrentUserProfile();
 
   const db = getAdminDb();
-  const planoSnap = await db.collection("magis_planos").doc(id).get();
+  const planoSnap = await db.collection("magins_planos_aula").doc(id).get();
 
   if (!planoSnap.exists) notFound();
 

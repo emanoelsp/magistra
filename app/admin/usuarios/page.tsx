@@ -29,7 +29,7 @@ async function getUsers(): Promise<UserRow[]> {
   const [usersSnap, templatesSnap, planosSnap, logsSnap] = await Promise.all([
     db.collection("magis_users").get(),
     db.collection("magis_templates").get(),
-    db.collection("magis_planos").get(),
+    db.collection("magins_planos_aula").get(),
     db.collection("magis_usage_logs").get(),
   ]);
 

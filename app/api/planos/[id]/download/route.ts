@@ -403,7 +403,7 @@ export async function GET(
     }
 
     const db = getAdminDb();
-    const planoSnap = await db.collection("magis_planos").doc(id).get();
+    const planoSnap = await db.collection("magins_planos_aula").doc(id).get();
 
     if (!planoSnap.exists) {
       return NextResponse.json({ error: "Plano não encontrado." }, { status: 404 });
@@ -483,7 +483,7 @@ export async function GET(
           // Baixar DOCX diretamente
           const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
           const docxFilename = sanitizeFilename(fileBaseName, ext);
-          void db.collection("magis_planos").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
+          void db.collection("magins_planos_aula").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
           return new NextResponse(new Blob([new Uint8Array(filledBuffer)], { type: mimeType }), {
             headers: {
               "Content-Type": mimeType,
@@ -509,7 +509,7 @@ export async function GET(
           );
         }
         const pdfFilename = sanitizeFilename(fileBaseName, "pdf");
-        void db.collection("magis_planos").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
+        void db.collection("magins_planos_aula").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
         return new NextResponse(new Uint8Array(pdfBuffer), {
           headers: {
             "Content-Type": "application/pdf",

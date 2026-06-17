@@ -39,7 +39,7 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
   // Load resume data when ?resume=<planoId> is present
   let resumeData: ResumeData | undefined;
   if (resumeId) {
-    const snap = await getAdminDb().collection("magis_planos").doc(resumeId).get();
+    const snap = await getAdminDb().collection("magins_planos_aula").doc(resumeId).get();
     if (snap.exists) {
       const d = snap.data()!;
       if (typeof d.user_id === "string" && d.user_id === user.uid && d.status !== "gerado") {

@@ -15,7 +15,7 @@ import {
 import { firebaseDb } from "../../firebase/client";
 import type { CreatePlanoInput, PlanoRecord, UpdatePlanoInput } from "../../types/firestore";
 
-const planosCollection = collection(firebaseDb, "magis_planos");
+const planosCollection = collection(firebaseDb, "magins_planos_aula");
 
 function toIsoString(value: unknown): string {
   if (!value) {

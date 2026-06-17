@@ -17,7 +17,7 @@ export async function GET(
 
   const { id } = await params;
   const db = getAdminDb();
-  const snap = await db.collection("magis_planos").doc(id).get();
+  const snap = await db.collection("magins_planos_aula").doc(id).get();
 
   if (!snap.exists || snap.data()?.user_id !== session.uid) {
     return NextResponse.json({ error: "Plano não encontrado." }, { status: 404 });

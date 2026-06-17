@@ -42,7 +42,7 @@ export async function getLimitsStatus(userId: string, plano: string): Promise<Li
 
   const [templatesSnap, planosSnap, userSnap] = await Promise.all([
     db.collection("magis_templates").where("user_id", "==", userId).get(),
-    db.collection("magis_planos").where("user_id", "==", userId).get(),
+    db.collection("magins_planos_aula").where("user_id", "==", userId).get(),
     db.collection("magis_users").doc(userId).get(),
   ]);
 
