@@ -1,0 +1,811 @@
+
+<!doctype html>
+<html lang="pt-br" dir="ltr">
+
+<head>
+<script>
+var joomla_url = 'https://basenacionalcomum.mec.gov.br/';
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+<base href="https://basenacionalcomum.mec.gov.br/8_versaofinal_site.pdf" />
+	<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+	<meta name="keywords" content="MEC; BNCC; Base Nacional Comum; Base curricular" />
+	<meta name="author" content="Super User" />
+	<meta name="description" content="Site Base Nacional Comum Curricular - Ministério da Educação" />
+	<meta name="generator" content="Joomla! - Open Source Content Management" />
+	<title>A Base</title>
+	<link href="/templates/bncc/favicon.ico" rel="shortcut icon" type="image/vnd.microsoft.icon" />
+	<link href="/templates/bncc/css/bootstrap.min.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/font-awesome.min.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/template.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/style.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/app.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/timeline.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/formulario.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/presets/default.css" rel="stylesheet" type="text/css" />
+	<link href="/templates/bncc/css/rtl.css" rel="stylesheet" type="text/css" />
+	<script src="/media/jui/js/jquery.min.js?5d2db9170eabb996ea3fe807da575ea3" type="text/javascript"></script>
+	<script src="/media/jui/js/jquery-noconflict.js?5d2db9170eabb996ea3fe807da575ea3" type="text/javascript"></script>
+	<script src="/media/jui/js/jquery-migrate.min.js?5d2db9170eabb996ea3fe807da575ea3" type="text/javascript"></script>
+	<script src="/media/system/js/caption.js?5d2db9170eabb996ea3fe807da575ea3" type="text/javascript"></script>
+	<script src="/templates/bncc/js/bootstrap.min.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/popper.min.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/template.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/main.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/popover-pareceres.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/mapa.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/classes.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/jquery.cookie.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/infinite-scroll.pkgd.min.js" type="text/javascript"></script>
+	<script src="/templates/bncc/js/jquery.timelinr-0.9.7.js" type="text/javascript"></script>
+	<script type="text/javascript">
+jQuery(window).on('load',  function() {
+				new JCaption('img.caption');
+			});
+	</script>
+
+	<link rel="shortcut icon" href="/templates/bncc/favicon.ico" />
+	<!--[if lt IE 9]>
+<script src="/media/jui/js/html5.js"></script>
+<![endif]-->
+
+<!-- Start of bncc Zendesk Widget script -->
+<script>
+/*<![CDATA[*/window.zE||(function(e,t,s){var n=window.zE=window.zEmbed=function(){n._.push(arguments)}, a=n.s=e.createElement(t),r=e.getElementsByTagName(t)[0];n.set=function(e){ n.set._.push(e)},n._=[],n.set._=[],a.async=true,a.setAttribute("charset","utf-8"), a.src="https://static.zdassets.com/ekr/asset_composer.js?key="+s, n.t=+new Date,a.type="text/javascript",r.parentNode.insertBefore(a,r)})(document,"script","2b9159a4-75d7-4505-a2f6-b9f7e18b1488");/*]]>*/
+</script>
+<!-- End of bncc Zendesk Widget script -->
+</head>
+<body class="site helix-ultimate com-content view-article layout-default task-none itemid-101 pt-br ltr sticky-header layout-fluid offcanvas-init offcanvs-position-right">
+
+<div class="body-wrapper">
+<div class="body-innerwrapper">
+<!-- Barra do governo -->
+<div id="barra-brasil" style="background:#7F7F7F; height: 20px; padding:0 0 0 10px;display:block;"> 
+<ul id="menu-barra-temp" style="list-style:none;">
+<li style="display:inline; float:left;padding-right:10px; margin-right:10px; border-right:1px solid #EDEDED"><a href="https://brasil.gov.br/" style="font-family:sans,sans-serif; text-decoration:none; color:white;">Portal do Governo Brasileiro</a></li> 
+<li><a style="font-family:sans,sans-serif; text-decoration:none; color:white;" href="https://epwg.governoeletronico.gov.br/barra/atualize.html">Atualize sua Barra de Governo</a></li>
+</ul>
+</div>
+<header id="sp-header"><div class="container"><div class="container-inner">
+<div class="row">
+<div id="sp-logo" class="col-8 col-lg-3">
+<div class="sp-column">
+<div class="logo">
+<a href="/"><img class="logo-image" src="/images/logo_pequeno.png" alt="Base Nacional Comum Curricular"></a>
+</div>
+</div>
+</div>
+<div id="sp-menu" class="col-4 col-lg-9">
+<div class="sp-column">
+<nav class="sp-megamenu-wrapper" role="navigation">
+<a id="offcanvas-toggler" aria-label="Navigation" class="offcanvas-toggler-right d-block d-lg-none" href="#">
+<i class="fa fa-bars" aria-hidden="true" title="Navigation">
+</i>
+</a>
+<ul class="menu sp-megamenu-parent menu-animation-fade-up d-none d-lg-block ">
+<li class="nav-item item-101 current active"><a class="active nav-link" href="/"  >Início</a></li><li class="nav-item item-118"><a class="nav-link" href="/a-base"  >A Base</a></li><li class="nav-item item-117"><a class="nav-link" href="/historico"  >Histórico</a></li><li class="nav-item item-119"><a class="nav-link" href="/implementacao"  >Implementação</a></li></ul>
+
+</nav>
+</div>
+</div>
+</div>
+</div>
+</div>
+</header>  
+
+
+
+<section id="sp-main-body">
+<div class="container">
+<div class="container-inner">
+<div class="row">
+<main id="sp-component" class="col-lg-12 " role="main">
+<div class="sp-column ">
+<div id="system-message-container">
+</div>
+
+
+<div class="sp-column col-lg-12">
+<div class="item-page" itemscope itemtype="https://schema.org/Article">
+	<meta itemprop="inLanguage" content="pt-BR" />
+	
+		
+			<div class="page-header">
+									</div>
+					
+	
+
+
+				
+								<div itemprop="articleBody">
+    <div class="row">
+  <div class="col-lg-6 col-sm-12 bg-imp-verde">
+    <img src="/templates/bncc/images/historico/historico_banner.jpg">
+  </div>
+  <div class="col-lg-6 col-sm-12 bg-imp-verde">
+    <h2>O Que é a BNCC?</h2>
+    <p>A Base Nacional Comum Curricular é um documento normativo que define o conjunto de aprendizagens essenciais que todos os alunos devem desenvolver ao longo das etapas e modalidades da Educação Básica.</p>
+    <p style="margin-bottom:0;">Seu principal objetivo é ser a balizadora da qualidade da educação no País por meio do estabelecimento de um patamar de aprendizagem e desenvolvimento a que todos os alunos têm direito!</p>
+  </div>
+</div>
+
+  <div class="row lista-cards" style="margin-bottom:50px; margin-top: 50px;">
+    <div class="barra-card2">
+      <a href="/abase/" target="_blank">
+        <div class="card">
+          <div class="box">
+            <div class="img"><img src="/templates/bncc/images/tutorial.png" /></div>
+            <h2>BNCC para navegação</h2>
+            <h3>Conheça a base navegando pelo documento</h3>
+          </div>
+        </div>
+      </a>
+      <a href="/images/BNCC_EI_EF_110518_versaofinal_site.pdf" target="_blank">
+        <div class="card">
+          <div class="box">
+            <div class="img"><img src="/templates/bncc/images/pdf.png" /></div>
+            <h2>BNCC em PDF</h2>
+            <h3>Leia ou faça o download do documento completo</h3>
+          </div>
+        </div>
+      </a>
+      <a href="https://downloadbncc.mec.gov.br/" target="_blank">
+        <div class="card">
+          <div class="box">
+            <div class="img"><img src="/templates/bncc/images/planilha.png" /></div>
+            <h2>BNCC em planilha</h2>
+            <h3>Selecione os dados desejados e edite sua planilha</h3>
+          </div>
+        </div>
+      </a>
+     <!--<a href="/compartilhamento-de-praticas/">
+      <div class="card">
+        <div class="box">
+          <div class="img"><img src="/templates/bncc/images/icon_praticas.png" /></div>
+          <h2>Compartilhamento de Práticas</h2>
+          <h3>Compartilhe suas práticas alinhadas com a BNCC</h3>
+        </div>
+      </div>
+    </a>-->
+    </div>
+  </div>
+
+<div class="row">
+  <div class="col-lg-12">
+    <div class="a-base">
+      <p>A Base deverá nortear a formulação dos currículos dos sistemas e das redes escolares de todo o Brasil, indicando as competências e habilidades que se espera que todos os estudantes desenvolvam ao longo da escolaridade.</p>
+      <div class="col-lg-12" style="margin-top:30px;">
+        <p>O documento está estruturado em:</p>
+        <ul>
+          <li><strong>Textos introdutórios</strong> (geral, por etapa e por área);</li>
+          <li><strong>Competências gerais</strong> que os alunos devem desenvolver ao longo de todas as etapas da Educação Básica;</li>
+          <li><strong>Competências específicas</strong> de cada área do conhecimento e dos componentes curriculares;</li>
+          <li><strong>Direitos de Aprendizagem</strong> ou <strong>Habilidades</strong> relativas a diversos objetos de conhecimento (conteúdos, conceitos e processos) que os alunos devem desenvolver em cada etapa da Educação Básica — da Educação Infantil ao Ensino Médio.</li>
+        </ul>
+      </div>
+      <div class="col-lg-12"><img src="/templates/bncc/images/a-base/img-1.jpg" style="margin: 0 auto;width:500px !important;"></div>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="background-color: #006784; margin-top: 30px;">
+  <div class="col-lg-12">
+    <div class="a-base">
+      <div class="col-lg-12 text-white">
+        <p>A Base possui um sequenciamento das aprendizagens expresso por um código:<p>
+        <div class="codificacao">
+          <p style="text-align: center;"><span class="texto-destaque"><span class="id_1">EF</span>  <span class="id_2">02</span>  <span class="id_3">CI</span>  <span class="id_4">01</span></span></p>
+          <span class="marq_A1">|______|</span>
+          <span class="line_A1">|</span>
+          <span class="line_A2">|</span>
+          <span class="line_A3">|</span>
+          <span class="line_A4">_________</span>
+          <span class="text_A1">O primeiro par de letras indica a Etapa de Ensino (EI, EF ou EM)</span>
+
+          <span class="marq_B1">|______|</span>
+          <span class="line_B1">|</span>
+          <span class="line_B2">|</span>
+          <span class="line_B3">|</span>
+          <span class="line_B4">|</span>
+          <span class="line_B5">|</span>
+          <span class="line_B6">|</span>
+          <span class="line_B7">|</span>
+          <span class="line_B8">|</span>
+          <span class="text_B1">O primeiro par de números indica o ano (ou bloco de anos) a que se refere a aprendizagem ou habilidade</span>
+
+          <span class="marq_C1">|____|</span>
+          <span class="line_C1">|</span>
+          <span class="line_C2">|</span>
+          <span class="line_C3">|</span>
+          <span class="line_C4">|</span>
+          <span class="line_C5">|</span>
+          <span class="line_C6">|</span>
+          <span class="line_C7">|</span>
+          <span class="line_C8">|</span>
+          <span class="text_C1">O segundo par de letras é uma abreviação do componente curricular ou da área (no caso de Ensino Médio)</span>
+
+          <span class="marq_D1">|_____|</span>
+          <span class="line_D1">|</span>
+          <span class="line_D2">|</span>
+          <span class="line_D3">|</span>
+          <span class="line_D4">_________</span>
+          <span class="text_D1">O último par de números indica a posição da aprendizagem ou da habilidade na numeração sequencial do ano (ou do bloco de anos)*</span>
+        </div>
+        <p class="p1">* No caso do Ensino Médio, o primeiro número desta última sequência indica a que competência específica a habilidade está relacionada</p>
+        <p>Ex.: <span class="marca-texto-verde">EM13LGG402</span>, indica que se refere a uma habilidade da Etapa do Ensino Médio para o 1º ao 3º ano, da área de Linguagens, está relacionada à competência 4 e é a 2ª habilidade apresentada.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="background-color: #00DFF5">
+  <div class="col-lg-12">
+    <div class="a-base">
+      <div class="col-lg-3"><img src="/templates/bncc/images/a-base/img-3.png" style="margin: 0 auto;"></div>
+      <div class="col-lg-9"><h2>Como foi o processo de discussão sobre a elaboração da BNCC?</h2>
+        <p>O Conselho Nacional de Educação (CNE) realizou audiências públicas, em 2017, para a discussão sobre o documento para as etapas da Educação Infantil e do Ensino Fundamental e, em 2018, para a discussão sobre o documento para a etapa do Ensino Médio. Além disso, o CNE coletou contribuições públicas enviadas por pessoas e instituições de todo o País, contendo sugestões de aprimoramento do texto da Base. Todas as contribuições recebidas foram analisadas e geraram alterações no documento!</p>
+        <p><a href="/historico/">Saiba mais sobre o processo de elaboração e discussão da BNCC</a></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="background-color: #DCDCDC">
+  <div class="col-lg-12">
+    <div class="a-base">
+      <div class="col-lg-7"><h2>
+        A Etapa do Ensino Médio
+        </h2>
+        <p>
+Enquanto os documentos da BNCC referentes às etapas da Educação Infantil e do Ensino Fundamental foram homologados em 2017, o documento da Etapa do Ensino Médio foi reformulado ao longo do ano seguinte, recebeu mais de 44 mil contribuições e foi aprovado pelo CNE em 4 de dezembro de 2018.
+        </p>
+        <p>
+          <a href="#faq">Sabia mais sobre essa etapa consultando a seção especial Perguntas Frequentes.</a>
+        </p>
+      </div>
+      <div class="col-lg-5"><img src="/templates/bncc/images/a-base/img-4.jpg" style="margin: 0 auto;"></div>
+    </div>
+  </div>
+</div>
+
+<div class="row" id="faq">
+  <div class="col-lg-12">
+    <div class="a-base">
+      <h2 style="margin-bottom:0;margin-top:30px;">Perguntas frequentes</h2>
+      <div class="col-12">
+        <h5 style="margin-top:10px;">Sobre a BNCC</h5>
+        <button class="accordion"><span class="accordion-title">O conteúdo da BNCC foi construído democraticamente?</span></button>
+        <div class="panel">
+          Sim. A Base foi elaborada em cumprimento às leis educacionais vigentes no País e contou com a participação de variadas entidades, representativas dos diferentes segmentos envolvidos com a Educação Básica nas esferas federal, estadual e municipal, das universidades, escolas, instituições do terceiro setor, professores e especialistas em educação brasileiros e estrangeiros. Sua primeira versão, disponibilizada para consulta pública entre os meses de outubro de 2015 e março de 2016, recebeu mais de 12 milhões de contribuições dos diversos setores interessados. Em maio de 2016, uma segunda versão, incorporando o debate anterior, foi publicada e novamente discutida com cerca de 9 mil professores em seminários organizados por Consed (Conselho Nacional de Secretários de Educação) e Undime (União Nacional dos Dirigentes Municipais de Educação), em todas as unidades da federação, entre 23 de junho e 10 de agosto de 2016. Os resultados desses seminários foram sistematizados pela UnB (Universidade de Brasília) e subsidiaram a produção de um relatório expressando o posicionamento conjunto de Consed e Undime. Esse relatório foi a principal referência para a elaboração da versão final, que também foi revista por especialistas e gestores do MEC com base nos diversos pareceres críticos recebidos e que foi colocada em consulta pública, a partir da qual recebeu-se mais de 44 mil contribuições.
+        </div>
+        <button class="accordion"><span class="accordion-title">Como será o processo de implementação da BNCC?</span></button>
+        <div class="panel" style="">
+          O MEC criou, para cada rede pública de ensino estadual em articulação com redes municipais, o Programa “Pró-BNCC”, com equipes que apoiarão o processo de (re) elaboração dos currículos e de implementação da BNCC.
+        </div>
+        <button class="accordion"><span class="accordion-title">Como a BNCC irá contribuir para a melhoria da educação no Brasil?</span></button>
+        <div class="panel" style="">
+          A ausência de indicações claras do que todos os alunos devem aprender para enfrentar com êxito os desafios do mundo contemporâneo tem impactos diretos sobre a qualidade da educação. Sem igualdade de oportunidades para que todos possam ingressar, permanecer e aprender na escola, por meio do estabelecimento de um patamar de aprendizagem e desenvolvimento a que todos têm direito, a busca pela equidade, com acolhimento da diversidade que é inerente ao conjunto dos alunos, fica comprometida. A adoção de uma Base Nacional Comum Curricular (BNCC) enfrenta diretamente esse problema. Ao indicar com precisão quais são as competências que todos os alunos devem desenvolver e que habilidades são essenciais para o seu desenvolvimento, as redes e os sistemas de ensino poderão adequar seus currículos tomando a Base como referência e levando em conta as necessidades e as possibilidades dos seus estudantes, assim como as suas identidades. Da mesma forma, escolas e professores passarão a ter clareza do que os seus alunos devem aprender e o que devem ser capazes de fazer com esse aprendizado e, assim, poderão planejar seu trabalho anual, sua rotina e os eventos do cotidiano escolar considerando as características próprias do seu alunado. Assim, a superação da fragmentação das políticas educacionais, o fortalecimento do regime de colaboração entre as três esferas de governo e o alinhamento dos currículos e das propostas pedagógicas à BNCC deve ajudar a promover a qualidade da educação garantindo igualdade e equidade para todos.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            A Base Nacional Comum é a solução para todos os problemas educacionais do Brasil?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Não, a Base não é a solução para tudo, mas a partir dela é possível identificar e colocar em prática diversas soluções para uma melhoria sistêmica da Educação. Ao deixar claro o que cada aluno precisa aprender em cada etapa da Educação Básica, ano a ano ou a cada bloco de anos, a Base Nacional Comum Curricular estipula um patamar de qualidade na Educação. A partir daí, poderá haver um alinhamento de todo o sistema educacional em torno dela. A formação e a capacitação dos professores, a troca de experiências bem sucedidas entre docentes, escolas e redes, a produção de materiais didáticos, a elaboração de avaliações padronizadas que medem os avanços educacionais (como a Prova Brasil), tudo isso passa a ser pensado, planejado e praticado a partir desse conjunto de conhecimentos e habilidades essenciais.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Por que ter uma Base Nacional Comum Curricular?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Porque assim é possível promover uma educação de qualidade com equidade. Com uma Base Nacional Comum Curricular construída a partir de critérios claros e com o objetivo de formar estudantes com conhecimentos e habilidades essenciais para o seu desenvolvimento na sociedade do século XXI, ela poderá: 1. Impulsionar a qualidade da educação para todos e favorecer que cada aluno saia da escola apto a concretizar seu projeto de vida (na faculdade, no trabalho etc.) e 2. Formar os cidadãos que contribuirão ativamente para o desenvolvimento da sociedade.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Qual o papel do MEC na elaboração da BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          O MEC tem o papel de coordenar a política nacional para a Educação Básica, na qual a BNCC desempenhará papel estratégico. Nas três versões do documento, coube ao MEC indicar parte dos especialistas responsáveis por redigi-lo. Ao Ministério da Educação caberá, ainda, oferecer assistência técnica às Unidades da Federação e aos Municípios para a implementação da Base no país.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Qual o papel do CNE no processo de construção da BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Como órgão de assessoramento do Ministro da Educação com atribuições normativas e a responsabilidade de assegurar a participação da sociedade no aprimoramento da educação brasileira, cabe ao CNE apreciar a BNCC e discuti-la com a sociedade, por meio de audiências públicas, para posterior elaboração de parecer e resolução a serem submetidos à homologação do Ministro da Educação.
+        </div>
+
+        <h5>Sobre o processo de construção da BNCC</h5>  
+        <button class="accordion">
+          <span class="accordion-title">
+            Houve alguma alteração durante o processo de construção da BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Não. O processo tem-se mantido conforme planejado desde seu início, em 2015. De acordo com o Plano Nacional de Educação (PNE) de 2014, a Base deve ser elaborada pelo Ministério da Educação (MEC), em articulação e colaboração com os Estados, o Distrito Federal e os Municípios, e encaminhada ao Conselho Nacional de Educação (CNE), precedida de consulta pública nacional. Todas as etapas previstas foram cumpridas.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            O que determinou a construção da BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A elaboração de uma base nacional comum está prevista no Artigo 210 da Constituição de 1988 e no Artigo 26 da Lei de Diretrizes e Bases da Educação Nacional, de 1996. Além disso, a lei de 2014 que instituiu o PNE cita diretamente a BNCC como estratégia para o cumprimento das metas 2, 3 e 7 do Plano. Portanto, a elaboração da BNCC, determinada já na carta constitucional, encontra-se amplamente amparada pela legislação educacional do País.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como foi redigida a BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Nas duas primeiras versões, um grupo de redação foi composto por especialistas indicados pelo MEC e por professores e técnicos de secretarias com experiência em currículo indicados por Consed e Undime. O grupo de redação foi formado por 116 pessoas, divididas em 29 comissões compostas, cada uma, por 2 especialistas das áreas de conhecimento, 1 gestor de secretaria ou professor com experiência em currículo e 1 professor com experiência em sala de aula. Para a versão final, coube a um Comitê Gestor, constituído por titulares e suplentes de diversos órgãos e entidades vinculados ao MEC, a indicação do grupo de especialistas responsável pela revisão dos documentos anteriormente elaborados, com base em insumos das consultas públicas e pareceres técnicos. A esse Comitê Gestor coube, ainda, propor as diretrizes para a redação do documento final encaminhado ao CNE.
+        </div>
+        <h5>Sobre a Versão Final da BNCC</h5>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quais as principais mudanças em relação às versões anteriores?
+          </span>
+        </button>
+        <div class="panel">
+          Orientada pelos mesmos princípios éticos, políticos e estéticos das Diretrizes Nacionais Curriculares que fundamentavam os direitos de aprendizagem e desenvolvimento propostos nas versões anteriores da BNCC, a versão final consolida uma concepção curricular referenciada em competências, um enfoque já presente nos Artigos 9, 32 e 35 da LDB e na maior parte das iniciativas de desenvolvimento de currículos no Brasil, de reformas curriculares de diferentes países e das avaliações internacionais. Assim, assumindo um compromisso com a formação humana integral e a construção de uma sociedade justa, democrática e inclusiva, a versão final define competências gerais a serem desenvolvidas por todos os alunos ao longo da escolarização e estabelece as aprendizagens essenciais de cada área e componente curricular a serem asseguradas para o desenvolvimento de tais competências.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quais mudanças sugeridas nos seminários foram incorporadas?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A versão final da BNCC buscou articular de forma mais orgânica os diferentes elementos que compõem a sua estrutura, empreendendo uma padronização nos critérios de organização de cada componente curricular. Também tratou de incluir temas considerados relevantes que não estavam suficientemente contemplados na segunda versão. Por fim, procurou solucionar os problemas relativos à clareza e pertinência dos objetivos de aprendizagem identificados na versão dois da Base, além de rever a progressão das aprendizagens do Ensino Fundamental para que elas correspondessem à capacidade dos estudantes atendidos nesse segmento e garantissem altas expectativas de aprendizagem e protagonismo, além de permitir uma transição adequada para o Ensino Médio. Todas essas alterações foram balizadas pelas contribuições realizadas durante os seminários, que foram sistematizadas pela UnB e encaminhadas ao MEC por Consed e Undime.
+        </div>
+        <h5>
+          Sobre as próximas etapas
+        </h5>
+        <button class="accordion">
+          <span class="accordion-title">
+            A partir de quando a BNCC entrará em vigor?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A Base deve ser implementada em até 2 anos após a homologação. A partir de 2017, o MEC iniciará um processo de diálogo com os sistemas e as redes de ensino sobre as principais etapas da implementação e a preparação necessária para cada uma delas. Nos dois anos que antecedem a entrada em vigor da BNCC, deve ocorrer a formulação ou adaptação dos currículos locais segundo as orientações da Base Nacional Comum Curricular, a implantação de programas de formação dos professores em serviço para a implementação da BNCC, a adaptação do material didático e a criação de novos recursos alinhados à Base, a revisão das matrizes de avaliação, entre outras etapas fundamentais para que a BNCC possa ser implementada com qualidade.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como ficam os estados e os municípios que desenvolveram currículos próprios?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Os estados e municípios que possuem currículo próprio deverão (re)elaborá-los nos aspectos necessários para que estejam alinhados à Base Nacional Comum Curricular, garantindo as aprendizagens essenciais definidas no documento. Não será preciso recomeçar tudo do zero.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Qual é o papel do CNE no processo de elaboração da BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Caberá ao CNE analisar e discutir o documento da Base levando em consideração as manifestações dos segmentos da sociedade que ocorreram durante as audiências públicas realizadas ao longo de 2017 e 2018 e as contribuições recebidas ao longo dos processos de consulta pública online. Ao final desse processo, o CNE elaborou um parecer e um projeto de resolução sobre o documento da Base relativo às etapas da Educação Infantil e do Ensino Fundamental, que foi encaminhado ao Ministério da Educação. Esse documento foi homologado em 2017. O documento relativo à etapa do Ensino Médio está em elaboração.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quais serão os benefícios da Base Nacional Comum Curricular para os professores?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A Base Nacional Comum Curricular contribuirá para o trabalho dos professores de diversas maneiras. Pelo fato de a BNCC definir, de forma clara, o que os alunos precisam aprender nas diferentes etapas da Educação Básica, ano a ano ou por blocos de anos, as diferenças nas aprendizagens dos alunos vindos de outras escolas ou redes serão minimizadas. Além disso, com a formulação de currículos alinhados à BNCC, as propostas pedagógicas e o planejamento de trabalho das instituições escolares ficarão mais claros e objetivos, e a troca de experiências de sucesso e o compartilhamento de dificuldades serão potencializados.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            A Base tira a autonomia do professor?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Não. A Base especifica onde o aluno deve chegar (o que se espera que o aluno aprenda), e não como o professor deve ensinar.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Os professores precisarão passar por alguma formação?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Os professores de todo o Brasil deverão participar de formações continuadas para conhecer a Base, entender as mudanças propostas pelo documento e o seu papel no sistema educacional do País. As formações continuadas deverão garantir que os professores estejam alinhados às orientações previstas na Base.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quem fará a formação dos professores?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Antes de a Base entrar em vigor, haverá formação continuada para os professores e gestores em serviço. Embora a implementação da BNCC seja prerrogativa dos sistemas e redes de ensino, a dimensão e complexidade da tarefa vai exigir que União, DF, Estados e Municípios somem esforços. Na perspectiva dessa colaboração, a primeira tarefa do MEC deverá ser endereçada para uma área de sua responsabilidade direta que é o alinhamento da formação de professores à BNCC.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Avaliações nacionais sofrerão mudanças?
+          </span>
+        </button>
+        <div class="panel" style="">
+          As avaliações nacionais serão também alinhadas à Base no futuro, respeitando o tempo de implementação e adaptação das redes. As matrizes de avaliação da prova Brasil/Saeb e Enem serão revistas de acordo com a BNCC e envolverão os gestores municipais e estaduais e instituições de ensino e pesquisa na sua elaboração. A implantação das novas avaliações seguirá cronograma negociado com as redes de ensino. A implantação das mudanças no Enem seguirá cronograma negociado com redes municipais e estaduais, instituições de ensino e pesquisa e as Instituições de Ensino Superior (IES) públicas e privadas.
+        </div>
+        <h5>
+          Sobre o site oficial da BNCC
+        </h5>
+        <button class="accordion">
+          <span class="accordion-title">
+            O que posso encontrar nesse site?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Este é o site oficial da BNCC. Nele, você encontrará 3 modos de acesso ao documento da Base: uma possibilidade de navegação online; um documento disponível em PDF com as etapas da Educação Infantil e Fundamental completas e uma ferramenta para baixar partes da Base (em arquivo de planilha) fazendo recortes por etapa de ensino, faixa etária ou ano de ensino, áreas e componentes. Além disso, poderá acessar um histórico com uma linha do tempo que apresenta os principais marcos da elaboração da BNCC e uma página denominada “implementação”, na qual pode-se acessar ferramentas de apoio (apenas para equipes do programa Pró-BNCC) e uma biblioteca com materiais diversos, aberta a todos os usuários.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quais são as ferramentas para acessar o documento da Base?
+          </span>
+        </button>
+        <div class="panel" style="">
+          O documento da Base está disponível para consulta em 3 formatos: um navegável, ou seja, que pode ser consultado online, um documento de texto e um documento em planilha, ambos baixáveis. Para baixar o documento em planilha, o usuário pode selecionar quais partes da Base deseja consultar, fazendo recortes por etapa de ensino, faixa etária ou ano de ensino, áreas e componentes.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            O que é o Programa Pró-BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Para apoiar as redes de ensino da (re)elaboração de seus documentos curriculares e implementação da BNCC, o MEC criou o Programa Pró-BNCC com equipes em todas as unidades federativas.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Posso acessar as ferramentas disponíveis para as equipes do Programa Pró-BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          As ferramentas “Documento Curricular” e “Consulta Pública” são de acesso restrito às equipes do Programa Pró-BNCC e apoiam a (re)elaboração dos currículos e a coleta de contribuições que possam auxiliar nesse processo. Caso queira participar de uma Consulta Pública, você deverá consultar sua rede de ensino.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Posso acessar os materiais disponíveis para as equipes do Programa Pró-BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Sim, os materiais de apoio são abertos e podem ser consultados por educadores e pelo público em geral.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            O que posso acessar na Biblioteca de Apoio à implementação?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Na Biblioteca, você poderá encontrar documentos diversos que apoiem a implementação da BNCC nas redes de ensino ou que possam servir de referenciais.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Há algum espaço no site para contribuir com a BNCC?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Não, os processos de discussão sobre a BNCC foram encerrados em 2018 e não estão mais disponíveis para o público.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como posso contribuir com a (re)elaboração do currículo da minha rede de ensino?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Para saber sobre o processo de (re)elaboração do currículo da sua rede ou acessar o currículo já pronto, entre em contato com a Secretaria de Educação da rede.
+        </div>
+        <h5>
+          Sobre a etapa do ensino médio na BNCC
+        </h5>
+        <button class="accordion">
+          <span class="accordion-title">
+            O que é a BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A BNCC – Etapa Médio é parte integrante da Base Nacional Curricular Comum (BNCC). Trata-se de um conjunto de orientações que deverá nortear os currículos das escolas públicas e privadas de todo o Brasil. A base traz os conhecimentos essenciais, as competências e as aprendizagens pretendidas para crianças e jovens em cada etapa da educação básica em todo o país. Para mais informações sobre a BNCC, 
+          consulte <a href="https://basenacionalcomum.mec.gov.br/bncc-ensino-medio" target="_blank"> https://basenacionalcomum.mec.gov.br/bncc-ensino-medio</a>
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Qual o principal objetivo da BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A BNCC – Etapa Ensino Médio pretende promover a elevação da qualidade do ensino no país, por meio de uma referência comum obrigatória para todas as escolas de educação básica, respeitando a autonomia assegurada pela Constituição aos entes federados e às escolas. No caso do Ensino Médio, o ensino não vinha atendendo aos anseios e necessidades da juventude. A BNCC – Etapa Ensino Médio é um instrumento que contribuirá na inserção dos jovens no mundo do trabalho e para que se tornem cidadãos plenos, preparados para os desafios do Século 21.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Qual foi o papel de cada órgão na elaboração da BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A construção e a implementação da BNCC – Etapa Ensino Médio aconteceu em um processo colaborativo. O Ministério da Educação, órgão da administração federal direta, que tem como área de competência a política nacional de educação, elaborou a proposta. Feito isso, ao longo de 4 anos o documento foi colocado em discussão para contribuições de toda sociedade brasileira apoiado. Após essas as contribuições, foi entregue ao CNE uma versão que ainda passou por audiências públicas para que o órgão realizasse a análise e aprovação. Em seguida, o documento retorna ao Ministro da Educação para a homologação. Como já ocorre, a responsabilidade final pela elaboração dos currículos é das redes de ensino estaduais e municipais e das escolas públicas e privadas.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quais os marcos legais que amparam a construção da BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A proposta teve como pressupostos legais a Constituição Federal, a Lei de Diretrizes e Base da Educação Nacional (LDB), o Plano Nacional de Educação 2014/2024, a Lei da Reforma do Ensino Médio e as Diretrizes Curriculares Nacionais (DCN) do Ensino Médio.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como foi o processo de construção democrática da BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A primeira versão da BNCC foi divulgada pelo MEC em setembro de 2015 e recebeu 12 milhões de contribuições. Em maio de 2016 foi lançada uma segunda versão, incorporando o debate anterior. Após nova rodada de debates, que contou com a participação de nove mil professores em seminários promovidos pelo Conselho Nacional de Educação (Consed) e pela União Nacional dos Dirigentes Municipais de Educação (Undime), realizados em todas as unidades da federação, o MEC preparou uma terceira versão, encaminhada ao Conselho Nacional de Educação (CNE) em abril de 2017. Ao longo desse mesmo ano, o CNE promoveu cinco audiências públicas regionais para colher sugestões. Ainda em dezembro de 2017, o CNE aprovou o documento e o devolveu ao ministério, que o homologou naquele mesmo mês, para entrada em vigor. A BNCC homologada continha as orientações gerais para toda a Educação Básica e específicas para a Educação Infantil e o Ensino Fundamental. No caso do Ensino Médio, o Ministério da Educação optou por aprofundar o debate. Além das contribuições recebidas anteriormente, foram promovidas novas audiências e consultas públicas online específicas, bem como encontros com redes de ensino, representantes da área educacional, gestores, professores, especialistas e interessados na temática da educação para o Ensino Médio. Em agosto de 2018, o Conselho Nacional de Secretários de Educação (Consed), com o apoio do Ministério da Educação, entre outras instituições, realizou uma mobilização para que os professores e gestores educacionais discutissem e opinassem sobre a BNCC – Etapa Ensino Médio. Todas as 28,5 mil escolas de Educação Básica do país que atendem esta etapa do ensino foram convidadas a participar dos debates, a maioria deles realizados em 2 de agosto, Dia D da BNCC. A ação resultou na participação de 21,5% das escolas públicas e privadas que ofertam o Ensino Médio no Brasil. Após esse amplo ciclo de debates e discussões, o CNE está revisando o documento para envio ao MEC, que deverá homologá-lo para que entre em vigor.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como a BNCC pode contribuir para melhorar a qualidade do Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A partir da BNCC – Etapa Ensino Médio, as secretarias de educação e as escolas poderão elaborar seus currículos e projetos pedagógicos com autonomia e aplicando técnicas de ensino com interdisciplinaridade e flexibilidade, respeitando a diversidade e as realidades locais. A BNCC – Etapa Ensino Médio possibilita, por exemplo, que o próprio aluno escolha em quais áreas do conhecimento quer se aprofundar, garantindo também a opção por uma formação técnica e profissional que lhe auxilie na inclusão no mercado de trabalho.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            O que são competências?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Na BNCC, competência é definida como a mobilização de conhecimentos (conceitos e procedimentos), habilidades (práticas, cognitivas e socioemocionais), atitudes e valores para resolver demandas complexas da vida cotidiana, do pleno exercício da cidadania e do mundo do trabalho. Ao definir essas competências, a BNCC reconhece que a “educação deve afirmar valores e estimular ações que contribuam para a transformação da sociedade, tornando-a mais humana, socialmente justa e, também, voltada para a preservação da natureza”.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Outros países já tiveram experiências semelhantes?
+          </span>
+        </button>
+        <div class="panel" style="">
+          O foco no desenvolvimento de competências tem orientado diferentes países na construção de seus currículos, entre eles, Austrália, Portugal, França, Polônia, Estados Unidos, Chile e Peru. É esse também o enfoque adotado nas avaliações internacionais da Organização para a Cooperação e Desenvolvimento Econômico (OCDE), que coordena o Programa Internacional de Avaliação de Alunos (Pisa), e da Organização das Nações Unidas para a Educação, a Ciência e a Cultura (Unesco), que instituiu o Laboratório Latino-americano de Avaliação da Qualidade da Educação para a América Latina (LLECE).
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quais as competências gerais, válidas para todas as etapas de Educação Básica?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A BNCC – Etapa Ensino Médio se organiza em continuidade ao proposto para a Educação Infantil e o Ensino Fundamental, centrada no desenvolvimento de competências e orientada pelo princípio da educação integral. Assim, as competências gerais estabelecidas para a Educação Básica orientam tanto as aprendizagens essenciais a serem garantidas no âmbito da BNCC do Ensino Médio quanto os itinerários formativos a serem ofertados pelos diferentes sistemas, redes e escolas. Tais competências reportam-se a conhecimentos, pensamento científico, crítico e criativo, diversidade cultural, comunicação, cultura digital, trabalho e projeto de vida, argumentação, autoconhecimento, cooperação, empatia, responsabilidade para consigo e com o outro e cidadania. Para mais informações sobre a BNCC – Etapa Ensino Médio, 
+          consulte <a href="https://basenacionalcomum.mec.gov.br/bncc-ensino-medio" target="_blank"> https://basenacionalcomum.mec.gov.br/bncc-ensino-medio</a>
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quais as competências específicas para o Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Além das competências gerais da Educação Básica, a BNCC – Etapa Ensino Médio está organizada por áreas do conhecimento, com a finalidade de integrar dois ou mais componentes (disciplinas) do currículo, para melhor compreender e transformar uma realidade complexa. As áreas do conhecimento definidas na BNCC – Etapa Ensino Médio são Linguagens e suas Tecnologias (Arte, Educação Física, Língua Inglesa e Língua Portuguesa); Matemática; Ciências da Natureza (Biologia, Física e Química); e Ciências Humanas e Sociais Aplicadas (História, Geografia, Sociologia e Filosofia).
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            A carga horária vai mudar?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Para o ensino médio diurno, a carga horária, atualmente de 2.400 horas, deverá ser ampliada para 3.000 horas, até o início do ano letivo de 2022. No ensino médio noturno, a proposta pedagógica poderá, para garantir a permanência e o êxito desses estudantes, que enfrentam questões como trânsito e emprego, ampliar a duração do curso para mais de 3 (três) anos, com menor carga horária diária e anual, garantido o total mínimo de 2.400 (duas mil e quatrocentas) horas até 2021 e de 3.000 (três mil) horas a partir do ano letivo de 2022.. A carga horária é definida pelas Diretrizes Curriculares Nacionais (DCN) do Ensino Médio.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Qual a diferença entre BNCC e currículo?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A BNCC define as competências e conhecimentos essenciais que deverão ser oferecidos a todos os estudantes na parte comum (1.800 horas), abrangendo as quatro áreas do conhecimento e todos os componentes curriculares do Ensino Médio definidos na Lei de Diretrizes e Bases da Educação Nacional (LDB) e nas Diretrizes Curriculares Nacionais (DCN) do Ensino Médio. As disciplinas obrigatórias nos três anos de Ensino Médio são Língua Portuguesa e Matemática. No caso de Língua Estrangeira há a obrigatoriedade do inglês, o que não impede a escola de acrescentar outras. O restante do tempo será dedicado ao aprofundamento acadêmico nas áreas eletivas ou a cursos técnicos, a saber: Linguagens e suas Tecnologias; Matemática e suas Tecnologias; Ciências da Natureza e suas Tecnologias; Ciências Humanas e Sociais Aplicadas; Formação técnica e profissional. Os currículos é que vão estabelecer como atender às orientações da BNCC e envolverão aspectos como material didático, metodologia de ensino, preparação dos professores e avaliações. Compete às redes de ensino e às escolas elaborarem os currículos, considerando a BNCC e as realidades e necessidades locais.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Qual o papel das Diretrizes Curriculares Nacionais para a homologação da BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          As DCN do Ensino Médio orientam o planejamento curricular, indicam a estrutura. É como se fossem a arquitetura do Ensino Médio. Entram em aspectos que não competem à Base, como a situação do estudante que ainda está cursando o Ensino Médio antigo, a carga horária da educação a distância, as possibilidades de parceria, a estrutura básica do novo Enem. Já a BNCC é um documento eminentemente pedagógico, que detalha as competências e as habilidades esperadas nas áreas de conhecimento. Ambos foram construídos em alinhamento com a reforma do Ensino Médio, são complementares e devem ser considerados na elaboração dos currículos e organização da oferta pelas escolas e redes.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Quando a BNCC entra em vigor?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A BNCC – Etapa Ensino Médio será obrigatória e irá nortear os currículos das escolas de Ensino Médio. No primeiro ano letivo subsequente à data da publicação os sistemas de ensino deverão estabelecer um cronograma, iniciando o processo de implementação a partir do segundo ano letivo.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como a diversidade e as diferenças regionais são tratadas na BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A BNCC – Etapa Ensino Médio dá autonomia às redes de ensino e às escolas. O documento prevê conteúdos mínimos, mas caberá às secretarias de Educação e às escolas elaborar os currículos e projetos pedagógicos, tendo plena liberdade para considerar as diferentes realidades locais.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como fica o ensino técnico-profissional?
+          </span>
+        </button>
+        <div class="panel" style="">
+          A formação técnica e profissional será mais uma alternativa para o aluno. Antes, o jovem que quisesse cursar uma formação técnica de nível médio precisava ter 2.400 horas no ensino regular e mais 1.200 no técnico, totalizando 3.600 horas. Agora, o jovem poderá optar por uma formação técnico-profissional dentro da carga horária do Ensino Médio, sendo 1.800 horas-aulas dedicadas às áreas do conhecimento e 1.200 para os itinerários formativos, totalizando 3.000 horas. Ao todo, são cinco itinerários formativos, sendo um para cada área do conhecimento (Linguagens e suas Tecnologias, Matemática, Ciências da Natureza, Ciências Humanas e Sociais Aplicadas e Formação Técnica e Profissional). O itinerário formativo é de livre escolha do aluno, mas a escola deverá oferecer pelo menos um deles.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Os alunos terão de estudar somente em escolas técnicas?
+          </span>
+        </button>
+        <div class="panel" style="">
+          As escolas e redes de ensino têm autonomia para organizar o ensino técnico e profissional e deverão orientar seus estudantes, inclusive na escolha dos itinerários, tendo como princípio que a formação geral e a técnico-profissionalizante são indissociáveis. Os estudantes poderão, por exemplo, fazer a formação técnica e profissional em outra instituição, cabendo à escola de origem emitir a certificação. As redes também poderão firmar parcerias com instituições educacionais que ofertem ensino profissionalizante, desde que devidamente reconhecidas pelos sistemas de ensino, cabendo também à escola de origem emitir a certificação.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como as escolas irão organizar os itinerários formativos?
+          </span>
+        </button>
+        <div class="panel" style="">
+          As escolas e as redes de ensino têm autonomia para organizar seus itinerários formativos, sendo que cada escola deverá ofertar pelo menos um itinerário. Para garantir opções aos estudantes, cada município deverá ofertar pelo menos dois itinerários. Essa foi uma das demandas apresentadas durante o processo de audiências públicas, para que os estudantes que vivem nos pequenos municípios tivessem as mesmas oportunidades. O MEC irá disponibilizar um guia de implementação dos itinerários formativos, após a votação da Base no CNE e homologação do documento pelo ministério. A estrutura dos itinerários formativos é definida pelas Diretrizes Curriculares Nacionais (DCN) do Ensino Médio.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            O ensino médio poderá ser feito totalmente a distância?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Não. O ensino a distância é uma opção para as redes de ensino, que poderão adotá-lo ou não mediante suas necessidades e controle de qualidade, preferencialmente nos itinerários formativos. Para oferecê-lo, precisarão disponibilizar suporte tecnológico e pedagógico. O assunto também deverá passar por discussões e aprovação pelos Conselhos Estaduais de Educação. Além disso, a maior parte do currículo será sempre data em aulas presenciais. No ensino diurno a carga máxima a distância poderá chegar a 20% do total de horas e deverá ser adotada preferencialmente nos itinerários formativos. Numa carga de 3.000 horas, 600 horas poderão ser a distância. No ensino noturno, em razão das especificidades do estudante em relação a questões como trânsito e trabalho, a carga a distância pode alcançar até 30%. Considerando-se 3.000 horas, seriam 900 horas. As normas para o ensino a distância são definidas pelas Diretrizes Curriculares Nacionais (DCN) do Ensino Médio.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como fica a situação dos alunos que estão cursando o ensino médio pelas normas antigas?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Os estudantes matriculados em data anterior à implementação dessas diretrizes têm direito de concluir os estudos segundo as normas antigas ou de migração para a nova organização curricular. Nesse caso, terão garantia de aproveitamento integral dos estudos e a escola não poderá estender o curso. A regra é definida pelas Diretrizes Curriculares Nacionais (DCN) do Ensino Médio.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como fica o Enem com a BNCC – Etapa Ensino Médio?
+          </span>
+        </button>
+        <div class="panel" style="">
+          É provável que a mudança ocorra em 2021. Com a homologação da BNCC no fim de 2018, as escolas e redes terão o ano seguinte para compor seus currículos, ou seja, 2019. As provas continuarão em dois dias. No primeiro, serão cobradas as competências e habilidades das quatro áreas gerais da BNCC (linguagens, matemática, ciências da natureza e ciências humanas). Para o segundo dia, as provas serão de acordo com os itinerários formativos. A inclusão do itinerário de formação técnica e profissional, especificamente, está em discussão. As alterações foram definidas pelas Diretrizes Curriculares Nacionais (DCN) do Ensino Médio.
+        </div>
+        <h5>
+          Informações Gerais
+        </h5>
+        <button class="accordion">
+          <span class="accordion-title">
+            Como a Base Nacional Curricular Comum afeta os pais e as famílias?
+          </span>
+        </button>
+        <div class="panel" style="">
+          O estabelecimento claro de objetivos de aprendizagem comuns a todos os alunos do País permitirá às famílias dos estudantes um melhor acompanhamento da educação de seus filhos e maior entendimento em relação à qualidade dessa educação. Por consequência, eles poderão participar mais ativamente do processo de ensino-aprendizagem dos alunos.
+        </div>
+        <button class="accordion">
+          <span class="accordion-title">
+            Outros países também construíram bases curriculares nacionais?
+          </span>
+        </button>
+        <div class="panel" style="">
+          Sim. A construção da BNCC segue uma tendência internacional entre países que se propuseram a reformar a Educação, sempre em busca de mais qualidade com equidade. Entre eles: Austrália, Estados Unidos, Inglaterra, África do Sul, Cuba, Chile, Portugal, Coreia do Sul. Foram usados diferentes estilos e métodos de elaboração e implantação, com claros ensinamentos que podem ser úteis ao Brasil, tais como: a forma com que a sociedade e seus diversos setores foram envolvidos; a definição dos atores que lideraram e daqueles que integraram o processo de construção dos documentos; as metas e prazos estabelecidos; a forma como a implementação foi realizada, monitorada, acompanhada e ajustada.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="space-bug"></div>	
+	<div class="content-tags">
+		</div>
+		
+
+    
+    
+	</div>
+
+	
+							</div>
+
+</div>
+
+
+</div>
+</main>
+</div>
+</div>
+</div>
+</section>
+
+
+</div>
+</div>
+
+<!-- Off Canvas Menu -->
+<div class="offcanvas-overlay"></div>
+<div class="offcanvas-menu">
+<a href="#" class="close-offcanvas"><span class="fa fa-remove"></span></a>
+<div class="offcanvas-inner">
+<div class="sp-module ">
+<ul class="menu">
+<li class="nav-item item-101 current active"><a class="active nav-link" href="/"  >Início</a></li><li class="nav-item item-118"><a class="nav-link" href="/a-base"  >A Base</a></li><li class="nav-item item-117"><a class="nav-link" href="/historico"  >Histórico</a></li><li class="nav-item item-119"><a class="nav-link" href="/implementacao"  >Implementação</a></li></ul>
+
+</div>
+</div>
+</div>
+
+
+
+
+<!-- Go to top -->
+<a href="#" class="sp-scroll-up" aria-label="Scroll Up"><span class="fa fa-chevron-up" aria-hidden="true"></span></a>
+
+
+<div id="suporte">
+	<button class="botao-suporte">
+		<span data-testid="Icon" class="Icon" type="Icon">
+			<svg xmlns="https://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" style="enable-background:new 0 0 20 20"><path d="M11,12.3V13c0,0-1.8,0-2,0v-0.6c0-0.6,0.1-1.4,0.8-2.1c0.7-0.7,1.6-1.2,1.6-2.1c0-0.9-0.7-1.4-1.4-1.4 c-1.3,0-1.4,1.4-1.5,1.7H6.6C6.6,7.1,7.2,5,10,5c2.4,0,3.4,1.6,3.4,3C13.4,10.4,11,10.8,11,12.3z"></path><circle cx="10" cy="15" r="1"></circle><path d="M10,2c4.4,0,8,3.6,8,8s-3.6,8-8,8s-8-3.6-8-8S5.6,2,10,2 M10,0C4.5,0,0,4.5,0,10s4.5,10,10,10s10-4.5,10-10S15.5,0,10,0 L10,0z"></path>
+			</svg>
+		</span>
+		<span class="src-component-launcher-WidgetLauncher-label Arrange-sizeFit u-textInheritColor u-inlineBlock " data-testid="launcherLabel">
+			Suporte
+		</span>
+		<span class="box"><strong>Dúvidas ou sugestões?</strong> <br>
+		 Envie email para: <a href="mailto:apoiobncc@mec.gov.br">apoiobncc@mec.gov.br</a></span>
+	</button>
+</div>
+
+
+
+<!-- Footer -->
+<section id="sp-bottom"><div class="container"><div class="container-inner"><div class="row"><div id="sp-bottom1" class="col-sm-col-sm-6 col-lg-12 "><div class="sp-column "><div class="sp-module "><div class="sp-module-content">
+
+<div class="custom">
+<div class="row footer">
+<div class="col-md-1 logos text-center"></div>
+<div class="col-md-2 logos text-center"><a href="https://www.acessoainformacao.gov.br/" target="_blank" rel="noopener noreferrer"><img class="logo-parceiros" src="/templates/bncc/images/logos/logo_acesso.png"></a></div>
+<div class="col-md-2 logos text-center"><a href="https://www.consed.org.br/" target="_blank" rel="noopener noreferrer"><img class="logo-parceiros" src="/templates/bncc/images/logos/logo_consed.png"></a></div>
+<div class="col-md-2 logos text-center"><a href="https://undime.org.br/" target="_blank" rel="noopener noreferrer"><img class="logo-parceiros" src="/templates/bncc/images/logos/logo_undime.png"></a></div>
+<div class="col-md-3 logos text-center"><a href="https://www.mec.gov.br/" target="_blank" rel="noopener noreferrer"><img class="logo-parceiros" src="/templates/bncc/images/logos/marca-mec.png"></a></div>
+<!-- <div class="logo-governo text-center"><a href="https://www.brasil.gov.br/" target="_blank" rel="noopener noreferrer"><img src="/templates/bncc/images/logos/logo_governobr.png"></a></div> -->
+<div class="col-md-1 logos text-center"></div>
+</div></div>
+</div></div></div></div></div></div></div></section>
+
+<!-- Go to top -->
+<a href="#" class="sp-scroll-up" aria-label="Scroll Up"><span class="fa fa-chevron-up" aria-hidden="true"></span></a>
+<!-- Barra do Governo -->
+<script defer="defer" src="//barra.brasil.gov.br/barra.js" type="text/javascript"></script>
+<script>
+var acc = document.getElementsByClassName("accordion");
+var i;
+
+for (i = 0; i < acc.length; i++) {
+	acc[i].addEventListener("click", function() {
+		this.classList.toggle("active-faq");
+		var panel = this.nextElementSibling;
+		if (panel.style.maxHeight){
+			panel.style.maxHeight = null;
+		} else {
+			panel.style.maxHeight = panel.scrollHeight + "px";
+		} 
+	});
+}
+
+function reloadAccordion() {
+	var acc = document.getElementsByClassName("accordion");
+    var i;
+    for (i = 0; i < acc.length; i++) {
+	acc[i].addEventListener("click", function() {
+		this.classList.toggle("active-faq");
+		var panel = this.nextElementSibling;
+		if (panel.style.maxHeight){
+			panel.style.maxHeight = null;
+		} else {
+			panel.style.maxHeight = panel.scrollHeight + "px";
+		} 
+	});
+    }   
+}
+</script>
+</body>
+
+</html>

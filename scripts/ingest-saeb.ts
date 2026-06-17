@@ -19,6 +19,7 @@ dotenv.config({ path: ".env.local" });
 dotenv.config();
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 import pdf from "pdf-parse";
 import { Pinecone } from "@pinecone-database/pinecone";
 
@@ -35,9 +36,12 @@ const EMBED_DELAY_MS   = 300;
 
 const PDF_PATH = process.env.SAEB_PDF_PATH ?? "";
 
-// URLs oficiais INEP — Matrizes de Referência SAEB
+// URLs oficiais INEP — Matrizes de Referência SAEB (corretas, verificadas)
 const SAEB_URLS = [
-  "https://download.inep.gov.br/educacao_basica/saeb/2022/documentos/matrizes_de_referencia_saeb.pdf",
+  "https://download.inep.gov.br/educacao_basica/saeb/matriz-de-referencia-de-lingua-portuguesa_2001.pdf",
+  "https://download.inep.gov.br/educacao_basica/saeb/matriz-de-referencia-de-matematica_2001.pdf",
+  "https://download.inep.gov.br/educacao_basica/saeb/matriz-de-referencia-de-linguagens_BNCC.pdf",
+  "https://download.inep.gov.br/educacao_basica/saeb/matriz-de-referencia-de-matematica_BNCC.pdf",
 ];
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
@@ -183,25 +187,29 @@ async function upsertBatch(
   await sleep(EMBED_DELAY_MS);
 }
 
-// ── Download PDF ─────────────────────────────────────────────────────────────
+// ── Download PDF (via curl — evita problema SSL do Node.js com INEP) ──────────
 
-async function downloadPdf(url: string): Promise<Buffer> {
+function downloadPdf(url: string): Buffer {
   const cacheDir = path.join(process.cwd(), ".cache");
   if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir);
   const filename = path.join(cacheDir, "saeb_" + path.basename(url.split("?")[0]));
 
   if (fs.existsSync(filename)) {
-    console.log(`  → Cache local: ${filename}`);
-    return fs.readFileSync(filename);
+    const size = fs.statSync(filename).size;
+    if (size > 10_000) {
+      console.log(`  → Cache local: ${filename} (${(size / 1024).toFixed(0)} KB)`);
+      return fs.readFileSync(filename);
+    }
+    fs.unlinkSync(filename);
   }
 
-  console.log(`  → Baixando: ${url}`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} ao baixar ${url}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(filename, buffer);
-  console.log(`  → Salvo em cache: ${filename}`);
-  return buffer;
+  console.log(`  → Baixando: ${path.basename(url)}`);
+  execSync(`curl -sL -o "${filename}" "${url}"`, { stdio: "inherit" });
+
+  const size = fs.statSync(filename).size;
+  if (size < 10_000) throw new Error(`Arquivo muito pequeno após download: ${size} bytes`);
+  console.log(`  → Salvo: ${filename} (${(size / 1024).toFixed(0)} KB)`);
+  return fs.readFileSync(filename);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -222,7 +230,7 @@ async function main() {
     console.log(`\n📄 Processando: ${path.basename(source)}`);
     const pdfBuffer = PDF_PATH
       ? fs.readFileSync(path.resolve(PDF_PATH))
-      : await downloadPdf(source);
+      : downloadPdf(source);
     const { text } = await pdf(pdfBuffer);
     const chunks = extractChunks(text);
     totalChunks += chunks.length;

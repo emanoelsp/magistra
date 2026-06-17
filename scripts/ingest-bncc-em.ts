@@ -25,11 +25,15 @@ const EMBED_DELAY_MS   = 500;
 const DOWNLOAD_RETRIES = 5;
 
 // Se o PDF foi baixado manualmente, coloque em .cache/BNCC_EnsinoMedio.pdf
-// Caso contrário, tenta baixar da URL oficial do MEC
-const EM_PDF_LOCAL = path.join(process.cwd(), ".cache", "BNCC_EnsinoMedio.pdf");
-const EM_PDF_URL   = "https://basenacionalcomum.mec.gov.br/images/BNCC_20dez_site.pdf"; // fallback
-const CACHE_DIR    = path.join(process.cwd(), ".cache");
+const EM_PDF_LOCAL  = path.join(process.cwd(), ".cache", "BNCC_EnsinoMedio.pdf");
+const CACHE_DIR     = path.join(process.cwd(), ".cache");
 const PROGRESS_FILE = path.join(CACHE_DIR, "bncc-em-progress.json");
+
+// URLs do MEC para o BNCC Ensino Médio (tentadas em ordem)
+const EM_PDF_URLS = [
+  "https://basenacionalcomum.mec.gov.br/images/historico/04122019-BNCC-FINAL.pdf",
+  "https://basenacionalcomum.mec.gov.br/images/BNCC_EnsinoMedio_embaixa_site_110518.pdf",
+];
 
 interface BnccChunk {
   codigo: string;
@@ -126,39 +130,48 @@ function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 // ── Download com retry ────────────────────────────────────────────────────────
 
-async function downloadPdfWithRetry(url: string): Promise<Buffer> {
-  const filename = path.join(CACHE_DIR, path.basename(url));
-  if (fs.existsSync(filename)) {
-    const size = fs.statSync(filename).size;
-    if (size > 500_000) {
-      console.log(`  → Cache local: ${filename} (${(size / 1024 / 1024).toFixed(1)} MB)`);
-      return fs.readFileSync(filename);
+// Salva sempre como BNCC_EnsinoMedio.pdf — tenta cada URL até obter um PDF válido (>3 MB)
+async function downloadEmPdf(): Promise<Buffer> {
+  // Verificar cache existente
+  if (fs.existsSync(EM_PDF_LOCAL)) {
+    const size = fs.statSync(EM_PDF_LOCAL).size;
+    if (size > 3_000_000) {
+      console.log(`  → Cache local: ${EM_PDF_LOCAL} (${(size / 1024 / 1024).toFixed(1)} MB)`);
+      return fs.readFileSync(EM_PDF_LOCAL);
     }
-    // arquivo parcial — deletar e re-baixar
-    fs.unlinkSync(filename);
-    console.log("  → Cache parcial removido, re-baixando...");
+    // arquivo inválido ou pequeno demais — deletar e re-baixar
+    fs.unlinkSync(EM_PDF_LOCAL);
+    console.log("  → Cache inválido removido, re-baixando...");
   }
 
-  for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
-    try {
-      console.log(`  → Tentativa ${attempt}/${DOWNLOAD_RETRIES}: baixando ${path.basename(url)}...`);
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60_000);
+  for (const url of EM_PDF_URLS) {
+    for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
+      try {
+        console.log(`  → Tentativa ${attempt}/${DOWNLOAD_RETRIES}: baixando de ${url.split("/").pop()}...`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 90_000);
 
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeout);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const buffer = Buffer.from(await res.arrayBuffer());
-      fs.writeFileSync(filename, buffer);
-      console.log(`  → Salvo: ${filename} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
-      return buffer;
-    } catch (err) {
-      console.warn(`  ⚠  Tentativa ${attempt} falhou: ${err}`);
-      if (attempt < DOWNLOAD_RETRIES) await sleep(3000 * attempt);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        if (buffer.length < 3_000_000) {
+          console.warn(`  ⚠  Arquivo muito pequeno (${(buffer.length / 1024 / 1024).toFixed(1)} MB) — pode ser o PDF errado`);
+          break; // tentar próxima URL
+        }
+
+        fs.writeFileSync(EM_PDF_LOCAL, buffer);
+        console.log(`  → Salvo: ${EM_PDF_LOCAL} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
+        return buffer;
+      } catch (err) {
+        console.warn(`  ⚠  Tentativa ${attempt} (${url.split("/").pop()}) falhou: ${err}`);
+        if (attempt < DOWNLOAD_RETRIES) await sleep(3000 * attempt);
+      }
     }
   }
-  throw new Error(`Falha após ${DOWNLOAD_RETRIES} tentativas ao baixar ${url}`);
+  throw new Error("Falha ao baixar o PDF do BNCC EM. Baixe manualmente e salve como .cache/BNCC_EnsinoMedio.pdf");
 }
 
 // ── Upsert com checkpoint ─────────────────────────────────────────────────────
@@ -228,18 +241,8 @@ async function main() {
   const pinecone = new Pinecone({ apiKey: PINECONE_API_KEY });
   const index = pinecone.index(PINECONE_INDEX);
 
-  let pdfBuffer: Buffer;
-  if (fs.existsSync(EM_PDF_LOCAL)) {
-    const size = fs.statSync(EM_PDF_LOCAL).size;
-    console.log(`\n📄 PDF local encontrado: ${EM_PDF_LOCAL} (${(size / 1024 / 1024).toFixed(1)} MB)`);
-    pdfBuffer = fs.readFileSync(EM_PDF_LOCAL);
-  } else {
-    console.log(`\n📄 PDF local não encontrado em ${EM_PDF_LOCAL}`);
-    console.log("   Baixe o PDF do EM em https://basenacionalcomum.mec.gov.br/a-base");
-    console.log("   e salve como .cache/BNCC_EnsinoMedio.pdf");
-    console.log("\n   Tentando URL de fallback...");
-    pdfBuffer = await downloadPdfWithRetry(EM_PDF_URL);
-  }
+  console.log("\n📄 Obtendo PDF do BNCC Ensino Médio...");
+  const pdfBuffer = await downloadEmPdf();
 
   console.log("📝 Extraindo chunks do EM...");
   const { text } = await pdf(pdfBuffer);
