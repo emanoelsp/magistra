@@ -281,16 +281,13 @@ export async function fixDocxAnchorImages(
     }
 
     // ── Raise text containers above anchor images ─────────────────────────────
-    // For <header> elements (from DOCX header XML files): apply full constraint
-    // with padding + overflow:hidden to confine text between the two flag images.
-    // For body-level elements (TABLE / TR / P): only set z-index so text renders
-    // on top of z-index:1 images — do NOT apply overflow:hidden or padding because
-    // those interact badly with `td { position: relative }` in the editor, which
-    // makes table cells positioning contexts and causes clipping of absolute images.
-    for (const { headerEl: hEl, columnLeft_mm: colLeft, anchors: hAnchors } of headerConstraints.values()) {
+    // For <header> elements: apply asymmetric padding + overflow:hidden to confine
+    // text between logos. Left and right padding are computed independently so a
+    // logo only on the left does not also steal space on the right.
+    // For body-level elements (TABLE / TR / P): only set z-index — do NOT apply
+    // overflow:hidden or padding (breaks td { position: relative } clipping).
+    for (const [secEl, { headerEl: hEl, columnLeft_mm: colLeft, anchors: hAnchors }] of headerConstraints.entries()) {
       if (hAnchors.length === 0) continue;
-      const sorted = [...hAnchors].sort((a, b) => a.leftMm - b.leftMm);
-      const padding_mm = Math.max(0, (sorted[0].leftMm - colLeft) + sorted[0].widthMm);
       const isHeaderEl = hEl.tagName === "HEADER";
 
       // Raise above absolutely-positioned images (z-index:1).
@@ -298,12 +295,64 @@ export async function fixDocxAnchorImages(
       hEl.style.zIndex = "2";
 
       if (isHeaderEl) {
-        // Full constraint only for true <header> elements — safe to clip.
-        const snug_mm = Math.max(0, Math.min(padding_mm, 20));
-        hEl.style.paddingLeft = `${snug_mm}mm`;
-        hEl.style.paddingRight = `${snug_mm}mm`;
-        hEl.style.boxSizing = "border-box";
-        hEl.style.overflow = "hidden";
+        // Column right edge from the section's right padding.
+        const secRect = secEl.getBoundingClientRect();
+        const secPR_mm = parseFloat(getComputedStyle(secEl).paddingRight || "0") / 3.7795;
+        const colRight_mm = secRect.width / 3.7795 - secPR_mm;
+        const centerMm = (colLeft + colRight_mm) / 2;
+        const GAP_MM = 2; // min gap between logo edge and text
+
+        // Separate left/right padding — previous symmetric formula applied the
+        // left logo's width as right padding too, shrinking text unnecessarily.
+        let leftPad_mm = 0;
+        let rightPad_mm = 0;
+        for (const a of hAnchors) {
+          if (a.leftMm <= centerMm) {
+            leftPad_mm = Math.max(leftPad_mm, (a.leftMm - colLeft) + a.widthMm + GAP_MM);
+          } else {
+            rightPad_mm = Math.max(rightPad_mm, colRight_mm - a.leftMm + GAP_MM);
+          }
+        }
+
+        hEl.style.paddingLeft  = `${leftPad_mm}mm`;
+        hEl.style.paddingRight = `${rightPad_mm}mm`;
+        hEl.style.boxSizing    = "border-box";
+        hEl.style.overflow     = "hidden";
+
+        // ── Collision guard: scale down any image still overlapping text ──────
+        // getBoundingClientRect() forces a synchronous reflow so rects reflect the
+        // padding already applied above.
+        const anchorImgs = Array.from(
+          secEl.querySelectorAll<HTMLImageElement>("img"),
+        ).filter((img) => img.style.position === "absolute");
+        const textEls = Array.from(
+          hEl.querySelectorAll<HTMLElement>("p, td, th"),
+        ).filter((el) => (el.textContent ?? "").trim().length > 1);
+
+        for (const img of anchorImgs) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const ir = img.getBoundingClientRect();
+            const overlaps = textEls.some((t) => {
+              const tr = t.getBoundingClientRect();
+              return (
+                tr.width > 3 && tr.height > 3 &&
+                !(tr.right <= ir.left + 2 || tr.left >= ir.right - 2 ||
+                  tr.bottom <= ir.top + 2 || tr.top >= ir.bottom - 2)
+              );
+            });
+            if (!overlaps) break;
+            const curW = parseFloat(img.style.width);
+            if (isNaN(curW) || curW <= 5) break;
+            img.style.width  = `${(curW * 0.82).toFixed(1)}mm`;
+            img.style.height = "auto";
+            console.info(LOG, `collision guard: scaled to ${(curW * 0.82).toFixed(1)}mm (attempt ${attempt + 1})`);
+          }
+        }
+
+        console.info(LOG, "header padding applied", {
+          leftPad_mm: leftPad_mm.toFixed(1),
+          rightPad_mm: rightPad_mm.toFixed(1),
+        });
       }
 
       // Reset letter-spacing on every paragraph so long lines fit
@@ -314,9 +363,7 @@ export async function fixDocxAnchorImages(
       }
 
       console.info(LOG, "text raised above anchors", {
-        colLeft_mm: colLeft.toFixed(1),
-        padding_mm: padding_mm.toFixed(1),
-        fullConstraint: isHeaderEl,
+        isHeaderEl,
         paragraphs: paras.length,
         tag: hEl.tagName,
       });

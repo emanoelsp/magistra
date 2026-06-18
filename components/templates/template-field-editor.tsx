@@ -259,8 +259,14 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             (existingKeys.has(k) || processedKeys.has(k) ? full : ""))
           .replace(/\s+/g, " ")
           .trim();
-        const hasValidKey = /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(cleanedContent);
-        if (hasValidKey) {
+        // Generate a cellEdit when there are still valid keys remaining OR when
+        // we removed at least one key (cell must be overwritten to erase the
+        // placeholder from the DOCX — without this, {{removed_key}} stays in
+        // the file and keeps showing after the field is deleted from the sidebar).
+        const hadRemovedKeys = matches.some(
+          (m) => !existingKeys.has(m[1]) && !processedKeys.has(m[1]),
+        );
+        if (hadRemovedKeys || /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(cleanedContent)) {
           const alreadyRecorded = cellEdits.some(
             (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
           );
