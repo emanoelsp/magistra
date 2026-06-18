@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Download, Edit2, FileText, FolderKanban, Plus, Sparkles, Upload } from "lucide-react";
+import { ArrowRight, Download, Edit2, FileText, FolderKanban, Pencil, Plus, Sparkles, Upload } from "lucide-react";
 
 import { requireCurrentUserProfile } from "../../lib/auth/session";
 import { getDashboardStats, getRecentTemplates, getUserPlanosComNome } from "../../lib/services/firestore/dashboard.server";
@@ -327,7 +327,9 @@ export default async function DashboardPage() {
                       </span>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-slate-900">
-                          {plano.template_nome}
+                          {typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
+                            ? plano.conteudo_gerado._plano_titulo
+                            : plano.template_nome}
                         </p>
                         <p className="truncate text-xs text-slate-400">
                           {formatDate(plano.data_geracao)}
@@ -351,12 +353,24 @@ export default async function DashboardPage() {
                           <Download className="h-3.5 w-3.5" />
                         </a>
                       )}
-                      <Link
-                        href={`/dashboard/historico/${plano.id}`}
-                        className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-                      >
-                        Detalhes
-                      </Link>
+                      {(plano.status === "rascunho" || plano.status === "aguardando_geracao") && (
+                        <Link
+                          href={`/dashboard/gerar?resume=${plano.id}`}
+                          className="flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:border-violet-400 hover:bg-violet-100"
+                          title="Continuar editando"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          Continuar
+                        </Link>
+                      )}
+                      {plano.status === "gerado" && (
+                        <Link
+                          href={`/dashboard/historico/${plano.id}`}
+                          className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+                        >
+                          Detalhes
+                        </Link>
+                      )}
                     </div>
                   </li>
                 );

@@ -10,50 +10,31 @@
 - [x] Sugestões IA em lote para campos ia_sugerida (`/api/gerar-plano`)
 - [x] Histórico de planos com download PDF via `pdf-lib`
 - [x] Sidebar com navegação e logout
-
-## Em progresso
-
-- [ ] **Editor split-view Word-like** (`/dashboard/planos/novo?template=[id]`)
-  - [ ] Toolbar com nome do template, status, botões Salvar/Finalizar
-  - [ ] Painel esquerdo: formulário com campos do schema
-  - [ ] Painel direito: sugestões IA por campo focado
-  - [ ] Auto-sugestão quando campos manuais (escola/turma/ano/disciplina) são preenchidos
-  - [ ] Inserção de sugestão com um clique
-  - [ ] Salvamento como rascunho + finalização com download PDF
-
-- [ ] **API por campo** (`/api/ia/campo`) — sugestão IA para um único campo
-  - [ ] Recebe: templateId, fieldKey, fieldLabel, fieldGroup, metadata
-  - [ ] Retorna: array de 3–5 sugestões `{ id, label, descricao?, fonte? }`
-
-- [ ] **Editor de campos do template** (`/dashboard/templates/[id]/editar`)
-  - [ ] Listar campos extraídos do template
-  - [ ] Editar label, type, role, group de cada campo
-  - [ ] Adicionar/remover campos
-  - [ ] Salvar no Firestore
-
-- [ ] **Limites de plano** (`lib/services/limits.ts`)
-  - [ ] Verificar count de templates vs. limite do plano
-  - [ ] Verificar count de planos do mês vs. limite
-  - [ ] Exibir uso na página de templates (badge X/2)
-  - [ ] Bloquear criação quando limite atingido
+- [x] **Editor split-view Word-like** (`/dashboard/planos/novo?template=[id]`)
+- [x] **API por campo** (`/api/ia/campo`) — sugestão IA para um único campo
+- [x] **Editor de campos do template** (`/dashboard/templates/[id]/editar`)
+- [x] **Limites de plano** — verificação e exibição de uso
+- [x] **Cadastro com seleção de plano** — onboarding pós-login (novo usuário → `/onboarding`)
+- [x] **Botões na lista de templates** — "Novo plano", "Visualizar", "Editar", "Excluir"
+- [x] **Download PDF melhorado** — campos agrupados por seção com cabeçalhos visuais
+- [x] **Cache seguro** — user_id + schema hash na cache key (`suggestions-cache.server.ts`)
+- [x] **Sanitização de prompt injection** (`/api/ia/campo` — função `sanitizeForPrompt`)
+- [x] **Rate limiting** na IA (`lib/services/rate-limit.server.ts`)
+- [x] **Telemetria de aceitação** (`/api/ia/aceitar` + `trackSugestaoAceita`)
+- [x] **Validação pós-geração** (`lib/services/suggestion-validator.ts`)
+- [x] **Fuzzy match BNCC** (`lib/services/bncc-rag.server.ts`)
+- [x] **Paginação real** no histórico (`getUserPlanosComNome` com page/pageSize)
+- [x] **Soft delete** de templates
+- [x] **Validação BNCC** — regex de formato em `suggestion-validator.ts`
+- [x] **Memória pedagógica** (`lib/services/pedagogic-memory.server.ts`)
+- [x] **Versões do plano** (`/api/planos/[id]/versoes`)
+- [x] **Bloqueio de edição pós-finalização** — `isFinalized` no editor
+- [x] **Bug**: planos `aguardando_geracao` agora têm botão "Continuar editando" no histórico e dashboard
+- [x] **Bug**: nome do template no histórico usa `conteudo_gerado.template_nome` como fallback quando template foi deletado
+- [x] **Dashboard**: título do plano (`_plano_titulo`) mostrado em vez do nome do template quando disponível
 
 ## Pendente
 
-- [ ] **Cadastro com seleção de plano** — fluxo de onboarding pós-login
-  - [ ] Tela de boas-vindas após primeiro login
-  - [ ] Seleção de plano (apenas "Médio" habilitado, outros "Em breve")
-  - [ ] Salva `plano: "medio"` no Firestore users/{uid}
-
-- [ ] **Botões na lista de templates**
-  - [ ] "Gerar novo plano" → `/dashboard/planos/novo?template=[id]`
-  - [ ] "Editar campos" → `/dashboard/templates/[id]/editar`
-  - [ ] "Excluir" (já existe)
-
-- [ ] **Download PDF melhorado** — formatar com seções e labels legíveis
-
 - [ ] **Pagamento e outros planos** (fase futura — não implementar no MVP)
-
-## Bugs conhecidos
-
-- O wizard `/dashboard/gerar` não mostra nome do template no histórico (exibe ID truncado)
-- Status "aguardando_geracao" deveria ser "gerado" ao salvar pelo editor
+- [ ] **Preview do plano preenchido** inline na tela de detalhes (sem abrir aba)
+- [ ] **Notificação de conclusão do DOCX fillable** — avisar o professor quando o processamento terminar
