@@ -122,6 +122,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
   const originalTextsRef = useRef<Map<HTMLElement, string>>(new Map());
+  // Stores textContent INCLUDING chip text — used to detect moved/deleted chips.
+  const originalTextsWithChipsRef = useRef<Map<HTMLElement, string>>(new Map());
   const savedSelRef = useRef<Range | null>(null);
   // Snapshot of field keys and doc-visible keys at the moment the doc was last rendered.
   // Lets handleSaveEdits distinguish:
@@ -276,6 +278,20 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         }
       }
 
+      // Detect cells that originally had chips but the user cut/moved them away.
+      // Without this, the old {{key}} stays in the DOCX file after a cut-paste move.
+      if (matches.length === 0) {
+        const origWithChips = originalTextsWithChipsRef.current.get(el) ?? "";
+        if (/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(origWithChips)) {
+          const alreadyRecorded = cellEdits.some(
+            (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
+          );
+          if (!alreadyRecorded) {
+            cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: currentText.replace(/\s+/g, " ").trim(), coord });
+          }
+        }
+      }
+
       // Detect bare snake_case identifiers typed without {{ }} (must contain underscore)
       if (matches.length === 0) {
         const bare = currentText.trim().match(/^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/);
@@ -346,18 +362,27 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     });
     const field = fields.find((f) => f.key === key);
     if (!field) return;
-    // First try to find the {{key}} chip
+    function highlight(el: HTMLElement) {
+      el.style.background = "rgba(139,92,246,0.15)";
+      el.style.outline = "2px solid rgba(139,92,246,0.5)";
+      el.style.borderRadius = "2px";
+      el.setAttribute("data-mhl", "true");
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    // 1. Chip overlay (present when fieldPositions has the key)
     const chip = container.querySelector(`[data-field-chip="${key}"]`);
     const chipEl = chip?.closest("td") ?? chip?.closest("p") ?? chip as HTMLElement | null;
-    if (chipEl) {
-      (chipEl as HTMLElement).style.background = "rgba(139,92,246,0.15)";
-      (chipEl as HTMLElement).style.outline = "2px solid rgba(139,92,246,0.5)";
-      (chipEl as HTMLElement).style.borderRadius = "2px";
-      chipEl.setAttribute("data-mhl", "true");
-      chipEl.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-    // Fall back to label matching
+    if (chipEl) { highlight(chipEl as HTMLElement); return; }
+
+    // 2. Raw {{key}} text in the DOCX — present right after a save when fieldPositions
+    //    was cleared and the chip hasn't been re-injected yet.
+    const rawEl = Array.from(container.querySelectorAll<HTMLElement>("td, p")).find(
+      (el) => el.textContent?.includes(`{{${key}}}`),
+    );
+    if (rawEl) { highlight(rawEl); return; }
+
+    // 3. Label / defaultValue text matching (fuzzy fallback)
     const terms = [field.label, field.defaultValue].filter(
       (t): t is string => typeof t === "string" && t.trim().length > 2,
     );
@@ -374,13 +399,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         }
       }
     }
-    if (bestEl) {
-      (bestEl as HTMLElement).style.background = "rgba(139,92,246,0.15)";
-      (bestEl as HTMLElement).style.outline = "2px solid rgba(139,92,246,0.5)";
-      (bestEl as HTMLElement).style.borderRadius = "2px";
-      bestEl.setAttribute("data-mhl", "true");
-      bestEl.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    if (bestEl) highlight(bestEl as HTMLElement);
   }, [fields]);
 
   // Highlight the active field
@@ -401,6 +420,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
+    // Don't re-walk the DOM while the user is actively editing — the walker
+    // replaces text nodes which kills the cursor position.
+    const active = document.activeElement as HTMLElement | null;
+    if (active?.contentEditable === "true" && container.contains(active)) return;
     const roleMap = new Map(fields.map((f) => [f.key, f.role]));
 
     function chipCss(isIa: boolean) {
@@ -452,6 +475,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
           const isIa = (roleMap.get(key) ?? "manual") === "ia_sugerida";
           const span = document.createElement("span");
           span.setAttribute("data-field-chip", key);
+          span.setAttribute("contenteditable", "false");
           span.style.cssText = chipCss(isIa);
           span.textContent = part;
           frag.appendChild(span);
@@ -495,6 +519,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       const isIa = field.role === "ia_sugerida";
       const chip = document.createElement("span");
       chip.setAttribute("data-field-chip", key);
+      chip.setAttribute("contenteditable", "false");
       chip.style.cssText = [
         "display:inline-block", "padding:2px 8px", "border-radius:6px",
         "font-family:monospace", "font-size:10px", "font-weight:700",
@@ -545,23 +570,64 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     // ordinal counting in handleSaveEdits matches the clean original DOCX text
     // that the server uses for injectRawCell / injectAtCell fallback paths.
     originalTextsRef.current = new Map();
+    originalTextsWithChipsRef.current = new Map();
     for (const el of editableEls) {
-      const clean = (el.textContent ?? "")
-        .replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
+      const raw = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+      originalTextsWithChipsRef.current.set(el, raw);
+      const clean = raw.replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "").replace(/\s+/g, " ").trim();
       originalTextsRef.current.set(el, clean);
+    }
+
+    // Chips inside contenteditable cells must be atomic (non-editable) so the
+    // user can select and delete them whole but cannot type inside them.
+    for (const chip of Array.from(container.querySelectorAll<HTMLElement>("[data-field-chip]"))) {
+      chip.setAttribute("contenteditable", "false");
+    }
+
+    // Enter → <br> (prevents browser from inserting <div>/<p> wrappers which break layout).
+    // Paste → plain text only (strips HTML that would corrupt cell structure).
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const br = document.createElement("br");
+      range.insertNode(br);
+      range.setStartAfter(br);
+      range.setEndAfter(br);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    function onPaste(e: ClipboardEvent) {
+      e.preventDefault();
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (!text) return;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
     }
 
     for (const el of editableEls) {
       el.contentEditable = "true";
       el.style.cursor = "text";
+      el.addEventListener("keydown", onKeyDown);
+      el.addEventListener("paste", onPaste);
     }
 
     return () => {
       for (const el of editableEls) {
         el.contentEditable = "false";
         el.style.removeProperty("cursor");
+        el.removeEventListener("keydown", onKeyDown);
+        el.removeEventListener("paste", onPaste);
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1102,11 +1168,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     if (newFields.length > 0) {
       setExpandedField(newFields[0].key);
       setActiveFieldKey(newFields[0].key);
-      // Fields whose label was auto-derived (key starts with campo_) need explicit configuration
-      const autoKeys = newFields.filter((f) => f.key.startsWith("campo_")).map((f) => f.key);
-      if (autoKeys.length > 0) {
-        setPendingConfigKeys((prev) => new Set([...prev, ...autoKeys]));
-      }
+      // Every newly discovered placeholder needs label/role/group configuration,
+      // regardless of whether the key was auto-generated (campo_) or manually typed.
+      setPendingConfigKeys((prev) => new Set([...prev, ...newFields.map((f) => f.key)]));
+      // Locate the first new field in the document after the preview reloads
+      setTimeout(() => setLocateKey(`${newFields[0].key}:${Date.now()}`), 800);
     }
 
     // Show result feedback toast
@@ -1143,8 +1209,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               .replace(/[^a-z0-9]+/g, "_")
               .replace(/^_|_$/g, "") || f.key;
           updated.key = newKey;
-          // When a label is set for a campo_ field, clear its pending-config state
-          // (the key may change, so clear both old and new key)
           if (patch.label.trim()) {
             setPendingConfigKeys((prev) => {
               const next = new Set(prev);
@@ -1153,6 +1217,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               return next;
             });
           }
+        } else if (patch.label?.trim()) {
+          // For fields with explicit keys (typed as {{minha_chave}}): clear pending
+          // config as soon as the user provides a non-empty label.
+          setPendingConfigKeys((prev) => {
+            const next = new Set(prev);
+            next.delete(f.key);
+            return next;
+          });
         }
         return updated;
       }),
