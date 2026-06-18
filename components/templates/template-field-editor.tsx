@@ -1055,7 +1055,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       if (!panelResizeRef.current.dragging) return;
       e.preventDefault();
       const delta = panelResizeRef.current.startX - e.clientX;
-      const next = Math.max(240, Math.min(640, panelResizeRef.current.startW + delta));
+      const maxW = Math.floor(window.innerWidth * 0.30);
+      const next = Math.max(240, Math.min(maxW, panelResizeRef.current.startW + delta));
       setPanelWidth(next);
     }
     function onUp() {
@@ -2332,6 +2333,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   // DOCX: header bar + split view (left = tabbed viewer, right = fields)
   if (isDocx) {
     return (
+      <>
       <div className="flex h-full flex-col gap-4">
         {magisQuestionsModal}
         {confirmSuccessModal}
@@ -2444,31 +2446,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             </div>
           </div>
 
-          {/* Drag handle — desktop only, sits between doc and sidebar */}
-          <div
-            className="hidden xl:flex w-3 shrink-0 cursor-col-resize select-none items-center justify-center group relative"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              if (panelCollapsed) { setPanelCollapsed(false); return; }
-              panelResizeRef.current = { dragging: true, startX: e.clientX, startW: panelWidth };
-              document.body.style.cursor = "col-resize";
-              document.body.style.userSelect = "none";
-            }}
-            onDoubleClick={() => setPanelCollapsed((c) => !c)}
-            title="Arrastar para redimensionar • duplo clique para ocultar"
-          >
-            <div className={`h-10 w-[3px] rounded-full transition-colors duration-150 ${
-              panelCollapsed
-                ? "bg-violet-400 group-hover:bg-violet-600"
-                : "bg-slate-300 group-hover:bg-violet-500"
-            }`} />
-          </div>
+          {/* Drag handle — resize only (not collapse); hidden when sidebar is collapsed */}
+          {!panelCollapsed && (
+            <div
+              className="hidden xl:flex w-3 shrink-0 cursor-col-resize select-none items-center justify-center group relative"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                panelResizeRef.current = { dragging: true, startX: e.clientX, startW: panelWidth };
+                document.body.style.cursor = "col-resize";
+                document.body.style.userSelect = "none";
+              }}
+              title="Arrastar para redimensionar"
+            >
+              <div className="h-10 w-[3px] rounded-full bg-slate-300 transition-colors duration-150 group-hover:bg-violet-500" />
+            </div>
+          )}
 
           {/* Item 16: resizable right panel */}
           <div
             ref={panelScrollRef}
-            style={!panelCollapsed ? { width: panelWidth + "px" } : undefined}
-            className={`min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none] shrink-0 ${
+            style={!panelCollapsed ? { width: panelWidth + "px", maxWidth: "30%" } : undefined}
+            className={`min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white [overflow-anchor:none] shrink-0 ${
               mobileTab === "campos"
                 ? "flex flex-col flex-1"
                 : panelCollapsed
@@ -2476,6 +2474,21 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   : "hidden xl:flex xl:flex-col"
             }`}
           >
+            {/* Sidebar header: title + collapse button */}
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-100 bg-white px-4 py-3 shrink-0">
+              <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Campos</span>
+              <button
+                type="button"
+                onClick={() => setPanelCollapsed(true)}
+                className="flex items-center justify-center rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                title="Recolher painel"
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="flex flex-col gap-0 p-4">
             {headerActionsEl && createPortal(
               <>
                 <button
@@ -2498,9 +2511,23 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               headerActionsEl,
             )}
             {fieldsPanel}
+            </div>{/* end scrollable content */}
           </div>
         </div>
       </div>
+
+      {/* Expand button — appears when sidebar is collapsed (desktop only) */}
+      {panelCollapsed && (
+        <button
+          type="button"
+          onClick={() => setPanelCollapsed(false)}
+          className="fixed right-4 top-1/2 z-50 hidden -translate-y-1/2 items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-md transition hover:border-violet-500 hover:text-violet-600 xl:flex"
+          title="Mostrar painel de campos"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+        </button>
+      )}
+      </>
     );
   }
 
