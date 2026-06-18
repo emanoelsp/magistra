@@ -204,11 +204,29 @@ export async function fixDocxAnchorImages(
         img.style.maxWidth = "none";
         img.style.display = "block";
         img.style.position = "static";
-        img.style.margin = "0 auto";
-        console.info(LOG, `inline-fixed (td) ${anchor.imagePath}`, {
-          w: `${anchor.width_mm.toFixed(1)}mm`,
-          h: `${anchor.height_mm.toFixed(1)}mm`,
-        });
+
+        // posX > 80 mm from column start → image belongs on the right side of the page.
+        // Move it to the last <td> in the row and right-align it.
+        const RIGHT_THRESHOLD_MM = 80;
+        if (anchor.posX_mm > RIGHT_THRESHOLD_MM) {
+          const rowEl = (() => {
+            let e: HTMLElement | null = tdAncestor.parentElement;
+            while (e && e !== container && e.tagName !== "TR") e = e.parentElement;
+            return e?.tagName === "TR" ? e : null;
+          })();
+          const tds = rowEl ? Array.from(rowEl.querySelectorAll<HTMLElement>(":scope > td, :scope > th")) : [];
+          const targetTd = tds.length > 1 ? tds[tds.length - 1] : tdAncestor;
+          if (targetTd !== img.parentElement) targetTd.appendChild(img);
+          img.style.margin = "0 0 0 auto"; // push to right edge of cell
+          console.info(LOG, `inline-fixed (td→right) ${anchor.imagePath}`, {
+            w: `${anchor.width_mm.toFixed(1)}mm`, posX: `${anchor.posX_mm.toFixed(1)}mm`,
+          });
+        } else {
+          img.style.margin = "0 auto";
+          console.info(LOG, `inline-fixed (td) ${anchor.imagePath}`, {
+            w: `${anchor.width_mm.toFixed(1)}mm`,
+          });
+        }
         continue;
       }
 

@@ -429,6 +429,9 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     if (active?.contentEditable === "true" && container.contains(active)) return;
     const roleMap = new Map(fields.map((f) => [f.key, f.role]));
 
+    // CHIP INVARIANT: a chip must only be created/kept for a key that exists in
+    // roleMap. Every chip-creation path below MUST check roleMap.has(key) first.
+    // Violating this causes ghost chips that survive field deletion.
     function chipCss(isIa: boolean) {
       return [
         "display:inline-block", "padding:2px 8px", "border-radius:6px",
@@ -475,13 +478,18 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const m = part.match(/^\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}$/);
         if (m) {
           const key = m[1];
-          const isIa = (roleMap.get(key) ?? "manual") === "ia_sugerida";
-          const span = document.createElement("span");
-          span.setAttribute("data-field-chip", key);
-          span.setAttribute("contenteditable", "false");
-          span.style.cssText = chipCss(isIa);
-          span.textContent = part;
-          frag.appendChild(span);
+          // Don't recreate chips for deleted fields — leave as plain text
+          if (!roleMap.has(key)) {
+            frag.appendChild(document.createTextNode(part));
+          } else {
+            const isIa = roleMap.get(key) === "ia_sugerida";
+            const span = document.createElement("span");
+            span.setAttribute("data-field-chip", key);
+            span.setAttribute("contenteditable", "false");
+            span.style.cssText = chipCss(isIa);
+            span.textContent = part;
+            frag.appendChild(span);
+          }
         } else {
           frag.appendChild(document.createTextNode(part));
         }

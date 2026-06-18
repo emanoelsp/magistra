@@ -145,6 +145,10 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
           typeof templateData.tipo_plano === "string" && templateData.tipo_plano.length > 0
             ? templateData.tipo_plano
             : null,
+        estado:
+          typeof templateData.estado === "string" && templateData.estado.length > 0
+            ? templateData.estado
+            : null,
         campoCount: schema.length,
         criadoEm: toIsoString(templateData.data_criacao),
         schema_campos: schema,

@@ -557,23 +557,17 @@ export function PlanGenerationWizard({
                   <div className="grid gap-4 md:grid-cols-2">
                     {gridFields.flatMap((field, idx) => {
                       const first2profIdx = gridFields.findIndex(is2profField);
-                      const items = [];
-                      if (has2prof && idx === first2profIdx) {
-                        items.push(
-                          <div key="__2prof_banner" className="col-span-2 flex items-start gap-3 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3">
-                            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" />
-                            <p className="text-sm text-violet-700">
-                              <strong>2° Professor detectado</strong> — a Magis vai incluir sugestões
-                              específicas de educação inclusiva (NEE, AEE e adaptações curriculares) no próximo
-                              passo.
-                            </p>
-                          </div>
-                        );
-                      }
+                      const items: React.ReactNode[] = [];
                       items.push(
                         <label key={field.key} className="block">
                           <span className="text-sm font-medium text-slate-700">{field.label}</span>
                           {field.required && <span className="ml-1 text-xs text-rose-500">*</span>}
+                          {has2prof && idx === first2profIdx && (
+                            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-violet-600">
+                              <Sparkles className="h-3 w-3 shrink-0" />
+                              A Magis vai incluir sugestões específicas de NEE, AEE e adaptações curriculares no próximo passo.
+                            </p>
+                          )}
                           {field.type === "textarea" ? (
                             <textarea
                               rows={3}

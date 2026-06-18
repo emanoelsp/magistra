@@ -222,8 +222,13 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
       for (const part of parts) {
         const m = part.match(/^\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}$/);
         if (m) {
-          const isIa = (roleMap.get(m[1]) ?? "manual") === "ia_sugerida";
-          frag.appendChild(makeChip(m[1], isIa));
+          // Invariant: never create chips for keys not in the schema
+          if (!roleMap.has(m[1])) {
+            frag.appendChild(document.createTextNode(part));
+          } else {
+            const isIa = roleMap.get(m[1]) === "ia_sugerida";
+            frag.appendChild(makeChip(m[1], isIa));
+          }
         } else {
           frag.appendChild(document.createTextNode(part));
         }
