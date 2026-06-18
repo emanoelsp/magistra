@@ -744,7 +744,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 /* ── Estrutura do documento ── */
                 .doc-view table { width:100%; border-collapse:collapse; margin:4px 0; }
                 .doc-view td, .doc-view th {
-                  border:1px solid #555;
+                  border:none;
                   padding:4px 8px;
                   vertical-align:top;
                   font-size:12px;
@@ -752,6 +752,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 }
                 .doc-view th { font-weight:700; background:#f0f0f0; }
                 .doc-view p { margin:2px 0; line-height:1.5; }
+                .doc-view td > p, .doc-view td > div { margin-top:var(--pm-t,2px); margin-bottom:var(--pm-b,2px); }
                 .doc-view h1 { font-size:15px; font-weight:700; text-align:center; margin:10px 0 6px; }
                 .doc-view h2 { font-size:13px; font-weight:700; text-align:center; margin:8px 0 4px; }
                 .doc-view h3 { font-size:12px; font-weight:700; margin:6px 0 3px; }

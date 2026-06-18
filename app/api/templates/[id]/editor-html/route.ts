@@ -35,7 +35,11 @@ interface CellStyle {
   textColor?: string;  // hex without #
   vAlign?: string;     // top | center | bottom
   fontSize?: number;   // half-points
+  fontFamily?: string;
   borders?: Partial<Record<"top" | "bottom" | "left" | "right", BorderStyle | null>>;
+  padding?: { top?: number; right?: number; bottom?: number; left?: number }; // twips
+  spacingBefore?: number; // twips (w:spacing w:before)
+  spacingAfter?: number;  // twips (w:spacing w:after)
 }
 
 interface RowStyle {
@@ -44,6 +48,7 @@ interface RowStyle {
 
 interface TableInfo {
   borders?: Partial<Record<"top" | "bottom" | "left" | "right" | "insideH" | "insideV", BorderStyle>>;
+  cellMargin?: { top?: number; right?: number; bottom?: number; left?: number }; // twips, table-level default
 }
 
 interface ImageDimension {
@@ -67,6 +72,11 @@ function emptyLayout(): DocxLayout {
 // 1 EMU = 1/914400 inch; at 96 DPI → px = EMU / 9525
 function emuToPx(emu: number): number {
   return Math.round(emu / 9525);
+}
+
+// 1 twip = 1/20 pt; 1pt ≈ 1.333px at 96dpi
+function twipsToPx(twips: number): number {
+  return Math.round((twips / 20) * 1.333);
 }
 
 // ─── Border helpers ───────────────────────────────────────────────────────────
@@ -116,6 +126,19 @@ function borderToCss(b: BorderStyle): string {
   return `${px}px ${cssStyle} ${color}`;
 }
 
+// ─── vMerge continuation detection ───────────────────────────────────────────
+// Cells with <w:vMerge/> (no w:val="restart") have no DOM counterpart — mammoth
+// folds them into the restart cell's rowspan. We must skip them in flat arrays
+// (cellAligns, cellStyles) to keep the index aligned with HTML <td> elements.
+
+const VMERGE_CONT_RE = /<w:vMerge(?:\s[^>]*)?\/?>/;
+const VMERGE_RESTART_RE = /w:val="restart"/;
+function isVMergeContinuation(tcXml: string): boolean {
+  const m = tcXml.match(VMERGE_CONT_RE);
+  if (!m) return false;
+  return !VMERGE_RESTART_RE.test(m[0]);
+}
+
 // ─── DOCX layout extraction ───────────────────────────────────────────────────
 
 async function extractDocxLayout(buffer: Buffer): Promise<DocxLayout> {
@@ -136,29 +159,35 @@ async function extractDocxLayout(buffer: Buffer): Promise<DocxLayout> {
       if (ws.length > 0) gridWidths.push(ws);
     }
 
-    // 2. Table borders — one entry per table, document order
+    // 2. Table info — one entry per table, document order (outer first, then nested).
+    // We scan <w:tblPr> elements globally: each table has exactly one <w:tblPr> as its
+    // first child, and they appear in the same order as <table> elements in mammoth HTML.
+    // This avoids the lazy-regex nesting problem where outer tables were matched partially.
     const tableInfos: TableInfo[] = [];
-    const tblRe = /<w:tbl\b[^>]*>([\s\S]*?)<\/w:tbl>/g;
-    let tblm: RegExpExecArray | null;
-    while ((tblm = tblRe.exec(xmlContent)) !== null) {
-      const tblContent = tblm[1];
+    const tblPrRe = /<w:tblPr\b[^>]*>([\s\S]*?)<\/w:tblPr>/g;
+    let tblPrM: RegExpExecArray | null;
+    while ((tblPrM = tblPrRe.exec(xmlContent)) !== null) {
+      const tblPr = tblPrM[1];
       const info: TableInfo = {};
-      const tblPrMatch = tblContent.match(/<w:tblPr\b[^>]*>([\s\S]*?)<\/w:tblPr>/);
-      if (tblPrMatch) {
-        const bordersMatch = tblPrMatch[1].match(
-          /<w:tblBorders\b[^>]*>([\s\S]*?)<\/w:tblBorders>/,
-        );
-        if (bordersMatch) {
-          info.borders = parseBordersBlock(bordersMatch[1], [
-            "top",
-            "bottom",
-            "left",
-            "right",
-            "insideH",
-            "insideV",
-          ]) as TableInfo["borders"];
-        }
+
+      const bordersMatch = tblPr.match(/<w:tblBorders\b[^>]*>([\s\S]*?)<\/w:tblBorders>/);
+      if (bordersMatch) {
+        info.borders = parseBordersBlock(bordersMatch[1], [
+          "top", "bottom", "left", "right", "insideH", "insideV",
+        ]) as TableInfo["borders"];
       }
+
+      // Table-level default cell margins (used when cells have no explicit w:tcMar)
+      const cellMarMatch = tblPr.match(/<w:tblCellMar\b[^>]*>([\s\S]*?)<\/w:tblCellMar>/);
+      if (cellMarMatch) {
+        const mar: NonNullable<TableInfo["cellMargin"]> = {};
+        for (const side of ["top", "left", "bottom", "right"] as const) {
+          const m = cellMarMatch[1].match(new RegExp(`<w:${side}\\b[^>]*w:w="(\\d+)"`));
+          if (m) mar[side] = Number(m[1]);
+        }
+        if (Object.keys(mar).length > 0) info.cellMargin = mar;
+      }
+
       tableInfos.push(info);
     }
 
@@ -182,6 +211,10 @@ async function extractDocxLayout(buffer: Buffer): Promise<DocxLayout> {
     const cellRe = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
     let tm: RegExpExecArray | null;
     while ((tm = cellRe.exec(xmlContent)) !== null) {
+      // vMerge continuation cells exist in XML but have no <td> counterpart in
+      // mammoth's HTML output (the restart cell gets rowspan). Skip them so the
+      // flat cellAligns/cellStyles arrays stay aligned with HTML <td> indices.
+      if (isVMergeContinuation(tm[0])) continue;
       const inner = tm[1];
       // Restrict alignment + run-level lookups to content before any nested table
       const nestedAt = inner.indexOf("<w:tbl");
@@ -222,6 +255,17 @@ async function extractDocxLayout(buffer: Buffer): Promise<DocxLayout> {
             style.borders = parsed as CellStyle["borders"];
           }
         }
+
+        // Cell padding (w:tcMar) — explicit per-cell margin override
+        const tcMarMatch = tcPr.match(/<w:tcMar\b[^>]*>([\s\S]*?)<\/w:tcMar>/);
+        if (tcMarMatch) {
+          const mar: CellStyle["padding"] = {};
+          for (const side of ["top", "left", "bottom", "right"] as const) {
+            const m = tcMarMatch[1].match(new RegExp(`<w:${side}\\b[^>]*w:w="(\\d+)"`));
+            if (m) mar[side] = Number(m[1]);
+          }
+          if (Object.keys(mar).length > 0) style.padding = mar;
+        }
       }
 
       // Font size — first w:sz in non-nested zone (half-points)
@@ -231,6 +275,24 @@ async function extractDocxLayout(buffer: Buffer): Promise<DocxLayout> {
       // Text color — first explicit w:color (not theme-based)
       const colorVal = zone.match(/<w:color\b[^>]+\bw:val="([0-9A-Fa-f]{6})"/)?.[1];
       if (colorVal) style.textColor = colorVal;
+
+      // Font family — from first w:rFonts in cell (prefer w:ascii, fallback w:hAnsi)
+      const rFontsMatch = zone.match(/<w:rFonts\b([^>]*)>/);
+      if (rFontsMatch) {
+        const rf = rFontsMatch[1];
+        const font = rf.match(/w:ascii="([^"]+)"/)?.[1] ?? rf.match(/w:hAnsi="([^"]+)"/)?.[1];
+        if (font) style.fontFamily = font;
+      }
+
+      // Paragraph spacing — from first w:spacing element in the cell
+      const spacingEl = zone.match(/<w:spacing\b([^/]*)\/?>/);
+      if (spacingEl) {
+        const sa = spacingEl[1];
+        const before = sa.match(/w:before="(\d+)"/);
+        const after  = sa.match(/w:after="(\d+)"/);
+        if (before) style.spacingBefore = Number(before[1]);
+        if (after)  style.spacingAfter  = Number(after[1]);
+      }
 
       cellStyles.push(style);
     }
@@ -287,51 +349,81 @@ function injectCellAlignments(html: string, cellAligns: string[]): string {
   });
 }
 
-function injectCellStyles(html: string, styles: CellStyle[]): string {
-  let i = 0;
-  return html.replace(/<td([^>]*)>/g, (match, attrs) => {
-    const s = styles[i++];
-    if (!s) return match;
+// Applies per-cell styles from DOCX tcPr, tracking current table to apply
+// table-level insideH/insideV borders as fallback for cells without explicit tcBorders.
+function injectCellStyles(html: string, styles: CellStyle[], tableInfos: TableInfo[]): string {
+  let cellIdx = 0;
+  let tblIdx = -1;
+
+  // Single-pass regex: match <table>, </table>, or <td> in document order.
+  // Capture group 1 is set only for <td> (td attrs).
+  return html.replace(/<table\b[^>]*>|<\/table>|<td([^>]*)>/g, (match, tdAttrs) => {
+    if (match.startsWith("</table")) return match;
+    if (match.startsWith("<table")) { tblIdx++; return match; }
+
+    // ── <td> ──
+    const attrs = tdAttrs ?? "";
+    const s = styles[cellIdx++];
+    const tblInfo = tblIdx >= 0 && tblIdx < tableInfos.length ? tableInfos[tblIdx] : undefined;
 
     const parts: string[] = [];
 
-    if (s.bgColor) {
-      parts.push(`background-color:#${s.bgColor}`);
-    }
-
-    if (s.textColor) {
-      parts.push(`color:#${s.textColor}`);
-    }
-
-    if (s.vAlign) {
-      const vMap: Record<string, string> = {
-        top: "top",
-        center: "middle",
-        bottom: "bottom",
-        both: "middle",
-      };
-      parts.push(`vertical-align:${vMap[s.vAlign] ?? s.vAlign}`);
-    }
-
-    if (s.fontSize) {
-      // half-points → px (1pt ≈ 1.333px)
-      const px = Math.round((s.fontSize / 2) * 1.333);
-      parts.push(`font-size:${px}px`);
-    }
-
-    if (s.borders) {
-      for (const side of ["top", "bottom", "left", "right"] as const) {
-        if (!(side in s.borders)) continue;
-        const b = s.borders[side];
-        parts.push(b ? `border-${side}:${borderToCss(b)}` : `border-${side}:none`);
+    if (s) {
+      if (s.bgColor) parts.push(`background-color:#${s.bgColor}`);
+      if (s.textColor) parts.push(`color:#${s.textColor}`);
+      if (s.vAlign) {
+        const vMap: Record<string, string> = { top: "top", center: "middle", bottom: "bottom", both: "middle" };
+        parts.push(`vertical-align:${vMap[s.vAlign] ?? s.vAlign}`);
+      }
+      if (s.fontSize) {
+        const px = Math.round((s.fontSize / 2) * 1.333);
+        parts.push(`font-size:${px}px`);
+      }
+      if (s.borders) {
+        for (const side of ["top", "bottom", "left", "right"] as const) {
+          if (!(side in s.borders)) continue;
+          const b = s.borders[side];
+          parts.push(b ? `border-${side}:${borderToCss(b)}` : `border-${side}:none`);
+        }
       }
     }
 
+    // Table-level border fallback: apply insideH/insideV when cell has no explicit
+    // tcBorders. This handles the common case where all borders are defined at the
+    // table level via <w:tblBorders insideH="..." insideV="..."/>.
+    const hasExplicitBorders = s?.borders && Object.keys(s.borders).length > 0;
+    if (!hasExplicitBorders && tblInfo?.borders) {
+      const { insideH, insideV } = tblInfo.borders;
+      if (insideH) {
+        parts.push(`border-top:${borderToCss(insideH)}`);
+        parts.push(`border-bottom:${borderToCss(insideH)}`);
+      }
+      if (insideV) {
+        parts.push(`border-left:${borderToCss(insideV)}`);
+        parts.push(`border-right:${borderToCss(insideV)}`);
+      }
+    }
+
+    // Cell padding — explicit w:tcMar, or table-level w:tblCellMar fallback
+    if (s?.padding) {
+      const { top = 0, right = 0, bottom = 0, left = 0 } = s.padding;
+      parts.push(`padding:${twipsToPx(top)}px ${twipsToPx(right)}px ${twipsToPx(bottom)}px ${twipsToPx(left)}px`);
+    } else if (tblInfo?.cellMargin) {
+      const { top = 0, right = 0, bottom = 0, left = 0 } = tblInfo.cellMargin;
+      parts.push(`padding:${twipsToPx(top)}px ${twipsToPx(right)}px ${twipsToPx(bottom)}px ${twipsToPx(left)}px`);
+    }
+
+    // Font family
+    if (s?.fontFamily) parts.push(`font-family:"${s.fontFamily}",sans-serif`);
+
+    // Paragraph spacing — set as CSS custom properties inherited by child <p> elements
+    if (s?.spacingBefore !== undefined) parts.push(`--pm-t:${twipsToPx(s.spacingBefore)}px`);
+    if (s?.spacingAfter  !== undefined) parts.push(`--pm-b:${twipsToPx(s.spacingAfter)}px`);
+
     if (parts.length === 0) return match;
     const newStyle = parts.join(";");
-
     if (/\bstyle="/.test(attrs)) {
-      return `<td${attrs.replace(/\bstyle="([^"]*)"/, `style="$1;${newStyle}`)}>`;
+      return `<td${attrs.replace(/\bstyle="([^"]*)"/, `style="$1;${newStyle}"`)}>`;
     }
     return `<td${attrs} style="${newStyle}">`;
   });
@@ -342,9 +434,7 @@ function injectRowStyles(html: string, styles: RowStyle[]): string {
   return html.replace(/<tr([^>]*)>/g, (match, attrs) => {
     const s = styles[i++];
     if (!s?.height) return match;
-    // twips → px (1 twip = 1/20 pt, 1pt ≈ 1.333px)
-    const px = Math.round((s.height / 20) * 1.333);
-    const newStyle = `height:${px}px`;
+    const newStyle = `height:${twipsToPx(s.height)}px`;
     if (/\bstyle="/.test(attrs)) {
       return `<tr${attrs.replace(/\bstyle="([^"]*)"/, `style="$1;${newStyle}`)}>`;
     }
@@ -358,8 +448,8 @@ function injectRowStyles(html: string, styles: RowStyle[]): string {
 // images, causing the layout to collapse (header logos moving to wrong position).
 function injectImageSizes(html: string, dims: ImageDimension[]): string {
   if (dims.length === 0) return html;
-  // Cap at 400px so oversized images don't overflow the preview panel
-  const MAX_W = 400;
+  // Cap at 720px (fits inside the 820px doc-page with padding)
+  const MAX_W = 720;
   let i = 0;
   return html.replace(/<img([^>]*?)(\s*\/?>)/g, (match, attrs, close) => {
     const dim = dims[i++];
@@ -374,10 +464,20 @@ function injectImageSizes(html: string, dims: ImageDimension[]): string {
 }
 
 // Forces all tables to fixed layout so <colgroup> percentages are respected.
-// Without this, browsers auto-size columns by content and ignore column widths.
-function injectTableFixed(html: string): string {
+// Also injects outer table borders (top/bottom/left/right) from DOCX tblBorders.
+function injectTableFixed(html: string, tableInfos: TableInfo[] = []): string {
+  let tblIdx = 0;
   return html.replace(/<table([^>]*)>/g, (match, attrs) => {
-    const style = "table-layout:fixed;width:100%;border-collapse:collapse";
+    const tblInfo = tableInfos[tblIdx++];
+    const parts = ["table-layout:fixed", "width:100%", "border-collapse:collapse"];
+    if (tblInfo?.borders) {
+      const { top, bottom, left, right } = tblInfo.borders;
+      if (top) parts.push(`border-top:${borderToCss(top)}`);
+      if (bottom) parts.push(`border-bottom:${borderToCss(bottom)}`);
+      if (left) parts.push(`border-left:${borderToCss(left)}`);
+      if (right) parts.push(`border-right:${borderToCss(right)}`);
+    }
+    const style = parts.join(";");
     if (/\bstyle="/.test(attrs)) {
       return `<table${attrs.replace(/\bstyle="([^"]*)"/, `style="$1;${style}"`)}>`;
     }
@@ -624,9 +724,9 @@ async function extractHeaderHtml(buf: Buffer, opts: MammothOptions): Promise<str
     if (!hdrRaw.trim()) return "";
 
     let h = injectColgroups(hdrRaw, hdrLayout.gridWidths);
-    h = injectTableFixed(h);
+    h = injectTableFixed(h, hdrLayout.tableInfos);
     h = injectCellAlignments(h, hdrLayout.cellAligns);
-    h = injectCellStyles(h, hdrLayout.cellStyles);
+    h = injectCellStyles(h, hdrLayout.cellStyles, hdrLayout.tableInfos);
     h = injectRowStyles(h, hdrLayout.rowStyles);
     h = injectImageSizes(h, hdrLayout.imageDims);
 
@@ -694,9 +794,9 @@ export async function GET(
 
     // Apply layout and styling, then annotate interactive fields
     const withColWidths = injectColgroups(rawHtml, layout.gridWidths);
-    const withFixed = injectTableFixed(withColWidths);
+    const withFixed = injectTableFixed(withColWidths, layout.tableInfos);
     const withAlignments = injectCellAlignments(withFixed, layout.cellAligns);
-    const withCellStyles = injectCellStyles(withAlignments, layout.cellStyles);
+    const withCellStyles = injectCellStyles(withAlignments, layout.cellStyles, layout.tableInfos);
     const withRowStyles = injectRowStyles(withCellStyles, layout.rowStyles);
     const withImageSizes = injectImageSizes(withRowStyles, layout.imageDims);
     const annotated = annotateFields(withImageSizes, schema);
