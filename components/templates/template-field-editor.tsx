@@ -478,8 +478,11 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const m = part.match(/^\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}$/);
         if (m) {
           const key = m[1];
-          // Don't recreate chips for deleted fields — leave as plain text
-          if (!roleMap.has(key)) {
+          // Don't recreate chips for fields that were deleted from the sidebar this session.
+          // A deleted key is one that was in the original schema (initialFieldKeysRef) but
+          // is no longer in roleMap. Newly typed keys (never in schema) must still get chips.
+          const wasDeleted = !roleMap.has(key) && initialFieldKeysRef.current.has(key);
+          if (wasDeleted) {
             frag.appendChild(document.createTextNode(part));
           } else {
             const isIa = roleMap.get(key) === "ia_sugerida";
@@ -966,6 +969,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [panelCollapsed, setPanelCollapsed] = useState(() => {
     try { return localStorage.getItem("magis_panel_collapsed") === "1"; } catch { return false; }
   });
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    try { return parseInt(localStorage.getItem("magis_panel_width") ?? "340") || 340; } catch { return 340; }
+  });
+  const panelResizeRef = useRef<{ dragging: boolean; startX: number; startW: number }>({ dragging: false, startX: 0, startW: 0 });
 
   // Review flow
   const [reviewMode, setReviewMode] = useState(mode === "confirm");
@@ -1030,6 +1037,30 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   useEffect(() => {
     try { localStorage.setItem("magis_panel_collapsed", panelCollapsed ? "1" : "0"); } catch { /* ignore */ }
   }, [panelCollapsed]);
+
+  useEffect(() => {
+    try { localStorage.setItem("magis_panel_width", String(panelWidth)); } catch { /* ignore */ }
+  }, [panelWidth]);
+
+  // Panel resize drag (mousemove/mouseup on document)
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!panelResizeRef.current.dragging) return;
+      const delta = panelResizeRef.current.startX - e.clientX;
+      const next = Math.max(240, Math.min(640, panelResizeRef.current.startW + delta));
+      setPanelWidth(next);
+    }
+    function onUp() {
+      panelResizeRef.current.dragging = false;
+      document.body.style.cursor = "";
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   const isDocx = (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
 
@@ -1200,6 +1231,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setFields(mergedFields);
     setFieldPositions(mergedPositions);
     if (newFields.length > 0) {
+      // Open sidebar if collapsed so the user sees the new field config immediately
+      setPanelCollapsed(false);
       setExpandedField(newFields[0].key);
       setActiveFieldKey(newFields[0].key);
       // Every newly discovered placeholder needs label/role/group configuration,
@@ -1207,6 +1240,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       setPendingConfigKeys((prev) => new Set([...prev, ...newFields.map((f) => f.key)]));
       // Locate the first new field in the document after the preview reloads
       setTimeout(() => setLocateKey(`${newFields[0].key}:${Date.now()}`), 800);
+      // Scroll the new field card into view after the panel opens and re-renders
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          panelScrollRef.current
+            ?.querySelector<HTMLElement>(`[data-field-card="${newFields[0].key}"]`)
+            ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 100);
+      });
     }
 
     // Show result feedback toast
@@ -1686,35 +1727,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
         )}
         {progressBar}
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">
-              Campos do template ({fields.length})
-            </h2>
-            <p className="text-xs text-slate-500">
-              {mode === "confirm"
-                ? "Confira se os campos estão corretos e clique em Confirmar."
-                : "Campos que serão preenchidos no plano de aula."}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => { setShowVersions(true); void loadVersions(); }}
-              className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-              title="Histórico de versões"
-            >
-              <Clock className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowHelp(true)}
-              className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-              title="Ajuda"
-            >
-              <HelpCircle className="h-3.5 w-3.5" />
-            </button>
-          </div>
+        <div className="mb-3">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Campos do template ({fields.length})
+          </h2>
         </div>
 
         {fields.length === 0 ? (
@@ -2371,11 +2387,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         </div>
 
         {/* Split view — flex-1 fills all remaining height in the h-full flex-col parent */}
-        <div className="flex flex-1 min-h-0 gap-6" style={{ minHeight: "480px" }}>
+        <div className="flex flex-1 min-h-0" style={{ minHeight: "480px" }}>
           {/* Left: editor — hidden on mobile, shown on xl+ (or when mobile tab = document) */}
-          <div className={`overflow-hidden rounded-3xl border border-slate-200 ${
-            mobileTab === "document" ? "flex flex-col w-full xl:w-auto" : "hidden xl:flex xl:flex-col"
-          } ${panelCollapsed ? "xl:flex-1" : "xl:w-[62%] xl:shrink-0"}`}>
+          <div className={`overflow-hidden rounded-3xl border border-slate-200 flex-1 min-w-0 ${
+            mobileTab === "document" ? "flex flex-col" : "hidden xl:flex xl:flex-col"
+          }`}>
             {/* Viewer content */}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {viewMode === "preview" ? (
@@ -2418,31 +2434,59 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             </div>
           </div>
 
-          {/* Item 16: collapsible right panel */}
-          {!panelCollapsed ? (
-            <div ref={panelScrollRef} className={`min-h-0 min-w-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none] ${
-              mobileTab === "campos" ? "flex-1 flex flex-col" : "hidden xl:flex xl:flex-col xl:flex-1"
-            }`}>
-              {/* Collapse button */}
-              <div className="flex justify-end mb-2">
-                <button type="button" onClick={() => setPanelCollapsed(true)} title="Recolher painel"
-                  className="flex items-center gap-1 rounded-xl border border-slate-200 px-2 py-1 text-[10px] text-slate-400 hover:border-slate-400 hover:text-slate-700">
-                  <PanelRightClose className="h-3 w-3" />
-                  Recolher
-                </button>
-              </div>
-              {fieldsPanel}
-            </div>
-          ) : (
-            /* Collapsed: just show expand button */
-            <div className="hidden xl:flex xl:flex-col xl:items-center xl:pt-4">
-              <button type="button" onClick={() => setPanelCollapsed(false)} title="Expandir painel de campos"
-                className="flex flex-col items-center gap-1 rounded-2xl border border-slate-200 bg-white p-3 text-slate-400 hover:border-violet-400 hover:text-violet-600 transition">
-                <PanelRightOpen className="h-4 w-4" />
-                <span className="text-[9px] font-medium writing-mode-vertical" style={{ writingMode: "vertical-rl" }}>Campos</span>
+          {/* Drag handle — desktop only, sits between doc and sidebar */}
+          <div
+            className="hidden xl:flex w-4 shrink-0 cursor-col-resize items-center justify-center group"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              if (panelCollapsed) { setPanelCollapsed(false); return; }
+              panelResizeRef.current = { dragging: true, startX: e.clientX, startW: panelWidth };
+              document.body.style.cursor = "col-resize";
+            }}
+            title={panelCollapsed ? "Expandir painel" : "Arrastar para redimensionar • clique para expandir/recolher"}
+            onClick={() => { if (panelCollapsed) setPanelCollapsed(false); }}
+            onDoubleClick={() => setPanelCollapsed((c) => !c)}
+          >
+            <div className={`h-12 w-1.5 rounded-full transition-all ${
+              panelCollapsed
+                ? "bg-violet-300 group-hover:bg-violet-600 scale-y-75 group-hover:scale-y-100"
+                : "bg-slate-200 group-hover:bg-violet-500"
+            }`} />
+          </div>
+
+          {/* Item 16: resizable right panel */}
+          <div
+            ref={panelScrollRef}
+            style={!panelCollapsed ? { width: panelWidth + "px" } : undefined}
+            className={`min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 [overflow-anchor:none] shrink-0 ${
+              mobileTab === "campos"
+                ? "flex flex-col flex-1"
+                : panelCollapsed
+                  ? "hidden"
+                  : "hidden xl:flex xl:flex-col"
+            }`}
+          >
+            {/* Sidebar top bar: clock + help at upper-right */}
+            <div className="flex justify-end items-center gap-1.5 mb-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => { setShowVersions(true); void loadVersions(); }}
+                className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                title="Histórico de versões"
+              >
+                <Clock className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowHelp(true)}
+                className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                title="Ajuda"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
               </button>
             </div>
-          )}
+            {fieldsPanel}
+          </div>
         </div>
       </div>
     );
