@@ -10,7 +10,8 @@ import { getAdminDb } from "../../../../lib/firebase/admin";
 import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 import { getLimitsStatus } from "../../../../lib/services/limits";
 import { callAIWithFallbacks } from "../../../../lib/ai/provider";
-import { scanDocxStructure } from "../../../../lib/utils/docx-filler";
+import { scanDocxStructure, scanPlaceholders } from "../../../../lib/utils/docx-filler";
+import { structuralPairsToSchema, keyToField } from "../../../../lib/utils/docx-schema-mapper";
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
 
@@ -215,6 +216,20 @@ export async function POST(request: Request) {
     })() : [];
     console.info(`[introspect] Estrutura detectada: ${structuralPairs.length} pares`);
 
+    // Fast-path: template already has {{placeholders}} pre-typed by the user.
+    // Derive schema deterministically from the keys found in the DOCX XML —
+    // no AI call needed for key/group/role. The AI is still called to fill labels.
+    const preAnnotatedKeys = isDocxFile ? (() => {
+      try { return scanPlaceholders(fileBuffer); } catch { return [] as string[]; }
+    })() : [];
+
+    // Draft schema: deterministic structural pairs → key + metadata.
+    // Sent to the AI as <schema_rascunho> so it validates rather than guesses.
+    const draftSchema = structuralPairs.length > 0
+      ? structuralPairsToSchema(structuralPairs)
+      : preAnnotatedKeys.map(keyToField);
+    console.info(`[introspect] Schema rascunho: ${draftSchema.length} campos`);
+
     // Few-shot: two examples covering the main structural patterns found in Brazilian school templates.
     const fewShotExamples = [
       {
@@ -298,14 +313,31 @@ export async function POST(request: Request) {
 
     const promptParts: string[] = [
       `<instrucao>`,
-      structuralPairs.length > 0
-        ? `Analise os pares rótulo→valor em <estrutura_detectada> (FONTE PRIMÁRIA) e o texto em <documento>. USE <estrutura_detectada> para obter labels e posições — copie cada label EXATAMENTE. O 'key' é o label em snake_case sem acentos. Aplique as Regras 8, 9 e 10.`
+      draftSchema.length > 0
+        ? [
+            `MODO VALIDAÇÃO: O sistema gerou deterministicamente o <schema_rascunho> abaixo.`,
+            `Sua tarefa é VALIDAR e COMPLETAR — não crie do zero:`,
+            `  1. Para cada campo no rascunho: confirme key/group/role/type. Ajuste APENAS se o documento contradizer claramente.`,
+            `  2. Copie o label EXATAMENTE como aparece no documento (não use o label do rascunho — ele é gerado automaticamente).`,
+            `  3. Adicione campos que existem no documento mas não estão no rascunho.`,
+            `  4. Remova campos do rascunho que não existem no documento.`,
+            `  5. Aplique as Regras 8, 9 e 10 (colunas repetidas, períodos _tr1/_tr2/_tr3, datas _inicio/_fim).`,
+            `  6. Preencha injection_pattern a partir de <estrutura_detectada> (Regra 18).`,
+          ].join("\n")
         : `Analise o texto em <documento> e extraia TODOS os campos visíveis. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece. O 'key' é o label em snake_case sem acentos. Aplique as Regras 8, 9 e 10.`,
       `</instrucao>`,
       `<exemplos>`,
       JSON.stringify(fewShotExamples),
       `</exemplos>`,
     ];
+
+    if (draftSchema.length > 0) {
+      promptParts.push(
+        `<schema_rascunho>`,
+        JSON.stringify(draftSchema, null, 2),
+        `</schema_rascunho>`,
+      );
+    }
 
     if (structuralPairs.length > 0) {
       promptParts.push(

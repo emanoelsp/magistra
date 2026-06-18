@@ -16,22 +16,8 @@ import {
   scanPlaceholders,
 } from "../../../../../lib/utils/docx-filler";
 import type { StructuralPair } from "../../../../../lib/utils/docx-filler";
+import { structuralPairsToSchema, keyToField } from "../../../../../lib/utils/docx-schema-mapper";
 import type { TemplateFieldSchema, TemplateRecord } from "../../../../../lib/types/firestore";
-
-function keyToField(key: string): TemplateFieldSchema {
-  const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  let role: TemplateFieldSchema["role"] = "manual";
-  let group: TemplateFieldSchema["group"] = "dados_turma";
-  if (/habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(key)) {
-    role = "ia_sugerida";
-    if (/habilidade|bncc|saeb/.test(key)) group = "habilidades";
-    else if (/competencia/.test(key)) group = "competencias";
-    else if (/objetivo/.test(key)) group = "objetivos";
-    else if (/avaliacao/.test(key)) group = "avaliacao";
-    else group = "conteudos";
-  }
-  return { key, label, type: "text", required: true, role, group, placeholder: "", helperText: "", aiInstructions: "" };
-}
 
 
 // ── Extração de conteúdo ────────────────────────────────────────────────────
@@ -253,18 +239,42 @@ interface FieldCorrection {
 function buildPrompt(
   { content, isHtml }: ExtractedContent,
   structuralPairs: StructuralPair[],
+  draftSchema: TemplateFieldSchema[],
   confirmedFields?: TemplateFieldSchema[],
   corrections?: FieldCorrection[],
 ): string {
   const docTag = isHtml ? "documento_html" : "documento";
-  const instrucao = isHtml
-    ? `Analise o HTML em <documento_html> e os pares rótulo→valor em <estrutura_detectada>. USE <estrutura_detectada> como FONTE PRIMÁRIA: cada item é um campo a extrair. O HTML serve como contexto complementar para classificação (manual vs ia_sugerida). CRÍTICO: copie o 'label' EXATAMENTE como aparece em <estrutura_detectada>. O 'key' é o label em snake_case sem acentos. Se 'valuePreview' não estiver vazio, inclua como 'defaultValue'.`
-    : `Analise o texto em <documento> e os pares em <estrutura_detectada>. CRÍTICO: o 'label' deve ser copiado EXATAMENTE. O 'key' é o label em snake_case sem acentos. Se o campo estiver preenchido, inclua o conteúdo como 'defaultValue'.`;
+
+  const hasDraft = draftSchema.length > 0;
+  const instrucao = hasDraft
+    ? [
+        `MODO VALIDAÇÃO: O sistema gerou deterministicamente o <schema_rascunho> abaixo.`,
+        `Sua tarefa é VALIDAR e COMPLETAR — não crie do zero:`,
+        `  1. Para cada campo no rascunho: confirme key/group/role/type. Ajuste APENAS se o documento contradizer claramente.`,
+        `  2. Copie o label EXATAMENTE como aparece no documento${isHtml ? " HTML" : ""} (não use o label do rascunho — ele é gerado automaticamente).`,
+        `  3. Adicione campos que existem no documento mas não estão no rascunho.`,
+        `  4. Remova campos do rascunho que não existem no documento.`,
+        `  5. Aplique as Regras 8, 9 e 10 (colunas repetidas, períodos _tr1/_tr2/_tr3, datas _inicio/_fim).`,
+        `  6. Para 'defaultValue': se 'valuePreview' em <estrutura_detectada> não estiver vazio, use-o.`,
+        `  7. Preencha injection_pattern a partir de <estrutura_detectada> (Regra 13).`,
+      ].join("\n")
+    : isHtml
+      ? `Analise o HTML em <documento_html> e os pares rótulo→valor em <estrutura_detectada>. USE <estrutura_detectada> como FONTE PRIMÁRIA: cada item é um campo a extrair. O HTML serve como contexto complementar para classificação (manual vs ia_sugerida). CRÍTICO: copie o 'label' EXATAMENTE como aparece em <estrutura_detectada>. O 'key' é o label em snake_case sem acentos. Se 'valuePreview' não estiver vazio, inclua como 'defaultValue'.`
+      : `Analise o texto em <documento> e os pares em <estrutura_detectada>. CRÍTICO: o 'label' deve ser copiado EXATAMENTE. O 'key' é o label em snake_case sem acentos. Se o campo estiver preenchido, inclua o conteúdo como 'defaultValue'.`;
 
   const parts: string[] = [
     `<instrucao>${instrucao}</instrucao>`,
     `<exemplos>${JSON.stringify(fewShotExamples)}</exemplos>`,
   ];
+
+  // Draft schema: deterministic first pass — AI validates and enriches
+  if (hasDraft) {
+    parts.push(
+      `<schema_rascunho>`,
+      JSON.stringify(draftSchema, null, 2),
+      `</schema_rascunho>`,
+    );
+  }
 
   // Feature 1: structural pre-scan — give the AI the pre-detected pairs
   if (structuralPairs.length > 0) {
@@ -380,6 +390,12 @@ export async function POST(
     const structuralPairs = isDocx ? scanDocxStructure(fileBuffer) : [];
     console.info(`[re-introspect] Estrutura detectada: ${structuralPairs.length} pares`);
 
+    // Draft schema: deterministic key/group/role from structural pairs.
+    // Sent to AI as <schema_rascunho> so it validates rather than guesses.
+    const draftSchema = structuralPairs.length > 0
+      ? structuralPairsToSchema(structuralPairs)
+      : [];
+
     // ── Feature 3: dynamic few-shot ─────────────────────────────────────────
     // If the professor has confirmed a schema before, use it as a few-shot
     // reference so the AI keeps confirmed keys/labels stable.
@@ -393,7 +409,7 @@ export async function POST(
 
     // ── AI extraction ────────────────────────────────────────────────────────
     const extracted = await extractContent(fileBuffer, arquivoUrl);
-    const prompt = buildPrompt(extracted, structuralPairs, confirmedFields, corrections);
+    const prompt = buildPrompt(extracted, structuralPairs, draftSchema, confirmedFields, corrections);
     const { text: raw, provider: aiProvider } = await generateSchema(prompt);
 
     let schema: unknown;
