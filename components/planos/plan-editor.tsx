@@ -1216,8 +1216,7 @@ function AIChatPanel({
           <ChatBubble>
             <p className="text-sm text-slate-700">
               Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica.
-              Os campos <span className="font-semibold text-amber-600">amarelos</span> você preenche.
-              Os <span className="font-semibold text-violet-600">roxos</span> eu sugiro o conteúdo para você — clique neles para começar!
+              Clique nos campos com borda em azul que sugiro o conteúdo para você!
             </p>
           </ChatBubble>
         )}

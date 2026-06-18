@@ -248,11 +248,15 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       // Collect a full-cell override for any cell that has {{key}} patterns.
       // This lets the server write ALL tokens in one shot so they don't overwrite
       // each other in multi-key cells.
-      // Strip chips for keys no longer in the schema so deleted-field placeholders
-      // don't get re-injected into the fillable via injectRawCell.
+      // Keep: keys already in schema (existingKeys) + keys just discovered in this
+      // save session (processedKeys). Strip only keys that are truly gone from both.
+      // Without processedKeys here, a newly typed {{new_key}} in a cell that also has
+      // {{existing_key}} would be stripped from cleanedContent → two injectAtCoord
+      // calls hit the same coord → second one overwrites the first.
       if (matches.length > 0) {
         const cleanedContent = currentText
-          .replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (full, k) => (existingKeys.has(k) ? full : ""))
+          .replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (full, k) =>
+            (existingKeys.has(k) || processedKeys.has(k) ? full : ""))
           .replace(/\s+/g, " ")
           .trim();
         const hasValidKey = /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(cleanedContent);
@@ -1898,22 +1902,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </label>
                       )}
 
-                      {/* Dica de contexto — só para campos IA */}
-                      {field.role === "ia_sugerida" && (
-                        <label className="block">
-                          <span className="text-[11px] font-semibold text-violet-700">Contexto adicional para a Magis</span>
-                          <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
-                            Dica de ajuda exibida ao professor ao preencher este campo.
-                          </p>
-                          <textarea
-                            value={field.helperText ?? ""}
-                            onChange={(e) => preserveScroll(() => updateField(index, { helperText: e.target.value || undefined }))}
-                            rows={2}
-                            placeholder="Ex.: Informe o componente curricular e a série/ano…"
-                            className="mt-0.5 w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-violet-300 focus:bg-white"
-                          />
-                        </label>
-                      )}
 
                     </div>
                   )}
