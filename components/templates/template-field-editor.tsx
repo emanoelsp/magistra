@@ -112,16 +112,19 @@ interface DocxInteractiveProps {
   placementKey?: string | null;
   onCancelPlacement?: () => void;
   onPlace?: (key: string, coord: string | undefined, cellText: string, ordinal: number) => void;
+  onChipClick?: (key: string) => void;
 }
 
 const TOOLBAR_FONTS = ["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"];
 const TOOLBAR_SIZES = ["8", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36"];
 
-function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
   const originalTextsRef = useRef<Map<HTMLElement, string>>(new Map());
+  const onChipClickRef = useRef(onChipClick);
+  useEffect(() => { onChipClickRef.current = onChipClick; }, [onChipClick]);
   // Stores textContent INCLUDING chip text — used to detect moved/deleted chips.
   const originalTextsWithChipsRef = useRef<Map<HTMLElement, string>>(new Map());
   const savedSelRef = useRef<Range | null>(null);
@@ -430,7 +433,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       return [
         "display:inline-block", "padding:2px 8px", "border-radius:6px",
         "font-family:monospace", "font-size:10px", "font-weight:700",
-        "white-space:nowrap", "line-height:1.7",
+        "white-space:nowrap", "line-height:1.7", "cursor:pointer",
         isIa
           ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
           : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
@@ -523,7 +526,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       chip.style.cssText = [
         "display:inline-block", "padding:2px 8px", "border-radius:6px",
         "font-family:monospace", "font-size:10px", "font-weight:700",
-        "white-space:nowrap", "line-height:1.7", "margin-left:4px",
+        "white-space:nowrap", "line-height:1.7", "margin-left:4px", "cursor:pointer",
         isIa
           ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
           : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
@@ -532,6 +535,22 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       targetEl.appendChild(chip);
     }
   }, [phase, fieldPositions, fields]);
+
+  // Chip mousedown → focus sidebar field card (preventDefault stops cell from entering edit mode)
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    function handleMouseDown(e: MouseEvent) {
+      const chip = (e.target as HTMLElement).closest<HTMLElement>("[data-field-chip]");
+      if (!chip) return;
+      const key = chip.getAttribute("data-field-chip");
+      if (!key) return;
+      e.preventDefault();
+      onChipClickRef.current?.(key);
+    }
+    container.addEventListener("mousedown", handleMouseDown);
+    return () => container.removeEventListener("mousedown", handleMouseDown);
+  }, [phase]);
 
   // Assign XML structural coordinates to DOM cells (enables precise server-side injection).
   // Runs after chip effects so coords land on the final rendered cells.
@@ -713,6 +732,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         }
         .docx-placement-mode td { cursor: pointer !important; user-select: none; }
         .docx-placement-mode td:hover { background: rgba(99,102,241,0.12) !important; outline: 2px dashed rgba(99,102,241,0.5) !important; border-radius: 2px; }
+        [data-field-chip]:hover { filter: brightness(0.92); }
       `}</style>
 
       {/* Header line */}
@@ -2373,6 +2393,18 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   placementKey={placementKey}
                   onCancelPlacement={() => setPlacementKey(null)}
                   onPlace={handlePlace}
+                  onChipClick={(key) => {
+                    setRoleFilter(null);
+                    setShowOnlyMissing(false);
+                    setPanelCollapsed(false);
+                    setExpandedField(key);
+                    setActiveFieldKey(key);
+                    requestAnimationFrame(() => {
+                      panelScrollRef.current
+                        ?.querySelector<HTMLElement>(`[data-field-card="${key}"]`)
+                        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    });
+                  }}
                 />
               )}
             </div>
