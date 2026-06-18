@@ -1227,15 +1227,13 @@ function AIChatPanel({
 
       {/* Chat area */}
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {/* Magis intro — always first */}
-        {!fieldLabel && (
-          <ChatBubble>
-            <p className="text-sm text-slate-700">
-              Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica.
-              Clique nos campos com borda em <span className="font-bold text-blue-500">azul</span> que sugiro o conteúdo para você!
-            </p>
-          </ChatBubble>
-        )}
+        {/* Magis intro — always visible */}
+        <ChatBubble>
+          <p className="text-sm text-slate-700">
+            Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica.
+            Clique nos campos com borda em <span className="font-bold text-violet-600">roxo</span> que sugiro o conteúdo para você!
+          </p>
+        </ChatBubble>
 
         {/* Context bubble */}
         {(metaEntries.length > 0 || templateTipoPlano || templateEstado) && (
@@ -1505,10 +1503,10 @@ interface FieldInputProps {
 }
 
 function FieldInput({ field, value, active, onChange, onFocus }: FieldInputProps) {
-  const wrapCls = active
-    ? "rounded-2xl border border-orange-400 bg-orange-50 p-4 shadow-sm ring-1 ring-orange-200 transition"
-    : "rounded-2xl border-2 border-orange-400 bg-orange-50/50 p-4 shadow-[0_0_0_3px_rgba(249,115,22,0.12)] ring-1 ring-orange-200 transition";
-  const inputCls = "w-full rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 mt-1.5";
+  const wrapCls = "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition";
+  const inputCls = active
+    ? "w-full rounded-xl border-2 border-orange-400 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition focus:ring-2 focus:ring-orange-100 mt-1.5 shadow-[0_0_0_3px_rgba(249,115,22,0.10)]"
+    : "w-full rounded-xl border border-orange-300 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 mt-1.5";
 
   return (
     <div className={wrapCls} onClick={onFocus}>
@@ -1549,7 +1547,7 @@ function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadat
   }, [active]);
 
   return (
-    <div className={`rounded-2xl p-4 transition ${active ? "border border-violet-400 bg-violet-50 shadow-sm ring-1 ring-violet-100" : "border-2 border-blue-400 bg-blue-50/60 shadow-[0_0_0_3px_rgba(59,130,246,0.15)] ring-1 ring-blue-200"}`}>
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-slate-800">{field.label}</span>
         <button

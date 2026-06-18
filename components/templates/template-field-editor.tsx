@@ -320,7 +320,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         return renderAsync(bufferRef.current, container, undefined, {
           inWrapper: true, ignoreWidth: false, ignoreHeight: true,
           ignoreFonts: false, breakPages: true, useBase64URL: true,
-          renderEndnotes: true, renderFooters: false, renderFootnotes: false, renderHeaders: false,
+          renderEndnotes: true, renderFooters: false, renderFootnotes: false, renderHeaders: true,
         });
       })
       .then(() => { if (!cancelled) setPhase("done"); })

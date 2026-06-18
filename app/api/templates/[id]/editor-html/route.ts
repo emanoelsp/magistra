@@ -536,6 +536,107 @@ function annotateFields(html: string, schema: TemplateFieldSchema[]): string {
   return result;
 }
 
+// ─── Header extraction ───────────────────────────────────────────────────────
+//
+// DOCX headers live in separate XML files (word/header1.xml etc.) that mammoth
+// ignores. We extract the default header, splice its content into a synthetic
+// body, run mammoth + layout post-processing on that sub-document, and prepend
+// the resulting HTML to the body HTML.
+//
+// Image relationship IDs in the header file are scoped to the header's own
+// word/_rels/header1.xml.rels — NOT to word/_rels/document.xml.rels. We remap
+// them to new IDs (hdr_rId1, hdr_rId2 …) and merge them into the document rels
+// so mammoth can resolve them when processing the synthetic DOCX.
+
+type MammothOptions = Parameters<typeof mammoth.convertToHtml>[1];
+
+async function extractHeaderHtml(buf: Buffer, opts: MammothOptions): Promise<string> {
+  try {
+    const zip = await JSZip.loadAsync(buf);
+
+    // 1. Locate the default header file via document relationships
+    const docRelsText = await zip.file("word/_rels/document.xml.rels")?.async("string") ?? "";
+    const docText     = await zip.file("word/document.xml")?.async("string") ?? "";
+    if (!docText) return "";
+
+    const relMap = new Map<string, string>();
+    for (const m of docRelsText.matchAll(/Id="([^"]+)"[^>]*Target="([^"]+)"/g)) {
+      relMap.set(m[1], m[2]);
+    }
+
+    // Prefer w:type="default"; fall back to first headerReference found
+    const headerId =
+      docText.match(/<w:headerReference[^>]*w:type="default"[^>]*r:id="([^"]+)"/)?.[1]
+      ?? docText.match(/<w:headerReference[^>]*r:id="([^"]+)"/)?.[1];
+    if (!headerId) return "";
+
+    const headerTarget = relMap.get(headerId); // e.g. "header1.xml"
+    if (!headerTarget) return "";
+
+    const headerText = await zip.file(`word/${headerTarget}`)?.async("string") ?? "";
+    // Extract everything between <w:hdr …> … </w:hdr>
+    let hdrInner = headerText.match(/<w:hdr\b[^>]*>([\s\S]*)<\/w:hdr>/)?.[1] ?? "";
+    if (!hdrInner.trim()) return "";
+
+    // 2. Remap header image rIds so they don't collide with document rIds
+    const hdrRelsText = await zip.file(`word/_rels/${headerTarget}.rels`)?.async("string") ?? "";
+    let mergedRels = docRelsText.replace("</Relationships>", "");
+    if (hdrRelsText) {
+      for (const m of hdrRelsText.matchAll(/<Relationship([^>]*?)Id="([^"]+)"([^>]*?)\s*\/>/g)) {
+        const before = m[1];
+        const origId = m[2];
+        const after  = m[3];
+        const newId  = `hdr_${origId}`;
+        hdrInner = hdrInner.replace(new RegExp(`r:id="${origId}"`, "g"), `r:id="${newId}"`);
+        mergedRels += `\n  <Relationship${before}Id="${newId}"${after}/>`;
+      }
+    }
+    mergedRels += "\n</Relationships>";
+
+    // 3. Build synthetic document.xml from the header inner XML
+    const docNs = docText.match(/<w:document(\s[^>]*)?>/)?.[1]
+      ?? ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+    const syntheticDoc =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<w:document${docNs}><w:body>${hdrInner}<w:sectPr/></w:body></w:document>`;
+
+    // 4. Clone zip, replacing document.xml and its rels
+    const newZip = new JSZip();
+    for (const [path, file] of Object.entries(zip.files)) {
+      if (file.dir) { newZip.folder(path.replace(/\/$/, "")); continue; }
+      if (path === "word/document.xml") {
+        newZip.file(path, syntheticDoc);
+      } else if (path === "word/_rels/document.xml.rels") {
+        newZip.file(path, mergedRels);
+      } else {
+        newZip.file(path, await file.async("nodebuffer"));
+      }
+    }
+
+    const syntheticBuf = Buffer.from(await newZip.generateAsync({ type: "nodebuffer" }));
+
+    // 5. Run the full mammoth + layout pipeline on the header sub-document
+    const [{ value: hdrRaw }, hdrLayout] = await Promise.all([
+      mammoth.convertToHtml({ buffer: syntheticBuf }, opts),
+      extractDocxLayout(syntheticBuf),
+    ]);
+
+    if (!hdrRaw.trim()) return "";
+
+    let h = injectColgroups(hdrRaw, hdrLayout.gridWidths);
+    h = injectTableFixed(h);
+    h = injectCellAlignments(h, hdrLayout.cellAligns);
+    h = injectCellStyles(h, hdrLayout.cellStyles);
+    h = injectRowStyles(h, hdrLayout.rowStyles);
+    h = injectImageSizes(h, hdrLayout.imageDims);
+
+    return `<div class="docx-header-region" style="border-bottom:2px solid #e2e8f0;margin-bottom:8px;padding-bottom:8px;">${h}</div>`;
+  } catch (e) {
+    console.error("[editor-html] extractHeaderHtml failed:", e);
+    return "";
+  }
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function GET(
@@ -564,32 +665,31 @@ export async function GET(
 
     const buf = await downloadFile(arquivoUrl);
 
-    // Convert DOCX to HTML and extract layout in parallel
-    const [{ value: rawHtml }, layout] = await Promise.all([
-      mammoth.convertToHtml(
-        { buffer: buf },
-        {
-          // Embed images as base64 data URIs (e.g. school logos)
-          convertImage: mammoth.images.imgElement(async (image) => {
-            const base64 = await image.readAsBase64String();
-            return { src: `data:${image.contentType};base64,${base64}` };
-          }),
-          styleMap: [
-            "b => strong",
-            "i => em",
-            "u => u",
-            "strike => s",
-            "p[style-name='Heading 1'] => h1:fresh",
-            "p[style-name='Heading 2'] => h2:fresh",
-            "p[style-name='Heading 3'] => h3:fresh",
-            "p[style-name='Title'] => h1:fresh",
-            "p[style-name='Subtitle'] => h2:fresh",
-            "p[style-name='Normal'] => p:fresh",
-          ],
-          includeDefaultStyleMap: true,
-        },
-      ),
+    const mammothOpts: MammothOptions = {
+      convertImage: mammoth.images.imgElement(async (image) => {
+        const base64 = await image.readAsBase64String();
+        return { src: `data:${image.contentType};base64,${base64}` };
+      }),
+      styleMap: [
+        "b => strong",
+        "i => em",
+        "u => u",
+        "strike => s",
+        "p[style-name='Heading 1'] => h1:fresh",
+        "p[style-name='Heading 2'] => h2:fresh",
+        "p[style-name='Heading 3'] => h3:fresh",
+        "p[style-name='Title'] => h1:fresh",
+        "p[style-name='Subtitle'] => h2:fresh",
+        "p[style-name='Normal'] => p:fresh",
+      ],
+      includeDefaultStyleMap: true,
+    };
+
+    // Convert DOCX body + extract header + extract layout — all in parallel
+    const [{ value: rawHtml }, layout, headerHtml] = await Promise.all([
+      mammoth.convertToHtml({ buffer: buf }, mammothOpts),
       extractDocxLayout(buf),
+      extractHeaderHtml(buf, mammothOpts),
     ]);
 
     // Apply layout and styling, then annotate interactive fields
@@ -601,7 +701,10 @@ export async function GET(
     const withImageSizes = injectImageSizes(withRowStyles, layout.imageDims);
     const annotated = annotateFields(withImageSizes, schema);
 
-    return NextResponse.json({ html: annotated });
+    // Prepend header region (non-interactive, read-only) before body
+    const fullHtml = headerHtml ? headerHtml + annotated : annotated;
+
+    return NextResponse.json({ html: fullHtml });
   } catch (err) {
     console.error("[PlanoMagistra/editor-html]", err);
     return NextResponse.json({ html: null, reason: "error" }, { status: 500 });
