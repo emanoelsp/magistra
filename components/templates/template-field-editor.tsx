@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
   AlignCenter,
@@ -974,6 +975,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   });
   const panelResizeRef = useRef<{ dragging: boolean; startX: number; startW: number }>({ dragging: false, startX: 0, startW: 0 });
 
+  // Portal target for header action buttons (clock + help)
+  const [headerActionsEl, setHeaderActionsEl] = useState<Element | null>(null);
+  useEffect(() => {
+    setHeaderActionsEl(document.getElementById("template-header-actions"));
+  }, []);
+
   // Review flow
   const [reviewMode, setReviewMode] = useState(mode === "confirm");
   const [isAdvancing, setIsAdvancing] = useState(false);
@@ -1046,13 +1053,16 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   useEffect(() => {
     function onMove(e: MouseEvent) {
       if (!panelResizeRef.current.dragging) return;
+      e.preventDefault();
       const delta = panelResizeRef.current.startX - e.clientX;
       const next = Math.max(240, Math.min(640, panelResizeRef.current.startW + delta));
       setPanelWidth(next);
     }
     function onUp() {
+      if (!panelResizeRef.current.dragging) return;
       panelResizeRef.current.dragging = false;
       document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -2436,21 +2446,21 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
           {/* Drag handle — desktop only, sits between doc and sidebar */}
           <div
-            className="hidden xl:flex w-4 shrink-0 cursor-col-resize items-center justify-center group"
+            className="hidden xl:flex w-3 shrink-0 cursor-col-resize select-none items-center justify-center group relative"
             onMouseDown={(e) => {
               e.preventDefault();
               if (panelCollapsed) { setPanelCollapsed(false); return; }
               panelResizeRef.current = { dragging: true, startX: e.clientX, startW: panelWidth };
               document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
             }}
-            title={panelCollapsed ? "Expandir painel" : "Arrastar para redimensionar • clique para expandir/recolher"}
-            onClick={() => { if (panelCollapsed) setPanelCollapsed(false); }}
             onDoubleClick={() => setPanelCollapsed((c) => !c)}
+            title="Arrastar para redimensionar • duplo clique para ocultar"
           >
-            <div className={`h-12 w-1.5 rounded-full transition-all ${
+            <div className={`h-10 w-[3px] rounded-full transition-colors duration-150 ${
               panelCollapsed
-                ? "bg-violet-300 group-hover:bg-violet-600 scale-y-75 group-hover:scale-y-100"
-                : "bg-slate-200 group-hover:bg-violet-500"
+                ? "bg-violet-400 group-hover:bg-violet-600"
+                : "bg-slate-300 group-hover:bg-violet-500"
             }`} />
           </div>
 
@@ -2466,25 +2476,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   : "hidden xl:flex xl:flex-col"
             }`}
           >
-            {/* Sidebar top bar: clock + help at upper-right */}
-            <div className="flex justify-end items-center gap-1.5 mb-3 shrink-0">
-              <button
-                type="button"
-                onClick={() => { setShowVersions(true); void loadVersions(); }}
-                className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-                title="Histórico de versões"
-              >
-                <Clock className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowHelp(true)}
-                className="flex items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-                title="Ajuda"
-              >
-                <HelpCircle className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            {headerActionsEl && createPortal(
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setShowVersions(true); void loadVersions(); }}
+                  className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                  title="Histórico de versões"
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowHelp(true)}
+                  className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                  title="Ajuda"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                </button>
+              </>,
+              headerActionsEl,
+            )}
             {fieldsPanel}
           </div>
         </div>

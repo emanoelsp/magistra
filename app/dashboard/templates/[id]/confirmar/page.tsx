@@ -54,19 +54,22 @@ export default async function ConfirmarTemplatePage({ params }: PageProps) {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col gap-4">
-      <header className="shrink-0 flex items-center gap-3">
-        <Link
-          href="/dashboard/templates"
-          className="flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-950"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Templates
-        </Link>
-        <span className="text-slate-300">/</span>
-        <span className="rounded-2xl bg-violet-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-violet-600">
-          Confirmar campos
-        </span>
-        <span className="text-sm font-semibold text-slate-900 truncate">{template.nome}</span>
+      <header className="shrink-0 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link
+            href="/dashboard/templates"
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-950 shrink-0"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Templates
+          </Link>
+          <span className="text-slate-300 shrink-0">/</span>
+          <span className="rounded-2xl bg-violet-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-violet-600 shrink-0">
+            Confirmar campos
+          </span>
+          <span className="text-sm font-semibold text-slate-900 truncate">{template.nome}</span>
+        </div>
+        <div id="template-header-actions" className="flex shrink-0 items-center gap-1.5" />
       </header>
 
       <div className="flex-1 min-h-0">

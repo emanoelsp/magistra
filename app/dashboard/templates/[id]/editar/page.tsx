@@ -70,13 +70,16 @@ export default async function EditarTemplatePage({ params }: PageProps) {
           <span className="text-sm font-semibold text-slate-900 truncate">{template.nome}</span>
         </div>
 
-        <Link
-          href={`/dashboard/templates/${template.id}/visualizar`}
-          className="flex shrink-0 items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-        >
-          <Eye className="h-4 w-4" />
-          Visualizar
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          <div id="template-header-actions" className="flex items-center gap-1.5" />
+          <Link
+            href={`/dashboard/templates/${template.id}/visualizar`}
+            className="flex shrink-0 items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+          >
+            <Eye className="h-4 w-4" />
+            Visualizar
+          </Link>
+        </div>
       </header>
 
       <div className="flex-1 min-h-0">
