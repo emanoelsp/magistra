@@ -53,35 +53,25 @@ export default async function ConfirmarTemplatePage({ params }: PageProps) {
   };
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-3">
+    <div className="flex flex-1 min-h-0 flex-col gap-4">
+      <header className="shrink-0 flex items-center gap-3">
         <Link
           href="/dashboard/templates"
-          className="inline-flex w-fit items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-950"
+          className="flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-950"
         >
           <ArrowLeft className="h-4 w-4" />
-          Voltar para templates
+          Templates
         </Link>
-
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 rounded-2xl bg-violet-50 p-3 text-violet-600">
-            <FileText className="h-5 w-5" />
-          </span>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">
-              Confirmar campos
-            </p>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">
-              {template.nome}
-            </h1>
-            {template.escola_nome && (
-              <p className="text-sm text-slate-500">{template.escola_nome}</p>
-            )}
-          </div>
-        </div>
+        <span className="text-slate-300">/</span>
+        <span className="rounded-2xl bg-violet-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-violet-600">
+          Confirmar campos
+        </span>
+        <span className="text-sm font-semibold text-slate-900 truncate">{template.nome}</span>
       </header>
 
-      <TemplateFieldEditor template={template} mode="confirm" />
+      <div className="flex-1 min-h-0">
+        <TemplateFieldEditor template={template} mode="confirm" />
+      </div>
     </div>
   );
 }

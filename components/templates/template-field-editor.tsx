@@ -2278,7 +2278,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   // DOCX: header bar + split view (left = tabbed viewer, right = fields)
   if (isDocx) {
     return (
-      <>
+      <div className="flex h-full flex-col gap-4">
         {magisQuestionsModal}
         {confirmSuccessModal}
         {diffModal}
@@ -2330,7 +2330,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         )}
 
         {/* Header bar: nome + estado */}
-        <div className="rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50 to-slate-50 p-4">
+        <div className="shrink-0 rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50 to-slate-50 p-4">
           <style>{`
             @keyframes field-glow {
               0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
@@ -2357,7 +2357,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         </div>
 
         {/* Item 14: mobile tab switcher (visible only on < xl) */}
-        <div className="flex xl:hidden rounded-2xl border border-slate-200 bg-white p-1 gap-1">
+        <div className="shrink-0 flex xl:hidden rounded-2xl border border-slate-200 bg-white p-1 gap-1">
           <button type="button" onClick={() => setMobileTab("document")}
             className={`flex-1 rounded-xl py-2 text-xs font-semibold transition ${mobileTab === "document" ? "bg-violet-600 text-white" : "text-slate-500 hover:text-slate-800"}`}>
             Documento
@@ -2368,8 +2368,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </button>
         </div>
 
-        {/* Split view */}
-        <div className="flex gap-6" style={{ height: "calc(100vh - 320px)", minHeight: "480px" }}>
+        {/* Split view — flex-1 fills all remaining height in the h-full flex-col parent */}
+        <div className="flex flex-1 min-h-0 gap-6" style={{ minHeight: "480px" }}>
           {/* Left: editor — hidden on mobile, shown on xl+ (or when mobile tab = document) */}
           <div className={`overflow-hidden rounded-3xl border border-slate-200 ${
             mobileTab === "document" ? "flex flex-col w-full xl:w-auto" : "hidden xl:flex xl:flex-col"
@@ -2430,7 +2430,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             </div>
           )}
         </div>
-      </>
+      </div>
     );
   }
 

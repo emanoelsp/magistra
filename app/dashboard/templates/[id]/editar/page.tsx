@@ -53,40 +53,35 @@ export default async function EditarTemplatePage({ params }: PageProps) {
   };
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-3">
-        <Link
-          href="/dashboard/templates"
-          className="inline-flex w-fit items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-950"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Voltar para templates
-        </Link>
-
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">
-              Editor de template
-            </p>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">
-              {template.nome}
-            </h1>
-            {template.escola_nome && (
-              <p className="text-sm text-slate-500">{template.escola_nome}</p>
-            )}
-          </div>
-
+    <div className="flex flex-1 min-h-0 flex-col gap-4">
+      <header className="shrink-0 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <Link
-            href={`/dashboard/templates/${template.id}/visualizar`}
-            className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+            href="/dashboard/templates"
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-950 shrink-0"
           >
-            <Eye className="h-4 w-4" />
-            Visualizar
+            <ArrowLeft className="h-4 w-4" />
+            Templates
           </Link>
+          <span className="text-slate-300 shrink-0">/</span>
+          <span className="rounded-2xl bg-violet-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-violet-600 shrink-0">
+            Editor
+          </span>
+          <span className="text-sm font-semibold text-slate-900 truncate">{template.nome}</span>
         </div>
+
+        <Link
+          href={`/dashboard/templates/${template.id}/visualizar`}
+          className="flex shrink-0 items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+        >
+          <Eye className="h-4 w-4" />
+          Visualizar
+        </Link>
       </header>
 
-      <TemplateFieldEditor template={template} />
+      <div className="flex-1 min-h-0">
+        <TemplateFieldEditor template={template} />
+      </div>
     </div>
   );
 }
