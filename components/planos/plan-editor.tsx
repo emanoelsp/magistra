@@ -1241,13 +1241,13 @@ function AIChatPanel({
             <p className="mb-1 text-xs font-semibold text-violet-700">Tenho este contexto:</p>
             {templateTipoPlano && (
               <p className="text-xs text-slate-700">
-                <span className="font-medium">Tipo de ensino:</span>{" "}
+                <span className="font-medium">Nível de ensino:</span>{" "}
                 <span>{templateTipoPlano}</span>
               </p>
             )}
             {templateEstado && (
               <p className="text-xs text-slate-700">
-                <span className="font-medium">Currículo estadual:</span>{" "}
+                <span className="font-medium">Currículo base:</span>{" "}
                 <span>{templateEstado}</span>
               </p>
             )}

@@ -207,6 +207,11 @@ export async function POST(request: Request) {
       metaLines.unshift(`escola: ${escolaFallback}`);
     }
 
+    const tipoPlanoFallback = template.tipo_plano ?? "";
+    if (tipoPlanoFallback && !metaLines.some((l) => /nível|nivel|ensino|etapa/.test(l))) {
+      metaLines.unshift(`nível de ensino: ${tipoPlanoFallback}`);
+    }
+
     const contexto = metaLines.join(" | ") || "Sem contexto fornecido";
 
     const labelLower = fieldLabel.toLowerCase();
@@ -346,21 +351,23 @@ Responda SOMENTE com JSON válido:
     // Build a pedagogy-only context string for the RAG embedding query.
     // Excludes administrative keys (escola, professor, recursos) that push the
     // embedding vector away from curriculum content.
+    const componente = metadata["componente_curricular"] ?? metadata["componente"] ?? metadata["disciplina"] ?? "";
+    const estado = typeof template.estado === "string" ? template.estado : undefined;
+    const tipoPlano = typeof template.tipo_plano === "string" ? template.tipo_plano : "";
+
     const NON_PEDAGOGICAL_RE = /escola|professor|recurso|materiai|local|data_aula/i;
     const pedagogicalMetaLines = Object.entries(sanitizedMetadata)
       .filter(([k, v]) => v.trim() && !NON_PEDAGOGICAL_RE.test(k))
       .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`);
     const pedagogicalContext = pedagogicalMetaLines.join(" | ");
-    const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${pedagogicalContext} ${currentValuesContext}`.trim();
+    const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${tipoPlano} ${pedagogicalContext} ${currentValuesContext}`.trim();
 
-    const componente = metadata["componente_curricular"] ?? metadata["componente"] ?? metadata["disciplina"] ?? "";
-    const estado = typeof template.estado === "string" ? template.estado : undefined;
-
-    // Robust etapa detection — undefined means "unknown, don't filter" which is
-    // better than silently defaulting to EF when the signal is ambiguous.
+    // Robust etapa detection — tipo_plano (nível de ensino) is the strongest signal.
+    // Falls back to metadata fields. undefined means "unknown, don't filter".
     const etapaRaw = (
-      metadata["etapa"] ?? metadata["ano_turma"] ?? metadata["ano"] ??
-      metadata["serie"] ?? metadata["turma"] ?? ""
+      tipoPlano + " " +
+      (metadata["etapa"] ?? metadata["ano_turma"] ?? metadata["ano"] ??
+      metadata["serie"] ?? metadata["turma"] ?? "")
     ).toLowerCase();
     const etapa: "EF" | "EM" | undefined =
       /médi|medio|ensino.?médi|ensino.?medio|\bem\b|[1-3]\s*[eE][mM]\b|[1-3][°º]\s*ano\s*[eE][mM]/

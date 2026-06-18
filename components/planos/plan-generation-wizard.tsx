@@ -82,6 +82,11 @@ function temMetadados(template: TemplateOption): boolean {
   );
 }
 
+const NIVEL_ENSINO_OPTIONS = [
+  { group: "Educação Básica", items: ["Educação Infantil", "Ensino Fundamental I (1º ao 5º ano)", "Ensino Fundamental II (6º ao 9º ano)", "Ensino Médio"] },
+  { group: "Educação Superior", items: ["Graduação", "Pós-graduação"] },
+];
+
 const STEPS = [
   { id: 1, title: "Escolher template",      description: "Selecione o modelo base do plano." },
   { id: 2, title: "Metadados",              description: "Confirme os dados fixos do template." },
@@ -118,6 +123,9 @@ export function PlanGenerationWizard({
   const [selectedEstado, setSelectedEstado] = useState<string>(
     availableTemplates.find((t) => t.id === initialId)?.estado ?? ""
   );
+  const [selectedTipoPlano, setSelectedTipoPlano] = useState<string>(
+    availableTemplates.find((t) => t.id === initialId)?.tipoPlano ?? ""
+  );
   const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
   const [saveToTemplate, setSaveToTemplate] = useState(true);
   const [capturedEditorValues, setCapturedEditorValues] = useState<Record<string, string>>(
@@ -145,7 +153,7 @@ export function PlanGenerationWizard({
         user_id: userId,
         nome: selectedTemplate.nome,
         escola_nome: selectedTemplate.escolaNome ?? null,
-        tipo_plano: selectedTemplate.tipoPlano ?? null,
+        tipo_plano: selectedTipoPlano || selectedTemplate.tipoPlano || null,
         estado: selectedEstado || null,
         schema_campos: selectedTemplate.schema_campos ?? [],
         data_criacao: selectedTemplate.criadoEm,
@@ -379,7 +387,7 @@ export function PlanGenerationWizard({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => { setSelectedTemplateId(t.id); setSelectedEstado(t.estado ?? ""); }}
+                  onClick={() => { setSelectedTemplateId(t.id); setSelectedEstado(t.estado ?? ""); setSelectedTipoPlano(t.tipoPlano ?? ""); }}
                   className={`rounded-3xl border p-5 text-left transition ${
                     isSelected
                       ? "border-violet-400 bg-violet-50 shadow-sm"
@@ -465,8 +473,8 @@ export function PlanGenerationWizard({
             </div>
           )}
 
-          {/* Título do plano + currículo regional */}
-          <div className="mb-5 grid gap-4 md:grid-cols-2">
+          {/* Título do plano */}
+          <div className="mb-5">
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Título do plano</span>
               <span className="ml-1 text-xs text-rose-500">*</span>
@@ -479,9 +487,34 @@ export function PlanGenerationWizard({
                 className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
               />
             </label>
+          </div>
+
+          {/* Nível de ensino + currículo regional */}
+          <div className="mb-5 grid gap-4 md:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Nível de ensino</span>
+              <p className="mt-0.5 text-xs text-slate-400">Calibra as sugestões pedagógicas da Magis.</p>
+              <div className="relative mt-1.5">
+                <select
+                  value={selectedTipoPlano}
+                  onChange={(e) => setSelectedTipoPlano(e.target.value)}
+                  className="w-full appearance-none rounded-2xl border border-orange-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                >
+                  <option value="">Selecione o nível…</option>
+                  {NIVEL_ENSINO_OPTIONS.map(({ group, items }) => (
+                    <optgroup key={group} label={group}>
+                      {items.map((item) => (
+                        <option key={item} value={item}>{item}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </div>
+            </label>
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Currículo regional</span>
-              <p className="mt-0.5 text-xs text-slate-400">Personaliza sugestões da Magis com o currículo estadual.</p>
+              <p className="mt-0.5 text-xs text-slate-400">Personaliza sugestões com o currículo estadual.</p>
               <div className="relative mt-1.5">
                 <select
                   value={selectedEstado}

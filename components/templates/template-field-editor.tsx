@@ -873,7 +873,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   // Magis questions (after confirmation)
   const [magisQuestionsMode, setMagisQuestionsMode] = useState(false);
+  const [magisStep, setMagisStep] = useState<1 | 2>(1);
   const [magisAnswers, setMagisAnswers] = useState({
+    nivelEnsino: template.tipo_plano ?? "",
     estadoMagis: template.estado ?? "",
   });
   const [isSavingMagis, setIsSavingMagis] = useState(false);
@@ -1202,6 +1204,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             setPreviewVersion((v) => v + 1);
           } else if (mode === "confirm") {
             setMagisQuestionsMode(true);
+            setMagisStep(1);
           } else {
             setSaved(true);
             setPreviewVersion((v) => v + 1);
@@ -1285,6 +1288,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   function handleConfirmTemplate() {
     setMagisQuestionsMode(true);
+    setMagisStep(1);
   }
 
   async function handleCompleteMagis() {
@@ -1294,6 +1298,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          tipo_plano: magisAnswers.nivelEnsino || null,
           estado: magisAnswers.estadoMagis || null,
         }),
       });
@@ -2024,6 +2029,17 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     </div>
   );
 
+  const NIVEL_ENSINO_OPTIONS: { group: string; items: string[] }[] = [
+    {
+      group: "Educação Básica",
+      items: ["Educação Infantil", "Ensino Fundamental I (1º ao 5º ano)", "Ensino Fundamental II (6º ao 9º ano)", "Ensino Médio"],
+    },
+    {
+      group: "Educação Superior",
+      items: ["Graduação", "Pós-graduação"],
+    },
+  ];
+
   const magisQuestionsModal = magisQuestionsMode && (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm">
       <div className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
@@ -2034,46 +2050,103 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-widest text-violet-600">Magis</p>
-            <p className="text-sm font-semibold text-slate-800">Antes de continuarmos, uma pergunta</p>
+            <p className="text-sm font-semibold text-slate-800">
+              {magisStep === 1 ? "Qual é o nível de ensino deste template?" : "Você usa currículo regional?"}
+            </p>
+          </div>
+          {/* Progress dots */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {([1, 2] as const).map((s) => (
+              <div
+                key={s}
+                className={`h-1.5 rounded-full transition-all ${magisStep >= s ? "w-6 bg-violet-600" : "w-3 bg-violet-200"}`}
+              />
+            ))}
           </div>
         </div>
 
         <div className="p-6">
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm font-medium text-slate-700">
-                Você usa currículo regional de algum estado?
+          {/* Etapa 1 — Nível de ensino */}
+          {magisStep === 1 && (
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400">
+                A Magis usa essa informação para calibrar as sugestões ao nível correto.
               </p>
-              <p className="mt-0.5 text-xs text-slate-400">
+              <div className="space-y-3">
+                {NIVEL_ENSINO_OPTIONS.map(({ group, items }) => (
+                  <div key={group}>
+                    <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">{group}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {items.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setMagisAnswers((prev) => ({ ...prev, nivelEnsino: item }))}
+                          className={`rounded-2xl border px-3 py-2.5 text-sm font-medium text-left transition ${
+                            magisAnswers.nivelEnsino === item
+                              ? "border-violet-500 bg-violet-600 text-white"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-violet-300 hover:bg-violet-50"
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setMagisStep(2)}
+                  className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
+                >
+                  Continuar →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Etapa 2 — Currículo estadual */}
+          {magisStep === 2 && (
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400">
                 A Magis vai personalizar sugestões com o currículo territorial. Deixe em branco se não usar.
               </p>
+              <div className="relative">
+                <select
+                  value={magisAnswers.estadoMagis}
+                  onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
+                  autoFocus
+                  className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                >
+                  <option value="">Deixar em branco — sem currículo estadual</option>
+                  {ESTADOS_BRASIL.map((e) => (
+                    <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </div>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setMagisStep(1)}
+                  className="text-xs text-slate-400 hover:text-slate-700"
+                >
+                  ← Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCompleteMagis()}
+                  disabled={isSavingMagis}
+                  className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {isSavingMagis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Finalizar
+                </button>
+              </div>
             </div>
-            <div className="relative">
-              <select
-                value={magisAnswers.estadoMagis}
-                onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
-                autoFocus
-                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-              >
-                <option value="">Deixar em branco — sem currículo estadual</option>
-                {ESTADOS_BRASIL.map((e) => (
-                  <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            </div>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => void handleCompleteMagis()}
-                disabled={isSavingMagis}
-                className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {isSavingMagis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Finalizar
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
