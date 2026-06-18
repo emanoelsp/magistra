@@ -1006,9 +1006,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const isDocx = (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
 
   // Item 6: drag-and-drop reordering
-  function handleDragStart(key: string) { setDraggingKey(key); }
+  function handleDragStart(e: React.DragEvent, key: string) {
+    // setData is required by Safari and some browsers to validate the drag operation.
+    e.dataTransfer.setData("text/plain", key);
+    e.dataTransfer.effectAllowed = "move";
+    setDraggingKey(key);
+  }
   function handleDragOver(e: React.DragEvent, key: string) {
     e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
     if (key !== draggingKey) setDragOverKey(key);
   }
   function handleDrop(targetKey: string) {
@@ -1790,8 +1796,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                 <div
                   key={field.key}
                   data-field-card={field.key}
-                  draggable
-                  onDragStart={() => handleDragStart(field.key)}
                   onDragOver={(e) => handleDragOver(e, field.key)}
                   onDrop={() => handleDrop(field.key)}
                   onDragEnd={handleDragEnd}
@@ -1800,13 +1804,19 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   }`}
                 >
                   <div
-                    className="flex cursor-pointer items-center gap-2 px-4 py-3"
+                    className="flex select-none cursor-pointer items-center gap-2 px-4 py-3"
                     onClick={() => {
                       setActiveFieldKey(field.key);
                       setExpandedField(isExpanded ? null : field.key);
                     }}
                   >
-                    <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-slate-300 active:cursor-grabbing" />
+                    <span
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, field.key)}
+                      className="flex shrink-0 cursor-grab active:cursor-grabbing"
+                    >
+                      <GripVertical className="h-4 w-4 text-slate-300" />
+                    </span>
                     <div className="flex-1 min-w-0">
                       <p className="line-clamp-2 break-words text-sm font-semibold leading-snug text-slate-900">
                         {field.label || <span className="italic font-normal text-slate-400">sem nome</span>}

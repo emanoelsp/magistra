@@ -268,7 +268,7 @@ export async function POST(request: Request) {
       : fieldGroup === "competencias"
         ? `O campo "${fieldLabel}" é de COMPETÊNCIAS. ` +
           "Sugira competências gerais da BNCC ou competências específicas do componente curricular, sempre parafraseadas. " +
-          "label = texto da competência parafraseado de forma objetiva e aplicada à disciplina (nunca cópia literal); " +
+          "label = competência iniciando com verbo de ação no infinitivo, parafraseada de forma objetiva e aplicada à disciplina — ex: 'Analisar criticamente fontes diversas, identificando contexto e intencionalidade' (nunca cópia literal); " +
           "descricao = como essa competência se manifesta nas atividades e no cotidiano dos alunos desta turma; " +
           "fonte = 'Competência Geral BNCC N°X' ou 'Competência Específica [componente curricular]'."
 
@@ -282,21 +282,21 @@ export async function POST(request: Request) {
       : fieldGroup === "conteudos"
         ? `O campo "${fieldLabel}" é de CONTEÚDOS PROGRAMÁTICOS. ` +
           "Sugira tópicos específicos do componente curricular adequados ao ano/série informados, do mais básico ao mais complexo. " +
-          "label = nome do tópico de conteúdo (conciso, ex: 'Equações do 2° grau — discriminante e fórmula de Bhaskara'); " +
+          "label = tópico de conteúdo iniciando com verbo de ação no infinitivo — ex: 'Explorar equações do 2° grau pelo discriminante e fórmula de Bhaskara', 'Identificar variações linguísticas e norma culta em diferentes contextos'; " +
           "descricao = o que será trabalhado, como se conecta ao cotidiano e à vida do aluno, e link com currículo territorial quando aplicável; " +
           "fonte = 'Currículo [componente]' ou 'currículo territorial'."
 
       : fieldGroup === "avaliacao"
         ? `O campo "${fieldLabel}" é de AVALIAÇÃO. ` +
           "Sugira instrumentos e critérios avaliativos variados, equilibrando avaliação formativa e somativa. " +
-          "label = instrumento ou critério específico (ex: 'Resolução de problema em dupla com registro do raciocínio'); " +
+          "label = ação de avaliação iniciando com verbo no infinitivo — ex: 'Observar o engajamento e registrar produções durante atividade experimental', 'Resolver questão de interpretação de gráfico com dados reais no modelo SAEB'; " +
           "descricao = como aplicar o instrumento, o que observar e o que evidencia a aprendizagem; " +
           "fonte = 'Avaliação formativa', 'Avaliação somativa' ou 'SAEB [descritor]'."
 
       : `O campo a ser preenchido no plano de aula é: "${fieldLabel}" ` +
         `(categoria: ${fieldGroup ?? "outros"}). ` +
         "Gere sugestões específicas, contextualizadas com a turma e a disciplina fornecidas. " +
-        "label = conteúdo pronto para inserção neste campo (conciso e direto); " +
+        "label = texto iniciando com verbo de ação no infinitivo, pronto para inserção neste campo (conciso e direto); " +
         "descricao = justificativa pedagógica — por que essa sugestão é adequada ao contexto; " +
         "fonte = referência curricular ou pedagógica pertinente (BNCC, SAEB, currículo territorial ou outra).";
 
@@ -315,6 +315,7 @@ Gere de 3 a 5 sugestões de preenchimento para o campo indicado em <campo>. Cada
 2. NUNCA invente ou complete códigos BNCC, SAEB ou currículo territorial — use SOMENTE os que você conhece com certeza.
 3. Se <habilidades_bncc> estiver presente, use EXCLUSIVAMENTE os códigos listados ali — nunca invente outros.
 4. Se <instrucao_do_professor> estiver presente, respeite-a como prioridade máxima.
+5. SEMPRE inicie o campo "label" de cada sugestão com um verbo de ação no infinitivo (ex: Identificar, Analisar, Resolver, Produzir, Aplicar, Criar, Comparar, Explicar, Desenvolver, Elaborar, Utilizar, Observar, Registrar, Avaliar, Planejar, Discutir, Investigar, Relacionar, Selecionar, Organizar). Isso vale para todos os tipos de campo.
 </regras>
 <exemplos>
 ${fewShotExample}
@@ -329,7 +330,7 @@ Antes de gerar as sugestões, raciocine em "raciocinio" seguindo estes passos:
 <contrato_de_saida>
 Cada sugestão deve conter:
 - id: string única simples ('s1', 's2', ...)
-- label: texto curto e pronto para inserção direta — o professor clica e insere
+- label: texto curto e pronto para inserção direta — SEMPRE inicia com verbo de ação no infinitivo — o professor clica e insere
 - descricao: justificativa pedagógica em 1-2 frases — POR QUE esta sugestão serve para este campo e contexto
 - fonte: referência curricular específica (ex: 'BNCC EF09MA06', 'Competência Geral 2', 'SAEB', 'currículo territorial', 'Avaliação formativa')
 Responda SOMENTE com JSON válido:
