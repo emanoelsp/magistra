@@ -286,6 +286,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       for (const f of schema) {
         if (f.role === "ia_sugerida") merged[f.key] = "";
       }
+      // Re-apply escola even when ia_sugerida — always pre-fill from step 2 or template
+      const ef = schema.find(
+        (f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"),
+      );
+      if (ef) {
+        merged[ef.key] = initialValues[ef.key] || template.escola_nome || "";
+      }
     }
     return merged;
   });

@@ -2329,32 +2329,34 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
         )}
 
-        {/* Header bar: nome + estado */}
-        <div className="shrink-0 rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50 to-slate-50 p-4">
-          <style>{`
-            @keyframes field-glow {
-              0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
-              50%       { box-shadow: 0 0 0 5px rgba(99,102,241,0.25); }
-            }
-            .field-glow-anim { animation: field-glow 2s ease-in-out infinite; }
-          `}</style>
-          <div className="flex-1">
-            <label className="block text-xs font-bold text-slate-700">
-              Nome do template <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              placeholder="Ex.: Plano de aula semanal — Ensino Médio"
-              className={`field-glow-anim mt-1.5 w-full rounded-2xl border-2 px-4 py-2.5 text-sm text-slate-950 outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
-                !nome.trim()
-                  ? "border-violet-400 bg-white placeholder:text-slate-400"
-                  : "border-slate-300 bg-white focus:border-violet-500"
-              }`}
-            />
+        {/* Header bar: nome — só no confirmar (no editar já aparece no breadcrumb da página) */}
+        {mode === "confirm" && (
+          <div className="shrink-0 rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50 to-slate-50 p-4">
+            <style>{`
+              @keyframes field-glow {
+                0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+                50%       { box-shadow: 0 0 0 5px rgba(99,102,241,0.25); }
+              }
+              .field-glow-anim { animation: field-glow 2s ease-in-out infinite; }
+            `}</style>
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-slate-700">
+                Nome do template <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={nome}
+                onChange={(e) => setNome(e.target.value)}
+                placeholder="Ex.: Plano de aula semanal — Ensino Médio"
+                className={`field-glow-anim mt-1.5 w-full rounded-2xl border-2 px-4 py-2.5 text-sm text-slate-950 outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
+                  !nome.trim()
+                    ? "border-violet-400 bg-white placeholder:text-slate-400"
+                    : "border-slate-300 bg-white focus:border-violet-500"
+                }`}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Item 14: mobile tab switcher (visible only on < xl) */}
         <div className="shrink-0 flex xl:hidden rounded-2xl border border-slate-200 bg-white p-1 gap-1">
