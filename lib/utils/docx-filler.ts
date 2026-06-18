@@ -302,10 +302,48 @@ function hasBoldText(cellXml: string): boolean {
 }
 
 /**
- * Returns true when a cell text is a period/trimester marker rather than a content value.
- * Used to prevent period markers ("1º", "2º", "3º") from being misidentified as field values
- * in multi-period tables (annual plans with trimester/bimester columns).
+ * Returns true when EVERY text-bearing run in the cell is bold.
+ * Stricter than hasBoldText (which fires on ANY bold run). A uniformly-bold
+ * cell is a label/title, never a value slot — even when it doesn't end with ":".
+ * Anti-rule: does NOT test <w:tblHeader> — present on 100 % of rows in school
+ * templates (Word generation artifact, zero discriminative value).
  */
+function isAllBoldCell(cellXml: string): boolean {
+  const runs = [...cellXml.matchAll(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g)].map((m) => m[0]);
+  const textRuns = runs.filter((r) => /<w:t(?:\s[^>]*)?>([^<]+)<\/w:t>/.test(r));
+  if (textRuns.length === 0) return false;
+  return textRuns.every(
+    (run) =>
+      /<w:rPr>[\s\S]*?<w:b(?:\s(?!Cs)[^>]*)?\/>[\s\S]*?<\/w:rPr>/.test(run) ||
+      /<w:rPr>[\s\S]*?<w:b(?:\s(?!Cs)[^>]*)?>[\s\S]*?<\/w:rPr>/.test(run),
+  );
+}
+
+/**
+ * Double-check guard applied to INJECTION TARGET cells before any placeholder
+ * is written. Returns true when the cell must never receive a {{token}}.
+ *
+ * Decision order (highest-priority first):
+ *   R04  Cell contains an image → skip
+ *   R05  Ordinal period / trimester marker (1º, 2º, 3º)
+ *   R02  Text ends with ":" → standalone label
+ *   R03  ALL-CAPS without lowercase → section title
+ *   R01  ALL text runs bold → label / title cell (strongest structural signal)
+ *
+ * NOT checked here:
+ *   R06  Empty target cells are always safe (callers decide emptiness semantics)
+ *   R10  <w:tblHeader> — artifact present on every row, zero signal
+ */
+function isNeverInjectTargetCell(cellXml: string, cellText: string): boolean {
+  if (hasImageContent(cellXml)) return true;
+  const t = cellText.trim();
+  if (!t) return false; // empty cells: caller decides
+  if (looksLikePeriodMarker(t)) return true;
+  if (looksLikeLabel(t)) return true;    // covers R02 (ends ":") + R03 (ALL-CAPS)
+  if (isAllBoldCell(cellXml)) return true; // R01
+  return false;
+}
+
 /**
  * Returns true when a cell's XML contains an inline image (drawing).
  * Used to skip image cells so they are never treated as value slots.
@@ -1303,6 +1341,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 
       // Standard case: inject into cell[ci + 1]
       const origValueCell = cells[ci + 1];
+      // Double-check: never inject into label, title, all-bold, or period cells
+      if (isNeverInjectTargetCell(origValueCell, cellTexts[ci + 1])) continue;
       const newCell = setCellContent(origValueCell, `{{${field.key}}}`);
       // replaceFirst on the *running* rowXml: replaces the first (leftmost) occurrence
       // of origValueCell, which is correct when scanning left-to-right because
@@ -1372,12 +1412,13 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
         const valueIdx   = vColToNextIdx.get(targetVCol) ?? ci;
         if (valueIdx >= nextCells.length) continue;
 
-        // Only inject into genuinely empty value slots — skip label-looking cells
-        // and cells with substantial content (likely a pre-filled value or sub-header)
+        // Only inject into genuinely empty value slots — double-check via
+        // isNeverInjectTargetCell (unified label/bold/period guard) then reject
+        // cells with substantial pre-filled content (> 10 chars).
         const fallbackTarget = nextCellTexts[valueIdx].trim();
-        if (looksLikeLabel(fallbackTarget)) continue;
-        if (fallbackTarget.length > 10) continue;
         const origCell = nextCells[valueIdx];
+        if (isNeverInjectTargetCell(origCell, fallbackTarget)) continue;
+        if (fallbackTarget.length > 10) continue;
         const newCell = setCellContent(origCell, `{{${field.key}}}`);
         nextRowXml = replaceFirst(nextRowXml, origCell, newCell);
         nextCells[valueIdx] = newCell;

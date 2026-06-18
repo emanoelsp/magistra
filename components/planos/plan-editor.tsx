@@ -947,6 +947,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             metadata={metadata}
             metadataComplete={metadataComplete}
             generalContext={generalContext}
+            templateEstado={template.estado ?? null}
+            templateTipoPlano={template.tipo_plano ?? null}
             onGeneralContextChange={setGeneralContext}
             onInsert={insertSuggestion}
             onGenerate={(extraContext, bypass) => {
@@ -1154,10 +1156,17 @@ interface AIChatPanelProps {
   metadata: Record<string, string>;
   metadataComplete: boolean;
   generalContext: string;
+  templateEstado?: string | null;
+  templateTipoPlano?: string | null;
   onGeneralContextChange: (v: string) => void;
   onInsert: (s: IaSugestao, mode: "label" | "full") => void;
   onGenerate: (extraContext?: string, bypassCache?: boolean) => void;
 }
+
+// Keys whose values are not relevant for pedagogical content generation.
+// These are administrative/logistics fields — useful for the document but not
+// for curriculum alignment or activity design.
+const NON_PEDAGOGICAL_KEYS = /escola|professor|recurso|materiai|local|data_aula/i;
 
 function AIChatPanel({
   activeField,
@@ -1169,6 +1178,8 @@ function AIChatPanel({
   metadata,
   metadataComplete,
   generalContext,
+  templateEstado,
+  templateTipoPlano,
   onGeneralContextChange,
   onInsert,
   onGenerate,
@@ -1176,7 +1187,12 @@ function AIChatPanel({
   const [contextInput, setContextInput] = useState("");
   const [showGeneralCtx, setShowGeneralCtx] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const metaEntries = Object.entries(metadata).slice(0, 5);
+
+  // Show only pedagogically relevant fields — skip escola, professor, recursos.
+  // Template-level metadata (estado, tipo de ensino) is shown separately below.
+  const metaEntries = Object.entries(metadata)
+    .filter(([k]) => !NON_PEDAGOGICAL_KEYS.test(k))
+    .slice(0, 5);
   const fieldLabel = activeField?.label ?? activeFieldMeta?.label;
 
   useEffect(() => {
@@ -1216,15 +1232,27 @@ function AIChatPanel({
           <ChatBubble>
             <p className="text-sm text-slate-700">
               Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica.
-              Clique nos campos com borda em azul que sugiro o conteúdo para você!
+              Clique nos campos com borda em <span className="font-bold text-blue-500">azul</span> que sugiro o conteúdo para você!
             </p>
           </ChatBubble>
         )}
 
         {/* Context bubble */}
-        {metaEntries.length > 0 && (
+        {(metaEntries.length > 0 || templateTipoPlano || templateEstado) && (
           <ChatBubble>
             <p className="mb-1 text-xs font-semibold text-violet-700">Tenho este contexto:</p>
+            {templateTipoPlano && (
+              <p className="text-xs text-slate-700">
+                <span className="font-medium">Tipo de ensino:</span>{" "}
+                <span>{templateTipoPlano}</span>
+              </p>
+            )}
+            {templateEstado && (
+              <p className="text-xs text-slate-700">
+                <span className="font-medium">Currículo estadual:</span>{" "}
+                <span>{templateEstado}</span>
+              </p>
+            )}
             {metaEntries.map(([k, v]) => (
               <p key={k} className="text-xs text-slate-700">
                 <span className="font-medium capitalize">{k.replace(/_/g, " ")}:</span>{" "}
@@ -1477,29 +1505,33 @@ interface FieldInputProps {
 }
 
 function FieldInput({ field, value, active, onChange, onFocus }: FieldInputProps) {
-  const base = "w-full rounded-2xl border bg-white px-4 py-3 text-sm text-slate-950 outline-none transition";
-  const cls = active
-    ? `${base} border-violet-400 ring-2 ring-violet-100`
-    : `${base} border-slate-300 focus:border-violet-400 focus:ring-2 focus:ring-violet-100`;
+  const wrapCls = active
+    ? "rounded-2xl border border-orange-400 bg-orange-50 p-4 shadow-sm ring-1 ring-orange-200 transition"
+    : "rounded-2xl border-2 border-orange-400 bg-orange-50/50 p-4 shadow-[0_0_0_3px_rgba(249,115,22,0.12)] ring-1 ring-orange-200 transition";
+  const inputCls = "w-full rounded-xl border border-orange-200 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 mt-1.5";
 
   return (
-    <label className="block">
-      <span className="block text-sm font-medium text-slate-700">{field.label}</span>
-      {field.required && <span className="text-xs text-rose-500"> *</span>}
-      {field.helperText && <span className="block text-xs text-slate-500">{field.helperText}</span>}
-      {field.type === "textarea" ? (
-        <textarea rows={3} value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} placeholder={field.placeholder} className={`mt-1.5 ${cls}`} />
-      ) : field.type === "number" ? (
-        <input type="number" value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} className={`mt-1.5 ${cls}`} />
-      ) : field.type === "select" && field.options ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} className={`mt-1.5 ${cls}`}>
-          <option value="">Selecione…</option>
-          {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      ) : (
-        <input type="text" value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} placeholder={field.placeholder} className={`mt-1.5 ${cls}`} />
-      )}
-    </label>
+    <div className={wrapCls} onClick={onFocus}>
+      <label className="block cursor-pointer">
+        <span className="block text-sm font-medium text-slate-700">
+          {field.required && <span className="mr-1 text-orange-500 font-bold">*</span>}
+          {field.label}
+        </span>
+        {field.helperText && <span className="block text-xs text-slate-500">{field.helperText}</span>}
+        {field.type === "textarea" ? (
+          <textarea rows={3} value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} placeholder={field.placeholder} className={inputCls} />
+        ) : field.type === "number" ? (
+          <input type="number" value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} className={inputCls} />
+        ) : field.type === "select" && field.options ? (
+          <select value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} className={inputCls}>
+            <option value="">Selecione…</option>
+            {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : (
+          <input type="text" value={value} onChange={(e) => onChange(e.target.value)} onFocus={onFocus} placeholder={field.placeholder} className={inputCls} />
+        )}
+      </label>
+    </div>
   );
 }
 
