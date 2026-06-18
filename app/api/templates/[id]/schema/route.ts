@@ -36,6 +36,8 @@ interface CellEdit {
 interface SchemaBody {
   nome?: string;
   estado?: string | null;
+  tipo_plano?: string | null;
+  metadata_padrao?: Record<string, string> | null;
   schema_campos?: TemplateFieldSchema[];
   field_positions?: Record<string, FieldPosition>;
   cell_edits?: CellEdit[];
@@ -76,6 +78,19 @@ export async function PATCH(
     const estado: string | null = body.estado !== undefined
       ? (body.estado || null)
       : (typeof data.estado === "string" ? data.estado : null);
+    const tipo_plano: string | null = body.tipo_plano !== undefined
+      ? (body.tipo_plano || null)
+      : (typeof data.tipo_plano === "string" ? data.tipo_plano : null);
+    const metadata_padrao: Record<string, string> = body.metadata_padrao !== undefined
+      ? {
+          ...(typeof data.metadata_padrao === "object" && data.metadata_padrao !== null
+            ? (data.metadata_padrao as Record<string, string>)
+            : {}),
+          ...(body.metadata_padrao ?? {}),
+        }
+      : (typeof data.metadata_padrao === "object" && data.metadata_padrao !== null
+          ? (data.metadata_padrao as Record<string, string>)
+          : {});
     const fieldPositions: Record<string, FieldPosition> = body.field_positions ?? {};
 
     // Identify deleted keys (were in old schema, not in new)
@@ -100,7 +115,9 @@ export async function PATCH(
 
     const isDocx = /\.(docx|doc)$/i.test(arquivoUrl.split("?")[0]);
     if (!isDocx || !arquivoUrl) {
-      await db.collection("magis_templates").doc(id).update({ nome, estado, schema_campos: newSchema });
+      await db.collection("magis_templates").doc(id).update({
+        nome, estado, tipo_plano, metadata_padrao, schema_campos: newSchema,
+      });
       return NextResponse.json({ ok: true });
     }
 
@@ -237,6 +254,8 @@ export async function PATCH(
     const firestoreUpdate: Record<string, unknown> = {
       nome,
       estado,
+      tipo_plano,
+      metadata_padrao,
       schema_campos: newSchema,
       arquivo_fillable_url: newFillableUrl,
       fillable_status: "pronto",

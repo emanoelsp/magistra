@@ -842,11 +842,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   // Track fields that were just added and need label/role/group configuration
   const [pendingConfigKeys, setPendingConfigKeys] = useState<Set<string>>(new Set());
 
-  // Item 12: auto-save debounce
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isMountedRef = useRef(false);
-  const [autoSaving, setAutoSaving] = useState(false);
-  const [autoSaved, setAutoSaved] = useState(false);
 
   // Item 13: schema version history
   const [showVersions, setShowVersions] = useState(false);
@@ -872,6 +867,20 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [reviewMode, setReviewMode] = useState(mode === "confirm");
   const [isAdvancing, setIsAdvancing] = useState(false);
 
+  // Magis questions (after confirmation)
+  const [magisQuestionsMode, setMagisQuestionsMode] = useState(false);
+  const [magisStep, setMagisStep] = useState<1 | 2 | 3>(1);
+  const [magisAnswers, setMagisAnswers] = useState({
+    tipoEnsino: "",
+    anoTurma: "",
+    estadoMagis: template.estado ?? "",
+  });
+  const [isSavingMagis, setIsSavingMagis] = useState(false);
+
+  // Doc save result feedback
+  const [docSaveResult, setDocSaveResult] = useState<{ added: string[]; removed: string[] } | null>(null);
+  const docSaveResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const fieldListRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
 
@@ -882,35 +891,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     requestAnimationFrame(() => { if (el) el.scrollTop = top; });
   }
 
-  // Item 12: auto-save with 3s debounce (only triggers after first render)
-  useEffect(() => {
-    if (!isMountedRef.current) { isMountedRef.current = true; return; }
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      setAutoSaving(true);
-      void fetch(`/api/templates/${template.id}/schema`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nome: nome.trim() || template.nome,
-          estado: estado || null,
-          schema_campos: fields,
-          field_positions: fieldPositions,
-        }),
-      })
-        .then((r) => r.json())
-        .then((d: { campos_sem_placeholder?: string[] }) => {
-          if (d.campos_sem_placeholder) setCamposSemPlaceholder(d.campos_sem_placeholder);
-          setPreviewVersion((v) => v + 1);
-          setAutoSaved(true);
-          setTimeout(() => setAutoSaved(false), 2000);
-        })
-        .catch(() => { /* silent auto-save fail */ })
-        .finally(() => setAutoSaving(false));
-    }, 3000);
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fields]);
+  // Auto-save disabled — save happens explicitly via "Salvar edições" button
 
   // Item 13: load schema versions
   async function loadVersions() {
@@ -1119,6 +1100,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       }
     }
 
+    // Show result feedback toast
+    if (newFields.length > 0 || removedKeys.length > 0) {
+      const added = newFields.map((f) => f.label || f.key);
+      const removed = removedKeys.map((k) => fields.find((f) => f.key === k)?.label ?? k);
+      if (docSaveResultTimerRef.current) clearTimeout(docSaveResultTimerRef.current);
+      setDocSaveResult({ added, removed });
+      docSaveResultTimerRef.current = setTimeout(() => setDocSaveResult(null), 6000);
+    }
+
     handleSave(mergedFields, mergedPositions, true, cellEdits);
   }
 
@@ -1174,7 +1164,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
     // Item 11: validation
     if (!nome.trim()) { setError("Dê um nome ao template antes de salvar."); return; }
-    if (!estado) { setError("Selecione o estado (currículo regional) antes de salvar."); return; }
     const emptyLabel = fieldsToSave.find((f) => !f.label.trim());
     if (emptyLabel) { setError("Todos os campos precisam ter um nome."); return; }
     const keysSeen = new Set<string>();
@@ -1211,11 +1200,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           if (switchToPreview) {
             setPreviewVersion((v) => v + 1);
           } else if (mode === "confirm") {
-            setShowConfirmSuccess(true);
-            setTimeout(() => {
-              setShowConfirmSuccess(false);
-              router.push("/dashboard/templates");
-            }, 3000);
+            setMagisQuestionsMode(true);
+            setMagisStep(1);
           } else {
             setSaved(true);
             setPreviewVersion((v) => v + 1);
@@ -1298,6 +1284,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   }
 
   function handleConfirmTemplate() {
+    setMagisQuestionsMode(true);
+    setMagisStep(1);
+  }
+
+  async function handleCompleteMagis() {
+    setIsSavingMagis(true);
+    try {
+      await fetch(`/api/templates/${template.id}/schema`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tipo_plano: magisAnswers.tipoEnsino || null,
+          estado: magisAnswers.estadoMagis || null,
+          ...(magisAnswers.anoTurma
+            ? { metadata_padrao: { ano_turma: magisAnswers.anoTurma } }
+            : {}),
+        }),
+      });
+    } catch { /* não bloquear se falhar */ }
+    finally { setIsSavingMagis(false); }
+    setMagisQuestionsMode(false);
     setShowConfirmSuccess(true);
     setTimeout(() => {
       setShowConfirmSuccess(false);
@@ -1571,8 +1578,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           <div>
             <h2 className="text-sm font-semibold text-slate-900">
               Campos do template ({fields.length})
-              {autoSaving && <span className="ml-2 text-[10px] font-normal text-slate-400">salvando…</span>}
-              {!autoSaving && autoSaved && <span className="ml-2 text-[10px] font-medium text-emerald-500">✓ salvo</span>}
             </h2>
             <p className="text-xs text-slate-500">
               {mode === "confirm"
@@ -1893,20 +1898,22 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </label>
                       )}
 
-                      {/* Helper text — visible to professor when filling the plan */}
-                      <label className="block">
-                        <span className="text-[11px] font-semibold text-slate-600">Dica para o professor</span>
-                        <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
-                          Texto de ajuda exibido abaixo do campo ao preencher o plano.
-                        </p>
-                        <textarea
-                          value={field.helperText ?? ""}
-                          onChange={(e) => preserveScroll(() => updateField(index, { helperText: e.target.value || undefined }))}
-                          rows={2}
-                          placeholder="Ex.: Informe o componente curricular e a série/ano…"
-                          className="mt-0.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
-                        />
-                      </label>
+                      {/* Dica de contexto — só para campos IA */}
+                      {field.role === "ia_sugerida" && (
+                        <label className="block">
+                          <span className="text-[11px] font-semibold text-violet-700">Contexto adicional para a Magis</span>
+                          <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
+                            Dica de ajuda exibida ao professor ao preencher este campo.
+                          </p>
+                          <textarea
+                            value={field.helperText ?? ""}
+                            onChange={(e) => preserveScroll(() => updateField(index, { helperText: e.target.value || undefined }))}
+                            rows={2}
+                            placeholder="Ex.: Informe o componente curricular e a série/ano…"
+                            className="mt-0.5 w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-violet-300 focus:bg-white"
+                          />
+                        </label>
+                      )}
 
                     </div>
                   )}
@@ -2038,6 +2045,157 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     </div>
   );
 
+  const magisQuestionsModal = magisQuestionsMode && (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm">
+      <div className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center gap-3 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-slate-50 px-6 py-4">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md shadow-violet-200">
+            <Sparkles className="h-4 w-4 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-violet-600">Magis</p>
+            <p className="text-sm font-semibold text-slate-800">Antes de continuar, me conte mais sobre este template</p>
+          </div>
+          {/* Progress dots */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {([1, 2, 3] as const).map((s) => (
+              <div
+                key={s}
+                className={`h-1.5 rounded-full transition-all ${magisStep >= s ? "w-6 bg-violet-600" : "w-3 bg-violet-200"}`}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="p-6">
+          {/* Etapa 1 — Tipo de ensino */}
+          {magisStep === 1 && (
+            <div className="space-y-4">
+              <p className="text-sm font-medium text-slate-700">É um plano para qual nível de ensino?</p>
+              <div className="flex flex-wrap gap-2">
+                {["Educação Básica", "Ensino Fundamental", "Ensino Médio"].map((tipo) => (
+                  <button
+                    key={tipo}
+                    type="button"
+                    onClick={() => {
+                      setMagisAnswers((prev) => ({ ...prev, tipoEnsino: tipo }));
+                      setMagisStep(2);
+                    }}
+                    className={`rounded-2xl border-2 px-4 py-2.5 text-sm font-semibold transition ${
+                      magisAnswers.tipoEnsino === tipo
+                        ? "border-violet-500 bg-violet-600 text-white"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-violet-300 hover:bg-violet-50"
+                    }`}
+                  >
+                    {tipo}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setMagisStep(2)}
+                className="text-xs text-slate-400 underline underline-offset-2 hover:text-slate-600"
+              >
+                Pular esta pergunta
+              </button>
+            </div>
+          )}
+
+          {/* Etapa 2 — Qual ano/série */}
+          {magisStep === 2 && (
+            <div className="space-y-4">
+              <div>
+                {magisAnswers.tipoEnsino && (
+                  <p className="mb-0.5 text-xs text-violet-600 font-medium">
+                    {magisAnswers.tipoEnsino} ✓
+                  </p>
+                )}
+                <p className="text-sm font-medium text-slate-700">São turmas de qual ano / série?</p>
+                <p className="mt-0.5 text-xs text-slate-400">Isso ajuda a Magis a calibrar sugestões de conteúdo.</p>
+              </div>
+              <input
+                type="text"
+                value={magisAnswers.anoTurma}
+                onChange={(e) => setMagisAnswers((prev) => ({ ...prev, anoTurma: e.target.value }))}
+                placeholder="Ex.: 6º ao 9º ano, 1ª série do EM, turmas mistas…"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === "Enter") setMagisStep(3); }}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+              />
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setMagisStep(1)}
+                  className="text-xs text-slate-400 hover:text-slate-700"
+                >
+                  ← Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMagisStep(3)}
+                  className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
+                >
+                  Próxima pergunta →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Etapa 3 — Currículo estadual */}
+          {magisStep === 3 && (
+            <div className="space-y-4">
+              <div>
+                {magisAnswers.anoTurma && (
+                  <p className="mb-0.5 text-xs text-violet-600 font-medium">
+                    {magisAnswers.anoTurma} ✓
+                  </p>
+                )}
+                <p className="text-sm font-medium text-slate-700">
+                  Você usa o currículo base de algum estado?
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  A Magis vai personalizar sugestões com o currículo territorial. Deixe em branco se não usar.
+                </p>
+              </div>
+              <div className="relative">
+                <select
+                  value={magisAnswers.estadoMagis}
+                  onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
+                  className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                >
+                  <option value="">Deixar em branco — sem currículo estadual</option>
+                  {ESTADOS_BRASIL.map((e) => (
+                    <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </div>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setMagisStep(2)}
+                  className="text-xs text-slate-400 hover:text-slate-700"
+                >
+                  ← Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCompleteMagis()}
+                  disabled={isSavingMagis}
+                  className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {isSavingMagis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Concluir configuração
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   const confirmSuccessModal = showConfirmSuccess && (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
       <div
@@ -2077,9 +2235,41 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   if (isDocx) {
     return (
       <>
+        {magisQuestionsModal}
         {confirmSuccessModal}
         {diffModal}
         {versionsModal}
+
+        {/* Doc save result toast */}
+        {docSaveResult && (
+          <div className="fixed bottom-6 left-1/2 z-[9998] flex -translate-x-1/2 items-start gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl max-w-sm w-full">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+            <div className="flex-1 min-w-0">
+              {docSaveResult.added.length > 0 && (
+                <p className="text-xs font-semibold text-emerald-400">
+                  {docSaveResult.added.length === 1
+                    ? `Campo adicionado: ${docSaveResult.added[0]}`
+                    : `${docSaveResult.added.length} campos adicionados`}
+                </p>
+              )}
+              {docSaveResult.removed.length > 0 && (
+                <p className="text-xs font-semibold text-rose-400">
+                  {docSaveResult.removed.length === 1
+                    ? `Campo removido: ${docSaveResult.removed[0]}`
+                    : `${docSaveResult.removed.length} campos removidos`}
+                </p>
+              )}
+              <p className="mt-0.5 text-[11px] text-white/60">Template atualizado com as alterações.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setDocSaveResult(null); if (docSaveResultTimerRef.current) clearTimeout(docSaveResultTimerRef.current); }}
+              className="shrink-0 text-white/40 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Item 7: undo toast */}
         {showUndoToast && (
@@ -2104,46 +2294,21 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             }
             .field-glow-anim { animation: field-glow 2s ease-in-out infinite; }
           `}</style>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
-            <div className="flex-1">
-              <label className="block text-xs font-bold text-slate-700">
-                Nome do template <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={nome}
-                onChange={(e) => setNome(e.target.value)}
-                placeholder="Ex.: Plano de aula semanal — Ensino Médio"
-                className={`field-glow-anim mt-1.5 w-full rounded-2xl border-2 px-4 py-2.5 text-sm text-slate-950 outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
-                  !nome.trim()
-                    ? "border-violet-400 bg-white placeholder:text-slate-400"
-                    : "border-slate-300 bg-white focus:border-violet-500"
-                }`}
-              />
-            </div>
-            <div className="sm:w-64">
-              <label className="block text-xs font-bold text-slate-700">
-                Estado <span className="text-xs font-normal text-rose-500">*</span>
-                <span className="ml-1 font-normal text-violet-600">(currículo regional da IA)</span>
-              </label>
-              <div className="relative mt-1.5">
-                <select
-                  value={estado}
-                  onChange={(e) => setEstado(e.target.value)}
-                  className={`field-glow-anim w-full appearance-none rounded-2xl border-2 px-4 py-2.5 pr-10 text-sm outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
-                    !estado
-                      ? "border-violet-400 bg-white text-slate-400 focus:border-violet-500"
-                      : "border-slate-300 bg-white text-slate-950 focus:border-violet-500"
-                  }`}
-                >
-                  <option value="">— Selecione o estado —</option>
-                  {ESTADOS_BRASIL.map((e) => (
-                    <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              </div>
-            </div>
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-slate-700">
+              Nome do template <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Ex.: Plano de aula semanal — Ensino Médio"
+              className={`field-glow-anim mt-1.5 w-full rounded-2xl border-2 px-4 py-2.5 text-sm text-slate-950 outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
+                !nome.trim()
+                  ? "border-violet-400 bg-white placeholder:text-slate-400"
+                  : "border-slate-300 bg-white focus:border-violet-500"
+              }`}
+            />
           </div>
         </div>
 
@@ -2228,6 +2393,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   // Non-DOCX: single column with nome+estado included
   return (
     <>
+      {magisQuestionsModal}
       {confirmSuccessModal}
       {diffModal}
       {versionsModal}
