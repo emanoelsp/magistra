@@ -76,21 +76,28 @@ export async function embedText(
 ): Promise<number[]> {
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/${EMBEDDING_API_VER}/models/${EMBEDDING_MODEL}:embedContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: `models/${EMBEDDING_MODEL}`,
-        content: { parts: [{ text }] },
-        taskType,
-      }),
-    },
-  );
-  if (!res.ok) throw new Error(`Embed error ${res.status}: ${await res.text()}`);
-  const data = (await res.json()) as { embedding: { values: number[] } };
-  return data.embedding.values;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/${EMBEDDING_API_VER}/models/${EMBEDDING_MODEL}:embedContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: `models/${EMBEDDING_MODEL}`,
+          content: { parts: [{ text }] },
+          taskType,
+        }),
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) throw new Error(`Embed error ${res.status}: ${await res.text()}`);
+    const data = (await res.json()) as { embedding: { values: number[] } };
+    return data.embedding.values;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ── Componente fuzzy match ────────────────────────────────────────────────────

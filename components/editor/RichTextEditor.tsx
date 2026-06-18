@@ -50,10 +50,10 @@ export function RichTextEditor({ value, onChange, onFocus, placeholder, active }
 
   return (
     <div
-      className={`rounded-xl border bg-white transition ${
+      className={`rounded-xl bg-white transition ${
         active
-          ? "border-violet-500 ring-2 ring-violet-100 shadow-[0_0_0_3px_rgba(139,92,246,0.10)]"
-          : "border-violet-300 focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-100"
+          ? "border-2 border-violet-500 ring-2 ring-violet-200 shadow-[0_0_0_4px_rgba(139,92,246,0.18)]"
+          : "border-2 border-violet-400 shadow-[0_0_0_3px_rgba(139,92,246,0.10)] focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-200"
       }`}
     >
       {/* Toolbar */}

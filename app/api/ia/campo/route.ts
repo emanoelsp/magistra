@@ -343,13 +343,31 @@ Responda SOMENTE com JSON válido:
       .join(" ")
       .slice(0, 400);
 
-    const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${contexto} ${currentValuesContext}`.trim();
-    const etapaRaw = metadata["etapa"] ?? metadata["ano"] ?? "";
-    const etapa = etapaRaw.toLowerCase().includes("médio") || etapaRaw.toLowerCase().includes("medio")
-      ? "EM"
-      : "EF";
+    // Build a pedagogy-only context string for the RAG embedding query.
+    // Excludes administrative keys (escola, professor, recursos) that push the
+    // embedding vector away from curriculum content.
+    const NON_PEDAGOGICAL_RE = /escola|professor|recurso|materiai|local|data_aula/i;
+    const pedagogicalMetaLines = Object.entries(sanitizedMetadata)
+      .filter(([k, v]) => v.trim() && !NON_PEDAGOGICAL_RE.test(k))
+      .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`);
+    const pedagogicalContext = pedagogicalMetaLines.join(" | ");
+    const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${pedagogicalContext} ${currentValuesContext}`.trim();
+
     const componente = metadata["componente_curricular"] ?? metadata["componente"] ?? metadata["disciplina"] ?? "";
     const estado = typeof template.estado === "string" ? template.estado : undefined;
+
+    // Robust etapa detection — undefined means "unknown, don't filter" which is
+    // better than silently defaulting to EF when the signal is ambiguous.
+    const etapaRaw = (
+      metadata["etapa"] ?? metadata["ano_turma"] ?? metadata["ano"] ??
+      metadata["serie"] ?? metadata["turma"] ?? ""
+    ).toLowerCase();
+    const etapa: "EF" | "EM" | undefined =
+      /médi|medio|ensino.?médi|ensino.?medio|\bem\b|[1-3]\s*[eE][mM]\b|[1-3][°º]\s*ano\s*[eE][mM]/
+        .test(etapaRaw) ? "EM"
+      : /fund|\bef\b|[1-9][°º]?\s*ano\b|[1-9][°º]\s*série/
+        .test(etapaRaw) ? "EF"
+      : undefined;
 
     const [curriculum, pedagogicMemory] = await Promise.all([
       isBibliografiaField
@@ -357,6 +375,19 @@ Responda SOMENTE com JSON válido:
         : retrieveAllCurriculumContext(ragQuery, { componente, etapa, estado }),
       getPedagogicMemoryContext(user.uid).catch(() => ""),
     ]);
+
+    const semContextoCurricular =
+      !isBibliografiaField &&
+      curriculum.bncc.length === 0 &&
+      curriculum.ctbc.length === 0 &&
+      curriculum.saeb.length === 0 &&
+      curriculum.curriculo_estadual.length === 0 &&
+      curriculum.cnct.length === 0;
+    if (semContextoCurricular) {
+      console.warn(
+        `[ia/campo] RAG retornou vazio — campo="${fieldKey}" componente="${componente}" etapa="${etapa ?? "?"}" estado="${estado ?? "-"}"`,
+      );
+    }
 
     const bnccContexto = curriculum.bncc.length > 0
       ? curriculum.bncc.map((c) => `${c.codigo}: ${c.texto}`).join("\n")

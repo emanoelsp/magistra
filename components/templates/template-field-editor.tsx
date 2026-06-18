@@ -873,10 +873,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   // Magis questions (after confirmation)
   const [magisQuestionsMode, setMagisQuestionsMode] = useState(false);
-  const [magisStep, setMagisStep] = useState<1 | 2 | 3>(1);
+  const [magisStep, setMagisStep] = useState<1 | 2>(1);
   const [magisAnswers, setMagisAnswers] = useState({
-    tipoEnsino: "",
-    anoTurma: "",
     estadoMagis: template.estado ?? "",
   });
   const [isSavingMagis, setIsSavingMagis] = useState(false);
@@ -1299,11 +1297,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tipo_plano: magisAnswers.tipoEnsino || null,
           estado: magisAnswers.estadoMagis || null,
-          ...(magisAnswers.anoTurma
-            ? { metadata_padrao: { ano_turma: magisAnswers.anoTurma } }
-            : {}),
         }),
       });
     } catch { /* não bloquear se falhar */ }
@@ -2033,6 +2027,13 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     </div>
   );
 
+  // Detect fields that already carry turma/ano/etapa context
+  const dadosTurmaDetectados = fields.filter(
+    (f) =>
+      f.group === "dados_turma" ||
+      /turma|ano|s[eé]rie|etapa|n[ií]vel|classe/i.test(`${f.key} ${f.label}`),
+  );
+
   const magisQuestionsModal = magisQuestionsMode && (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm">
       <div className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
@@ -2043,11 +2044,11 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-widest text-violet-600">Magis</p>
-            <p className="text-sm font-semibold text-slate-800">Antes de continuar, me conte mais sobre este template</p>
+            <p className="text-sm font-semibold text-slate-800">Quase lá! Uma pergunta antes de finalizar</p>
           </div>
           {/* Progress dots */}
           <div className="flex shrink-0 items-center gap-1.5">
-            {([1, 2, 3] as const).map((s) => (
+            {([1, 2] as const).map((s) => (
               <div
                 key={s}
                 className={`h-1.5 rounded-full transition-all ${magisStep >= s ? "w-6 bg-violet-600" : "w-3 bg-violet-200"}`}
@@ -2057,88 +2058,52 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         </div>
 
         <div className="p-6">
-          {/* Etapa 1 — Tipo de ensino */}
+          {/* Etapa 1 — Confirmar campos de turma detectados */}
           {magisStep === 1 && (
             <div className="space-y-4">
-              <p className="text-sm font-medium text-slate-700">É um plano para qual nível de ensino?</p>
-              <div className="flex flex-wrap gap-2">
-                {["Educação Básica", "Ensino Fundamental", "Ensino Médio"].map((tipo) => (
-                  <button
-                    key={tipo}
-                    type="button"
-                    onClick={() => {
-                      setMagisAnswers((prev) => ({ ...prev, tipoEnsino: tipo }));
-                      setMagisStep(2);
-                    }}
-                    className={`rounded-2xl border-2 px-4 py-2.5 text-sm font-semibold transition ${
-                      magisAnswers.tipoEnsino === tipo
-                        ? "border-violet-500 bg-violet-600 text-white"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-violet-300 hover:bg-violet-50"
-                    }`}
-                  >
-                    {tipo}
-                  </button>
-                ))}
+              {dadosTurmaDetectados.length > 0 ? (
+                <>
+                  <p className="text-sm font-medium text-slate-700">
+                    Identifiquei estas informações no seu template:
+                  </p>
+                  <div className="rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 space-y-1">
+                    {dadosTurmaDetectados.map((f) => (
+                      <p key={f.key} className="flex items-center gap-2 text-sm text-slate-700">
+                        <span className="h-1.5 w-1.5 rounded-full bg-violet-400 shrink-0" />
+                        {f.label}
+                      </p>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    A Magis vai usar esses dados para calibrar as sugestões de conteúdo.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-slate-700">
+                    Não encontrei campos de turma ou ano/série neste template.
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Tudo bem — a Magis vai sugerir conteúdos com base no componente curricular.
+                  </p>
+                </>
+              )}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setMagisStep(2)}
+                  className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
+                >
+                  Continuar →
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setMagisStep(2)}
-                className="text-xs text-slate-400 underline underline-offset-2 hover:text-slate-600"
-              >
-                Pular esta pergunta
-              </button>
             </div>
           )}
 
-          {/* Etapa 2 — Qual ano/série */}
+          {/* Etapa 2 — Currículo estadual */}
           {magisStep === 2 && (
             <div className="space-y-4">
               <div>
-                {magisAnswers.tipoEnsino && (
-                  <p className="mb-0.5 text-xs text-violet-600 font-medium">
-                    {magisAnswers.tipoEnsino} ✓
-                  </p>
-                )}
-                <p className="text-sm font-medium text-slate-700">São turmas de qual ano / série?</p>
-                <p className="mt-0.5 text-xs text-slate-400">Isso ajuda a Magis a calibrar sugestões de conteúdo.</p>
-              </div>
-              <input
-                type="text"
-                value={magisAnswers.anoTurma}
-                onChange={(e) => setMagisAnswers((prev) => ({ ...prev, anoTurma: e.target.value }))}
-                placeholder="Ex.: 6º ao 9º ano, 1ª série do EM, turmas mistas…"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === "Enter") setMagisStep(3); }}
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-              />
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setMagisStep(1)}
-                  className="text-xs text-slate-400 hover:text-slate-700"
-                >
-                  ← Voltar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMagisStep(3)}
-                  className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
-                >
-                  Próxima pergunta →
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Etapa 3 — Currículo estadual */}
-          {magisStep === 3 && (
-            <div className="space-y-4">
-              <div>
-                {magisAnswers.anoTurma && (
-                  <p className="mb-0.5 text-xs text-violet-600 font-medium">
-                    {magisAnswers.anoTurma} ✓
-                  </p>
-                )}
                 <p className="text-sm font-medium text-slate-700">
                   Você usa o currículo base de algum estado?
                 </p>
@@ -2150,6 +2115,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                 <select
                   value={magisAnswers.estadoMagis}
                   onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
+                  autoFocus
                   className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 >
                   <option value="">Deixar em branco — sem currículo estadual</option>
@@ -2162,7 +2128,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               <div className="flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => setMagisStep(2)}
+                  onClick={() => setMagisStep(1)}
                   className="text-xs text-slate-400 hover:text-slate-700"
                 >
                   ← Voltar
