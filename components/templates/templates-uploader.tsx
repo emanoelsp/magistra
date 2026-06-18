@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ChevronDown, CloudUpload, FileText, Sparkles, X } from "lucide-react";
+import { AlertTriangle, CloudUpload, FileText, Sparkles, X } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 
@@ -17,7 +17,7 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [escolaNome, setEscolaNome] = useState("");
-  const [tipoPlano, setTipoPlano] = useState("");
+  const [nomeTemplate, setNomeTemplate] = useState("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -52,8 +52,8 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
   async function handleUpload() {
     if (!pendingFile) return;
 
-    if (!escolaNome.trim() || !tipoPlano.trim()) {
-      setError("Preencha o nome da escola e o tipo de plano antes de enviar.");
+    if (!escolaNome.trim() || !nomeTemplate.trim()) {
+      setError("Preencha o nome da escola e o nome do template antes de enviar.");
       return;
     }
 
@@ -65,9 +65,8 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
 
       const templateId = await templatesService.createTemplate({
         user_id: userId,
-        nome: file.name.replace(/\.(pdf|docx?)$/i, ""),
+        nome: nomeTemplate.trim(),
         escola_nome: escolaNome,
-        tipo_plano: tipoPlano,
         schema_campos: [],
       });
 
@@ -101,7 +100,7 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
     }
   }
 
-  const canUpload = !!pendingFile && !!escolaNome.trim() && !!tipoPlano.trim();
+  const canUpload = !!pendingFile && !!escolaNome.trim() && !!nomeTemplate.trim();
 
   return (
     <div className="relative rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6">
@@ -152,25 +151,15 @@ export function TemplatesUploader({ userId }: TemplatesUploaderProps) {
 
           <div>
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Tipo de plano
+              Nome do template
             </label>
-            <div className="relative">
-              <select
-                value={tipoPlano}
-                onChange={(e) => { setTipoPlano(e.target.value); setError(null); }}
-                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none transition focus:border-slate-950"
-              >
-                <option value="">Selecione</option>
-                <option value="plano_anual">Plano anual</option>
-                <option value="plano_semestral">Plano semestral</option>
-                <option value="plano_quinzenal">Plano quinzenal</option>
-                <option value="plano_de_aula">Plano de aula</option>
-                <option value="sequencia_didatica">Sequência didática</option>
-                <option value="situacao_de_aprendizagem">Situação de aprendizagem</option>
-                <option value="projeto_de_extensao">Projeto de extensão</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            </div>
+            <input
+              type="text"
+              value={nomeTemplate}
+              onChange={(e) => { setNomeTemplate(e.target.value); setError(null); }}
+              placeholder="Ex.: Plano de aula semanal"
+              className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
+            />
           </div>
         </div>
 

@@ -2329,34 +2329,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
         )}
 
-        {/* Header bar: nome — só no confirmar (no editar já aparece no breadcrumb da página) */}
-        {mode === "confirm" && (
-          <div className="shrink-0 rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50 to-slate-50 p-4">
-            <style>{`
-              @keyframes field-glow {
-                0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
-                50%       { box-shadow: 0 0 0 5px rgba(99,102,241,0.25); }
-              }
-              .field-glow-anim { animation: field-glow 2s ease-in-out infinite; }
-            `}</style>
-            <div className="flex-1">
-              <label className="block text-xs font-bold text-slate-700">
-                Nome do template <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={nome}
-                onChange={(e) => setNome(e.target.value)}
-                placeholder="Ex.: Plano de aula semanal — Ensino Médio"
-                className={`field-glow-anim mt-1.5 w-full rounded-2xl border-2 px-4 py-2.5 text-sm text-slate-950 outline-none transition-all focus:ring-2 focus:ring-violet-300 ${
-                  !nome.trim()
-                    ? "border-violet-400 bg-white placeholder:text-slate-400"
-                    : "border-slate-300 bg-white focus:border-violet-500"
-                }`}
-              />
-            </div>
-          </div>
-        )}
 
         {/* Item 14: mobile tab switcher (visible only on < xl) */}
         <div className="shrink-0 flex xl:hidden rounded-2xl border border-slate-200 bg-white p-1 gap-1">
@@ -2444,34 +2416,23 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       {diffModal}
       {versionsModal}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:gap-6">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-slate-700">Nome do template</label>
-            <input
-              type="text"
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-            />
-          </div>
-          <div className="sm:w-56">
-            <label className="block text-sm font-medium text-slate-700">
-              Estado da escola
-              <span className="ml-1.5 text-xs font-normal text-violet-600">(filtra currículo regional na IA)</span>
-            </label>
-            <div className="relative mt-1.5">
-              <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value)}
-                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-              >
-                <option value="">Não especificado</option>
-                {ESTADOS_BRASIL.map((e) => (
-                  <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            </div>
+        <div className="mb-6 sm:w-56">
+          <label className="block text-sm font-medium text-slate-700">
+            Estado da escola
+            <span className="ml-1.5 text-xs font-normal text-violet-600">(filtra currículo regional na IA)</span>
+          </label>
+          <div className="relative mt-1.5">
+            <select
+              value={estado}
+              onChange={(e) => setEstado(e.target.value)}
+              className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+            >
+              <option value="">Não especificado</option>
+              {ESTADOS_BRASIL.map((e) => (
+                <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           </div>
         </div>
         {fieldsPanel}
