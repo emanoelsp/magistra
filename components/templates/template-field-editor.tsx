@@ -873,7 +873,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   // Magis questions (after confirmation)
   const [magisQuestionsMode, setMagisQuestionsMode] = useState(false);
-  const [magisStep, setMagisStep] = useState<1 | 2>(1);
   const [magisAnswers, setMagisAnswers] = useState({
     estadoMagis: template.estado ?? "",
   });
@@ -1203,7 +1202,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             setPreviewVersion((v) => v + 1);
           } else if (mode === "confirm") {
             setMagisQuestionsMode(true);
-            setMagisStep(1);
           } else {
             setSaved(true);
             setPreviewVersion((v) => v + 1);
@@ -1287,7 +1285,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   function handleConfirmTemplate() {
     setMagisQuestionsMode(true);
-    setMagisStep(1);
   }
 
   async function handleCompleteMagis() {
@@ -2027,13 +2024,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     </div>
   );
 
-  // Detect fields that already carry turma/ano/etapa context
-  const dadosTurmaDetectados = fields.filter(
-    (f) =>
-      f.group === "dados_turma" ||
-      /turma|ano|s[eé]rie|etapa|n[ií]vel|classe/i.test(`${f.key} ${f.label}`),
-  );
-
   const magisQuestionsModal = magisQuestionsMode && (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm">
       <div className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
@@ -2044,107 +2034,46 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-widest text-violet-600">Magis</p>
-            <p className="text-sm font-semibold text-slate-800">Quase lá! Uma pergunta antes de finalizar</p>
-          </div>
-          {/* Progress dots */}
-          <div className="flex shrink-0 items-center gap-1.5">
-            {([1, 2] as const).map((s) => (
-              <div
-                key={s}
-                className={`h-1.5 rounded-full transition-all ${magisStep >= s ? "w-6 bg-violet-600" : "w-3 bg-violet-200"}`}
-              />
-            ))}
+            <p className="text-sm font-semibold text-slate-800">Antes de continuarmos, uma pergunta</p>
           </div>
         </div>
 
         <div className="p-6">
-          {/* Etapa 1 — Confirmar campos de turma detectados */}
-          {magisStep === 1 && (
-            <div className="space-y-4">
-              {dadosTurmaDetectados.length > 0 ? (
-                <>
-                  <p className="text-sm font-medium text-slate-700">
-                    Identifiquei estas informações no seu template:
-                  </p>
-                  <div className="rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 space-y-1">
-                    {dadosTurmaDetectados.map((f) => (
-                      <p key={f.key} className="flex items-center gap-2 text-sm text-slate-700">
-                        <span className="h-1.5 w-1.5 rounded-full bg-violet-400 shrink-0" />
-                        {f.label}
-                      </p>
-                    ))}
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    A Magis vai usar esses dados para calibrar as sugestões de conteúdo.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm font-medium text-slate-700">
-                    Não encontrei campos de turma ou ano/série neste template.
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    Tudo bem — a Magis vai sugerir conteúdos com base no componente curricular.
-                  </p>
-                </>
-              )}
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setMagisStep(2)}
-                  className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
-                >
-                  Continuar →
-                </button>
-              </div>
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium text-slate-700">
+                Você usa currículo regional de algum estado?
+              </p>
+              <p className="mt-0.5 text-xs text-slate-400">
+                A Magis vai personalizar sugestões com o currículo territorial. Deixe em branco se não usar.
+              </p>
             </div>
-          )}
-
-          {/* Etapa 2 — Currículo estadual */}
-          {magisStep === 2 && (
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium text-slate-700">
-                  Você usa o currículo base de algum estado?
-                </p>
-                <p className="mt-0.5 text-xs text-slate-400">
-                  A Magis vai personalizar sugestões com o currículo territorial. Deixe em branco se não usar.
-                </p>
-              </div>
-              <div className="relative">
-                <select
-                  value={magisAnswers.estadoMagis}
-                  onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
-                  autoFocus
-                  className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                >
-                  <option value="">Deixar em branco — sem currículo estadual</option>
-                  {ESTADOS_BRASIL.map((e) => (
-                    <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              </div>
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setMagisStep(1)}
-                  className="text-xs text-slate-400 hover:text-slate-700"
-                >
-                  ← Voltar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleCompleteMagis()}
-                  disabled={isSavingMagis}
-                  className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {isSavingMagis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Concluir configuração
-                </button>
-              </div>
+            <div className="relative">
+              <select
+                value={magisAnswers.estadoMagis}
+                onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
+                autoFocus
+                className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+              >
+                <option value="">Deixar em branco — sem currículo estadual</option>
+                {ESTADOS_BRASIL.map((e) => (
+                  <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             </div>
-          )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => void handleCompleteMagis()}
+                disabled={isSavingMagis}
+                className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {isSavingMagis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Finalizar
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

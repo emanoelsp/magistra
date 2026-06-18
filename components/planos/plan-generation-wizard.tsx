@@ -8,6 +8,7 @@ import {
   BookCheck,
   Check,
   CheckCircle2,
+  ChevronDown,
   Download,
   FileText,
   LoaderCircle,
@@ -21,6 +22,7 @@ import { DocxPreview } from "./docx-preview";
 import { planosService } from "../../lib/services/firestore/planos.service";
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateFieldSchema, TemplateOption, TemplateRecord } from "../../lib/types/firestore";
+import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
 import {
   DownloadLimitDialog,
   triggerDownload,
@@ -113,6 +115,9 @@ export function PlanGenerationWizard({
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialId);
   const [planoTitulo, setPlanoTitulo] = useState(resumeData?.planoTitulo ?? "");
+  const [selectedEstado, setSelectedEstado] = useState<string>(
+    availableTemplates.find((t) => t.id === initialId)?.estado ?? ""
+  );
   const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
   const [saveToTemplate, setSaveToTemplate] = useState(true);
   const [capturedEditorValues, setCapturedEditorValues] = useState<Record<string, string>>(
@@ -141,6 +146,7 @@ export function PlanGenerationWizard({
         nome: selectedTemplate.nome,
         escola_nome: selectedTemplate.escolaNome ?? null,
         tipo_plano: selectedTemplate.tipoPlano ?? null,
+        estado: selectedEstado || null,
         schema_campos: selectedTemplate.schema_campos ?? [],
         data_criacao: selectedTemplate.criadoEm,
         metadata_padrao: selectedTemplate.metadata_padrao,
@@ -373,7 +379,7 @@ export function PlanGenerationWizard({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setSelectedTemplateId(t.id)}
+                  onClick={() => { setSelectedTemplateId(t.id); setSelectedEstado(t.estado ?? ""); }}
                   className={`rounded-3xl border p-5 text-left transition ${
                     isSelected
                       ? "border-violet-400 bg-violet-50 shadow-sm"
@@ -459,8 +465,8 @@ export function PlanGenerationWizard({
             </div>
           )}
 
-          {/* Título do plano — usado como nome do arquivo gerado */}
-          <div className="mb-5">
+          {/* Título do plano + currículo regional */}
+          <div className="mb-5 grid gap-4 md:grid-cols-2">
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Título do plano</span>
               <span className="ml-1 text-xs text-rose-500">*</span>
@@ -470,8 +476,25 @@ export function PlanGenerationWizard({
                 value={planoTitulo}
                 onChange={(e) => setPlanoTitulo(e.target.value)}
                 placeholder="Ex.: Plano de Aula — Banco de Dados — Turma 101 — Mai 2026"
-                className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
               />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Currículo regional</span>
+              <p className="mt-0.5 text-xs text-slate-400">Personaliza sugestões da Magis com o currículo estadual.</p>
+              <div className="relative mt-1.5">
+                <select
+                  value={selectedEstado}
+                  onChange={(e) => setSelectedEstado(e.target.value)}
+                  className="w-full appearance-none rounded-2xl border border-orange-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                >
+                  <option value="">Sem currículo estadual</option>
+                  {ESTADOS_BRASIL.map((e) => (
+                    <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </div>
             </label>
           </div>
 
@@ -483,53 +506,59 @@ export function PlanGenerationWizard({
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
-              {manualFields.map((field) => (
-                <label key={field.key} className="block">
-                  <span className="text-sm font-medium text-slate-700">{field.label}</span>
-                  {field.required && <span className="ml-1 text-xs text-rose-500">*</span>}
-                  {field.type === "textarea" ? (
-                    <textarea
-                      rows={3}
-                      value={metadataValues[field.key] ?? ""}
-                      onChange={(e) =>
-                        setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
-                      }
-                      placeholder={field.placeholder ?? field.label}
-                      className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                    />
-                  ) : field.type === "number" ? (
-                    <input
-                      type="number"
-                      value={metadataValues[field.key] ?? ""}
-                      onChange={(e) =>
-                        setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
-                      }
-                      className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                    />
-                  ) : (
-                    <input
-                      type="text"
-                      value={metadataValues[field.key] ?? ""}
-                      onChange={(e) =>
-                        setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
-                      }
-                      placeholder={field.placeholder ?? `Ex.: ${field.label.toLowerCase()}`}
-                      className="mt-1.5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                    />
-                  )}
-                </label>
-              ))}
-            </div>
-          )}
-
-          {has2prof && (
-            <div className="mt-5 flex items-start gap-3 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3">
-              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" />
-              <p className="text-sm text-violet-700">
-                <strong>2° Professor detectado</strong> — a Magis vai incluir sugestões
-                específicas de educação inclusiva (NEE, AEE e adaptações curriculares) no próximo
-                passo.
-              </p>
+              {manualFields.flatMap((field, idx) => {
+                const first2profIdx = manualFields.findIndex(is2profField);
+                const items = [];
+                if (has2prof && idx === first2profIdx) {
+                  items.push(
+                    <div key="__2prof_banner" className="col-span-2 flex items-start gap-3 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3">
+                      <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" />
+                      <p className="text-sm text-violet-700">
+                        <strong>2° Professor detectado</strong> — a Magis vai incluir sugestões
+                        específicas de educação inclusiva (NEE, AEE e adaptações curriculares) no próximo
+                        passo.
+                      </p>
+                    </div>
+                  );
+                }
+                items.push(
+                  <label key={field.key} className="block">
+                    <span className="text-sm font-medium text-slate-700">{field.label}</span>
+                    {field.required && <span className="ml-1 text-xs text-rose-500">*</span>}
+                    {field.type === "textarea" ? (
+                      <textarea
+                        rows={3}
+                        value={metadataValues[field.key] ?? ""}
+                        onChange={(e) =>
+                          setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
+                        }
+                        placeholder={field.placeholder ?? field.label}
+                        className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                      />
+                    ) : field.type === "number" ? (
+                      <input
+                        type="number"
+                        value={metadataValues[field.key] ?? ""}
+                        onChange={(e) =>
+                          setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
+                        }
+                        className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={metadataValues[field.key] ?? ""}
+                        onChange={(e) =>
+                          setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
+                        }
+                        placeholder={field.placeholder ?? `Ex.: ${field.label.toLowerCase()}`}
+                        className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                      />
+                    )}
+                  </label>
+                );
+                return items;
+              })}
             </div>
           )}
 
