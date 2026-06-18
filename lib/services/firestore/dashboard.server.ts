@@ -237,11 +237,17 @@ export async function getUserPlanosComNome(
     }),
   );
 
-  const items = pagePlanos.map((p) => ({
-    ...p,
-    template_nome: templateNames[p.template_id]?.nome ?? "Template removido",
-    escola_nome: templateNames[p.template_id]?.escola_nome ?? null,
-  }));
+  const items = pagePlanos.map((p) => {
+    const savedNome =
+      typeof p.conteudo_gerado?.template_nome === "string" && p.conteudo_gerado.template_nome.trim()
+        ? p.conteudo_gerado.template_nome.trim()
+        : null;
+    return {
+      ...p,
+      template_nome: templateNames[p.template_id]?.nome ?? savedNome ?? "Template removido",
+      escola_nome: templateNames[p.template_id]?.escola_nome ?? null,
+    };
+  });
 
   return { items, total };
 }

@@ -209,49 +209,118 @@ function safePdfText(text: string): string {
     });
 }
 
-function buildFallbackPdf(
-  templateNome: string,
+const PDF_GROUP_LABELS: Record<string, string> = {
+  dados_turma:  "Dados da turma",
+  objetivos:    "Objetivos",
+  competencias: "Competências",
+  habilidades:  "Habilidades",
+  conteudos:    "Conteúdos",
+  avaliacao:    "Avaliação",
+  outros:       "Outros",
+};
+const PDF_GROUP_ORDER = ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"];
+
+async function buildFallbackPdf(
+  titulo: string,
   schema: TemplateFieldSchema[],
   values: Record<string, string>,
 ): Promise<Uint8Array> {
-  return PDFDocument.create().then(async (doc) => {
-    const font = await doc.embedFont(StandardFonts.Helvetica);
-    const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 
-    let page = doc.addPage([595, 842]);
-    const { width, height } = page.getSize();
-    const margin = 50;
-    let y = height - margin;
+  const PAGE_W = 595;
+  const PAGE_H = 842;
+  const MARGIN = 50;
+  const CONTENT_W = PAGE_W - MARGIN * 2;
 
-    page.drawText(safePdfText(templateNome), { x: margin, y, size: 14, font: bold, color: rgb(0.05, 0.05, 0.05) });
-    y -= 24;
-    page.drawText(safePdfText(`Gerado em ${new Date().toLocaleDateString("pt-BR")}`), {
-      x: margin, y, size: 9, font, color: rgb(0.4, 0.4, 0.4),
+  let page = doc.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  function newPage() {
+    page = doc.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
+  }
+
+  function ensureSpace(needed: number) {
+    if (y < MARGIN + needed) newPage();
+  }
+
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const titleLines = wrapLines(safePdfText(titulo), 60);
+  ensureSpace(titleLines.length * 20 + 36);
+
+  for (const line of titleLines) {
+    page.drawText(line, { x: MARGIN, y, size: 15, font: bold, color: rgb(0.05, 0.05, 0.05) });
+    y -= 20;
+  }
+
+  const dateStr = safePdfText(
+    `Gerado em ${new Date().toLocaleDateString("pt-BR", { dateStyle: "long" })} — PlanoMagistra`,
+  );
+  page.drawText(dateStr, { x: MARGIN, y, size: 8, font, color: rgb(0.55, 0.55, 0.55) });
+  y -= 10;
+
+  page.drawLine({
+    start: { x: MARGIN, y },
+    end: { x: MARGIN + CONTENT_W, y },
+    thickness: 1,
+    color: rgb(0.82, 0.82, 0.82),
+  });
+  y -= 18;
+
+  // ── Group and render fields ──────────────────────────────────────────────────
+  const groups = new Map<string, TemplateFieldSchema[]>();
+  for (const field of schema) {
+    const g = field.group ?? (field.role === "manual" ? "dados_turma" : "outros");
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g)!.push(field);
+  }
+
+  const orderedGroups: Array<[string, TemplateFieldSchema[]]> = [
+    ...PDF_GROUP_ORDER.filter((g) => groups.has(g)).map((g) => [g, groups.get(g)!] as [string, TemplateFieldSchema[]]),
+    ...[...groups.entries()].filter(([g]) => !PDF_GROUP_ORDER.includes(g)),
+  ];
+
+  for (const [groupKey, fields] of orderedGroups) {
+    const filledFields = fields.filter((f) => values[f.key]?.trim());
+    if (filledFields.length === 0) continue;
+
+    const groupLabel = safePdfText((PDF_GROUP_LABELS[groupKey] ?? groupKey).toUpperCase());
+
+    ensureSpace(30);
+    page.drawText(groupLabel, { x: MARGIN, y, size: 7.5, font: bold, color: rgb(0.38, 0.38, 0.65) });
+    y -= 5;
+    page.drawLine({
+      start: { x: MARGIN, y },
+      end: { x: MARGIN + CONTENT_W, y },
+      thickness: 0.4,
+      color: rgb(0.82, 0.82, 0.9),
     });
-    y -= 24;
+    y -= 12;
 
-    for (const field of schema) {
-      const value = safePdfText(values[field.key]?.trim() || "—");
+    for (const field of filledFields) {
+      const raw = values[field.key]!.trim();
       const labelTxt = safePdfText(`${field.label}:`);
-      const lines = wrapLines(value, 90);
-      const blockH = 14 + lines.length * 13 + 10;
+      const lines = wrapLines(safePdfText(raw), 88);
+      const blockH = 12 + lines.length * 12 + 8;
 
-      if (y < margin + blockH) {
-        page = doc.addPage([595, 842]);
-        y = height - margin;
-      }
+      ensureSpace(blockH);
 
-      page.drawText(labelTxt, { x: margin, y, size: 9, font: bold, color: rgb(0.1, 0.1, 0.1) });
-      y -= 13;
+      page.drawText(labelTxt, { x: MARGIN, y, size: 8, font: bold, color: rgb(0.15, 0.15, 0.15) });
+      y -= 12;
       for (const line of lines) {
-        page.drawText(safePdfText(line), { x: margin + 4, y, size: 9, font, color: rgb(0.2, 0.2, 0.2) });
+        ensureSpace(14);
+        page.drawText(line, { x: MARGIN + 10, y, size: 9, font, color: rgb(0.08, 0.08, 0.08) });
         y -= 12;
       }
       y -= 6;
     }
 
-    return doc.save();
-  });
+    y -= 8;
+  }
+
+  return doc.save();
 }
 
 export const maxDuration = 60;
