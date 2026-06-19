@@ -661,6 +661,26 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
 
       if (!matches) continue;
 
+      // Section header detection: an ALL CAPS segment (e.g., "TEMÁTICA ABORDADA:")
+      // that is NOT the last segment is a section title whose body content belongs
+      // BELOW all sub-items — inject after the last <w:br> in the paragraph, not
+      // inline with the header text.
+      const segText = extractText(segXml).trimEnd();
+      const segStripped = segText.normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const isAllCapsHeader =
+        !seg.isLast && segText.length > 3 && !/[a-z]/.test(segStripped);
+
+      if (isAllCapsHeader) {
+        if (paraXml.includes(placeholder)) return cellXml; // idempotent
+        const allBrs = [...paraXml.matchAll(/<w:br(?:\s[^>]*)?\/?>/g)];
+        if (allBrs.length === 0) continue; // no breaks — fall through to normal path
+        const lastBr = allBrs[allBrs.length - 1];
+        const insertPos = lastBr.index! + lastBr[0].length;
+        const newRun = `<w:r><w:t xml:space="preserve">${placeholder}</w:t></w:r>`;
+        const newParaXml = paraXml.slice(0, insertPos) + newRun + paraXml.slice(insertPos);
+        return cellXml.replace(paraXml, newParaXml);
+      }
+
       let newParaXml: string;
       if (!seg.isLast) {
         const lastWtClose = segXml.lastIndexOf("</w:t>");
@@ -989,6 +1009,7 @@ export function injectAtCoord(
   docxBuffer: Buffer,
   coord: string,
   content: string,
+  labelHint = "",
 ): Buffer {
   const m = coord.match(/^T(\d+)R(\d+)C(\d+)$/);
   if (!m) return docxBuffer;
@@ -1020,9 +1041,18 @@ export function injectAtCoord(
         if (injected || ci !== targetCi) { ci++; return tcXml; }
         ci++;
         injected = true;
-        // Use safeAppendToken when injecting a simple {{key}} token so we never
-        // destroy existing label text or multi-paragraph cell structure.
         const isSimpleToken = /^\{\{[A-Za-z_][A-Za-z0-9_]*\}\}$/.test(content.trim());
+
+        // Soft-return cell with a label hint: inject at the specific <w:t> segment
+        // that contains the label rather than appending to the last </w:p>.
+        // Without this, all tokens in a soft-break cell (where every visual line
+        // lives in one <w:r> with <w:br/> separators) pile up at paragraph end.
+        if (isSimpleToken && labelHint && tcXml.includes("<w:br")) {
+          const key = content.trim().replace(/^\{\{|\}\}$/g, "");
+          const patched = appendToParagraph(tcXml, normText(labelHint), key);
+          if (patched !== tcXml) return patched;
+        }
+
         return isSimpleToken
           ? safeAppendToken(tcXml, content.trim())
           : clearAndSetCellText(tcXml, content);
@@ -1139,21 +1169,30 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       const cellXml = row.cells[ci];
       if (!cellXml) continue;
 
-      const paraTexts = extractParagraphTexts(cellXml).map((t) => t.trim());
-      const labelParas = paraTexts.filter((t) => t.endsWith(":") && t.length > 2);
+      // For soft-return cells (a single <w:p> with <w:br> line-breaks instead of
+      // multiple paragraphs), extractParagraphTexts() returns one giant concatenated
+      // string that breaks label detection. Use segment-level extraction instead so
+      // each visual line ("- Carga horária prevista:", "Turma:", …) is matched
+      // individually — the same logic appendToParagraph uses for injection.
+      const hasSoftReturns = cellXml.includes("<w:br");
+      const rawLineTexts: string[] = hasSoftReturns
+        ? extractLinesFromCell(cellXml)
+        : extractParagraphTexts(cellXml).map((t) => t.trim());
+      const labelParas = rawLineTexts.filter((t) => t.trimEnd().endsWith(":") && t.trimEnd().length > 2);
       // 1-cell rows: inject inline for any label paragraph (threshold = 1)
       // N-cell rows: only multi-label cells (threshold = 2); single-label → Pass 2
       const threshold = is1CellRow ? 1 : 2;
       if (labelParas.length < threshold) continue;
 
-      // ALL CAPS + single-label in 1-cell row → defer to Pass 2 (adjacent_below).
-      // Section headers like "HABILIDADES:" or "OBJETIVOS:" have their content area
-      // in the next row; injecting inline would break that layout.
-      // Mixed-case single labels ("Professor(a):", "Turma:") are always inline.
+      // ALL CAPS + single-label in 1-cell row → defer to Pass 2 (adjacent_below)
+      // when there is no body content in the same cell (classic next-row layout).
+      // Exception: soft-return cells with sub-items (rawLineTexts.length > 1) are
+      // processed here — appendToParagraph places the body after the last <w:br>.
       if (is1CellRow && labelParas.length === 1) {
         const p = labelParas[0];
         const pStripped = p.normalize("NFD").replace(/[̀-ͯ]/g, "");
-        if (!/[a-z]/.test(pStripped)) continue; // ALL CAPS → Pass 2
+        const isAllCaps = !/[a-z]/.test(pStripped);
+        if (isAllCaps && (!hasSoftReturns || rawLineTexts.length <= 1)) continue; // → Pass 2
       }
 
       let newCellXml = cellXml;

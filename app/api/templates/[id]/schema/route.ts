@@ -170,8 +170,14 @@ export async function PATCH(
     const placedByCellEdits = new Set<string>();
     for (const edit of cellEditsPayload) {
       if (!edit.newContent?.trim()) continue;
+      const keysInEdit = [...edit.newContent.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]);
       if (edit.coord) {
-        buffer = injectAtCoord(buffer, edit.coord, edit.newContent);
+        // For single-token edits, look up the field label so injectAtCoord can
+        // place the token at the correct visual line in soft-return cells.
+        const labelHint = keysInEdit.length === 1
+          ? (newSchema.find((f) => f.key === keysInEdit[0])?.label ?? "")
+          : "";
+        buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint);
       } else {
         const cleanCellText = (edit.cellText ?? "")
           .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
@@ -179,7 +185,6 @@ export async function PATCH(
           .trim();
         buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
       }
-      const keysInEdit = [...edit.newContent.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]);
       for (const k of keysInEdit) placedByCellEdits.add(k);
     }
 
@@ -189,7 +194,8 @@ export async function PATCH(
     for (const [key, pos] of Object.entries(allPositions)) {
       if (newKeys.has(key) && !placedByCellEdits.has(key)) {
         if (pos.coord) {
-          buffer = injectAtCoord(buffer, pos.coord, `{{${key}}}`);
+          const fieldLabel = newSchema.find((f) => f.key === key)?.label ?? "";
+          buffer = injectAtCoord(buffer, pos.coord, `{{${key}}}`, fieldLabel);
         } else {
           const phToken = `{{${key}}}`;
           const hasInlineToken = pos.cellText.includes(phToken);

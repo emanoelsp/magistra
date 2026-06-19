@@ -207,6 +207,8 @@ export async function fixDocxAnchorImages(
 
         // posX > 80 mm from column start → image belongs on the right side of the page.
         // Move it to the last <td> in the row and right-align it.
+        // posX < 15 mm → left-aligned in its cell (e.g. a flag/logo on the left).
+        const LEFT_THRESHOLD_MM = 15;
         const RIGHT_THRESHOLD_MM = 80;
         if (anchor.posX_mm > RIGHT_THRESHOLD_MM) {
           const rowEl = (() => {
@@ -219,6 +221,11 @@ export async function fixDocxAnchorImages(
           if (targetTd !== img.parentElement) targetTd.appendChild(img);
           img.style.margin = "0 0 0 auto"; // push to right edge of cell
           console.info(LOG, `inline-fixed (td→right) ${anchor.imagePath}`, {
+            w: `${anchor.width_mm.toFixed(1)}mm`, posX: `${anchor.posX_mm.toFixed(1)}mm`,
+          });
+        } else if (anchor.posX_mm < LEFT_THRESHOLD_MM) {
+          img.style.margin = "0 auto 0 0"; // flush left in cell
+          console.info(LOG, `inline-fixed (td→left) ${anchor.imagePath}`, {
             w: `${anchor.width_mm.toFixed(1)}mm`, posX: `${anchor.posX_mm.toFixed(1)}mm`,
           });
         } else {
