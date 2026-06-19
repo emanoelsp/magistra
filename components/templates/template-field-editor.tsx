@@ -4,7 +4,12 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   ArrowLeft,
+  Bold,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -12,6 +17,7 @@ import {
   Crosshair,
   GripVertical,
   HelpCircle,
+  Italic,
   Loader2,
   MousePointer2,
   PanelRightClose,
@@ -58,6 +64,9 @@ const GROUP_LABELS: Record<string, string> = {
   avaliacao: "Avaliação",
   outros: "Outros",
 };
+
+const TOOLBAR_FONTS = ["Arial", "Times New Roman", "Calibri", "Georgia", "Tahoma", "Verdana"];
+const TOOLBAR_SIZES = ["8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "36"];
 
 function newField(): TemplateFieldSchema {
   return {
@@ -573,7 +582,9 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <style>{`
-        .docx-html-preview { background: #f1f5f9; padding: 20px 12px; min-width: max-content; }
+        .docx-html-preview { background: #64748b; min-width: max-content; }
+        .docx-html-preview .docx-wrapper { background: #64748b !important; padding: 24px 24px 0 !important; display: flex !important; flex-flow: column !important; align-items: center !important; }
+        .docx-html-preview .docx-wrapper > section.docx { background: white !important; box-shadow: 0 0 14px rgba(0,0,0,0.45) !important; margin-bottom: 24px !important; }
         .docx-html-preview table { border-collapse: collapse; }
         .docx-html-preview td, .docx-html-preview th { padding: 2px 4px; word-break: break-word; vertical-align: top; position: relative; }
         .docx-html-preview img { max-width: 100%; height: auto; }
@@ -611,28 +622,97 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
           </button>
         </div>
       ) : (
-        <div className="flex shrink-0 items-center gap-2 border-b border-violet-50 bg-violet-50 px-3 py-1.5">
-          <p className="flex-1 text-[11px] text-violet-500">
-            Edite as células &bull; digite{" "}
-            <code className="rounded bg-violet-100 px-1 font-mono text-[10px] text-violet-700">{`{{chave}}`}</code>{" "}
-            para posicionar um campo &bull; clique num chip para configurar
-          </p>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
-            <input
-              type="range" min={70} max={150} step={5} value={zoom}
-              onChange={(e) => onZoomChange?.(Number(e.target.value))}
-              className="h-1 w-20 accent-violet-600"
-            />
-            <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>
-            <button
-              type="button"
-              onClick={handleSaveEdits}
-              className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
-            >
-              <Save className="h-3 w-3" />
-              Salvar edições
+        <div className="shrink-0 border-b border-violet-100 bg-violet-50">
+          {/* Row 1: hint + zoom + save */}
+          <div className="flex items-center gap-2 px-3 pt-1.5 pb-1">
+            <p className="flex-1 truncate text-[11px] text-violet-500">
+              Edite as células &bull; digite{" "}
+              <code className="rounded bg-violet-100 px-1 font-mono text-[10px] text-violet-700">{`{{chave}}`}</code>{" "}
+              para posicionar um campo &bull; clique num chip para configurar
+            </p>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
+              <input
+                type="range" min={70} max={150} step={5} value={zoom}
+                onChange={(e) => onZoomChange?.(Number(e.target.value))}
+                className="h-1 w-20 accent-violet-600"
+              />
+              <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>
+              <button
+                type="button"
+                onClick={handleSaveEdits}
+                className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
+              >
+                <Save className="h-3 w-3" />
+                Salvar edições
+              </button>
+            </div>
+          </div>
+          {/* Row 2: formatting toolbar */}
+          <div className="flex items-center gap-0.5 px-3 pb-1.5">
+            {/* Bold / Italic */}
+            <button type="button" title="Negrito (Ctrl+B)"
+              onMouseDown={(e) => { e.preventDefault(); document.execCommand("bold"); }}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-violet-200 text-slate-600">
+              <Bold className="h-3 w-3" />
             </button>
+            <button type="button" title="Itálico (Ctrl+I)"
+              onMouseDown={(e) => { e.preventDefault(); document.execCommand("italic"); }}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-violet-200 text-slate-600">
+              <Italic className="h-3 w-3" />
+            </button>
+            <span className="mx-1 h-4 w-px bg-violet-200" />
+            {/* Alignment */}
+            <button type="button" title="Alinhar à esquerda"
+              onMouseDown={(e) => { e.preventDefault(); document.execCommand("justifyLeft"); }}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-violet-200 text-slate-600">
+              <AlignLeft className="h-3 w-3" />
+            </button>
+            <button type="button" title="Centralizar"
+              onMouseDown={(e) => { e.preventDefault(); document.execCommand("justifyCenter"); }}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-violet-200 text-slate-600">
+              <AlignCenter className="h-3 w-3" />
+            </button>
+            <button type="button" title="Alinhar à direita"
+              onMouseDown={(e) => { e.preventDefault(); document.execCommand("justifyRight"); }}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-violet-200 text-slate-600">
+              <AlignRight className="h-3 w-3" />
+            </button>
+            <button type="button" title="Justificar"
+              onMouseDown={(e) => { e.preventDefault(); document.execCommand("justifyFull"); }}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-violet-200 text-slate-600">
+              <AlignJustify className="h-3 w-3" />
+            </button>
+            <span className="mx-1 h-4 w-px bg-violet-200" />
+            {/* Font family */}
+            <select
+              defaultValue=""
+              className="h-6 rounded border border-transparent bg-transparent px-1 text-[11px] text-slate-600 hover:border-violet-200 focus:border-violet-400 focus:outline-none"
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                document.execCommand("fontName", false, e.target.value);
+                e.target.value = "";
+              }}
+            >
+              <option value="" disabled>Fonte</option>
+              {TOOLBAR_FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            {/* Font size */}
+            <select
+              defaultValue=""
+              className="h-6 rounded border border-transparent bg-transparent px-1 text-[11px] text-slate-600 hover:border-violet-200 focus:border-violet-400 focus:outline-none"
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                // execCommand fontSize uses 1-7; map pt sizes to closest HTML size
+                const pt = parseInt(e.target.value);
+                const htmlSize = pt <= 9 ? 1 : pt <= 11 ? 2 : pt <= 13 ? 3 : pt <= 15 ? 4 : pt <= 19 ? 5 : pt <= 23 ? 6 : 7;
+                document.execCommand("fontSize", false, String(htmlSize));
+                e.target.value = "";
+              }}
+            >
+              <option value="" disabled>Tam.</option>
+              {TOOLBAR_SIZES.map((s) => <option key={s} value={s}>{s}pt</option>)}
+            </select>
           </div>
         </div>
       )}
@@ -1946,48 +2026,58 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   ];
 
   const magisQuestionsModal = magisQuestionsMode && (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm">
-      <div className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center gap-3 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-slate-50 px-6 py-4">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md shadow-violet-200">
+    <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center bg-black/60 px-4 pb-4 pt-8 backdrop-blur-sm">
+      <div className="relative flex w-full max-w-md flex-col overflow-hidden rounded-3xl shadow-2xl" style={{ maxHeight: "90vh" }}>
+
+        {/* WhatsApp-style header */}
+        <div className="flex shrink-0 items-center gap-3 bg-violet-700 px-5 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20">
             <Sparkles className="h-4 w-4 text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-widest text-violet-600">Magis</p>
-            <p className="text-sm font-semibold text-slate-800">
-              {magisStep === 1 ? "Qual é o nível de ensino deste template?" : "Você usa currículo regional?"}
-            </p>
+            <p className="text-sm font-semibold text-white leading-tight">Magis</p>
+            <p className="text-[11px] text-violet-300">assistente de planos</p>
           </div>
-          {/* Progress dots */}
           <div className="flex shrink-0 items-center gap-1.5">
             {([1, 2] as const).map((s) => (
-              <div
-                key={s}
-                className={`h-1.5 rounded-full transition-all ${magisStep >= s ? "w-6 bg-violet-600" : "w-3 bg-violet-200"}`}
-              />
+              <div key={s} className={`h-1.5 rounded-full transition-all ${magisStep >= s ? "w-5 bg-white" : "w-2.5 bg-white/30"}`} />
             ))}
           </div>
         </div>
 
-        <div className="p-6">
+        {/* Chat area */}
+        <div className="flex-1 overflow-y-auto bg-[#ece5dd] px-4 py-5 space-y-3">
+
           {/* Etapa 1 — Nível de ensino */}
           {magisStep === 1 && (
-            <div className="space-y-4">
-              <p className="text-xs text-slate-400">
-                A Magis usa essa informação para calibrar as sugestões ao nível correto.
-              </p>
-              <div className="space-y-3">
+            <>
+              {/* Magis bubbles */}
+              <div className="flex items-end gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
+                  <Sparkles className="h-3 w-3 text-white" />
+                </div>
+                <div className="flex max-w-[80%] flex-col gap-1">
+                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                    <p className="text-sm text-slate-800">Oi! Antes de a gente continuar, preciso de mais um detalhe sobre esse template 😊</p>
+                  </div>
+                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                    <p className="text-sm text-slate-800">Para qual <strong>nível de ensino</strong> ele é?</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Option cards */}
+              <div className="pl-9 space-y-2 pt-1">
                 {NIVEL_ENSINO_OPTIONS.map(({ group, items }) => (
                   <div key={group}>
-                    <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">{group}</p>
+                    <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 pl-1">{group}</p>
                     <div className="grid grid-cols-2 gap-2">
                       {items.map((item) => (
                         <button
                           key={item}
                           type="button"
                           onClick={() => setMagisAnswers((prev) => ({ ...prev, nivelEnsino: item }))}
-                          className={`rounded-2xl border px-3 py-2.5 text-sm font-medium text-left transition ${
+                          className={`rounded-xl border px-3 py-2.5 text-sm font-medium text-left transition shadow-sm ${
                             magisAnswers.nivelEnsino === item
                               ? "border-violet-500 bg-violet-600 text-white"
                               : "border-slate-200 bg-white text-slate-700 hover:border-violet-300 hover:bg-violet-50"
@@ -2000,57 +2090,82 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   </div>
                 ))}
               </div>
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setMagisStep(2)}
-                  className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
-                >
-                  Continuar →
-                </button>
-              </div>
-            </div>
+            </>
           )}
 
           {/* Etapa 2 — Currículo estadual */}
           {magisStep === 2 && (
-            <div className="space-y-4">
-              <p className="text-xs text-slate-400">
-                A Magis vai personalizar sugestões com o currículo territorial. Deixe em branco se não usar.
-              </p>
-              <div className="relative">
-                <select
-                  value={magisAnswers.estadoMagis}
-                  onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
-                  autoFocus
-                  className="w-full appearance-none rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-10 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                >
-                  <option value="">Deixar em branco — sem currículo estadual</option>
-                  {ESTADOS_BRASIL.map((e) => (
-                    <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <>
+              <div className="flex items-end gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
+                  <Sparkles className="h-3 w-3 text-white" />
+                </div>
+                <div className="flex max-w-[80%] flex-col gap-1">
+                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                    <p className="text-sm text-slate-800">
+                      {magisAnswers.nivelEnsino ? <>Perfeito, <strong>{magisAnswers.nivelEnsino}</strong>! 👍</> : "Perfeito! 👍"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                    <p className="text-sm text-slate-800">Você usa <strong>currículo regional</strong> nas suas aulas?</p>
+                  </div>
+                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                    <p className="text-sm text-slate-800">Se sim, me diz o estado — assim personalizo as sugestões certinho pra você! 🗺️</p>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setMagisStep(1)}
-                  className="text-xs text-slate-400 hover:text-slate-700"
-                >
-                  ← Voltar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleCompleteMagis()}
-                  disabled={isSavingMagis}
-                  className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {isSavingMagis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Finalizar
-                </button>
+
+              <div className="pl-9 pt-1">
+                <div className="relative">
+                  <select
+                    value={magisAnswers.estadoMagis}
+                    onChange={(e) => setMagisAnswers((prev) => ({ ...prev, estadoMagis: e.target.value }))}
+                    autoFocus
+                    className="w-full appearance-none rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-sm shadow-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  >
+                    <option value="">Não uso currículo regional</option>
+                    {ESTADOS_BRASIL.map((e) => (
+                      <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
               </div>
-            </div>
+            </>
+          )}
+        </div>
+
+        {/* Action bar */}
+        <div className="shrink-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-3">
+          {magisStep === 2 ? (
+            <button
+              type="button"
+              onClick={() => setMagisStep(1)}
+              className="text-xs text-slate-400 hover:text-slate-700"
+            >
+              ← Voltar
+            </button>
+          ) : <div />}
+
+          {magisStep === 1 ? (
+            <button
+              type="button"
+              onClick={() => setMagisStep(2)}
+              disabled={!magisAnswers.nivelEnsino}
+              className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-40"
+            >
+              Continuar →
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleCompleteMagis()}
+              disabled={isSavingMagis}
+              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {isSavingMagis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Pronto!
+            </button>
           )}
         </div>
       </div>
