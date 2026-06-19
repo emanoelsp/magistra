@@ -4,12 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
-  AlignCenter,
-  AlignJustify,
-  AlignLeft,
-  AlignRight,
   ArrowLeft,
-  Bold,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -17,9 +12,6 @@ import {
   Crosshair,
   GripVertical,
   HelpCircle,
-  Italic,
-  List,
-  ListOrdered,
   Loader2,
   MousePointer2,
   PanelRightClose,
@@ -116,211 +108,17 @@ interface DocxInteractiveProps {
   onChipClick?: (key: string) => void;
 }
 
-const TOOLBAR_FONTS = ["Arial", "Times New Roman", "Georgia", "Courier New", "Verdana"];
-const TOOLBAR_SIZES = ["8", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36"];
-
 function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
+  // Original cell text (stripped of chip tokens) — used by handleSaveEdits and placement mode.
   const originalTextsRef = useRef<Map<HTMLElement, string>>(new Map());
+  // Keys visible in doc at last render — used to detect user-deleted chips.
+  const initialDocKeysRef = useRef<Set<string>>(new Set());
   const onChipClickRef = useRef(onChipClick);
   useEffect(() => { onChipClickRef.current = onChipClick; }, [onChipClick]);
-  // Stores textContent INCLUDING chip text — used to detect moved/deleted chips.
-  const originalTextsWithChipsRef = useRef<Map<HTMLElement, string>>(new Map());
-  const savedSelRef = useRef<Range | null>(null);
-  // Snapshot of field keys and doc-visible keys at the moment the doc was last rendered.
-  // Lets handleSaveEdits distinguish:
-  //   - Fields deleted from sidebar (in initialFieldKeys, absent from current fields)
-  //   - Fields added via sidebar but not yet placed in doc (in fields, absent from initialDocKeys)
-  const initialFieldKeysRef = useRef<Set<string>>(new Set());
-  const initialDocKeysRef = useRef<Set<string>>(new Set());
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
-  const [saveCount, setSaveCount] = useState(0);
-
-  function saveSelection() {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) savedSelRef.current = sel.getRangeAt(0).cloneRange();
-  }
-
-  function restoreSelection() {
-    const sel = window.getSelection();
-    if (sel && savedSelRef.current) { sel.removeAllRanges(); sel.addRange(savedSelRef.current); }
-  }
-
-  function fmt(cmd: string, val?: string) {
-    restoreSelection();
-    document.execCommand(cmd, false, val ?? "");
-  }
-
-  function fmtSize(pt: string) {
-    restoreSelection();
-    // Use styleWithCSS + fontSize maps to avoid the 1-7 limitation
-    document.execCommand("styleWithCSS", false, "true");
-    document.execCommand("fontSize", false, "7");
-    const container = containerRef.current;
-    if (!container) return;
-    container.querySelectorAll("font[size='7']").forEach((el) => {
-      (el as HTMLElement).removeAttribute("size");
-      (el as HTMLElement).style.fontSize = `${pt}pt`;
-    });
-  }
-
-  function fmtFont(name: string) {
-    restoreSelection();
-    document.execCommand("fontName", false, name);
-  }
-
-  function deriveRole(key: string): "manual" | "ia_sugerida" {
-    return /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade|pratica/.test(key)
-      ? "ia_sugerida" : "manual";
-  }
-
-  function handleSaveEdits() {
-    if (!containerRef.current) return;
-    const container = containerRef.current;
-
-    // Mirror the same selector logic used in the contenteditable setup effect:
-    // exclude header/footer cells (they live in separate DOCX XML files and
-    // their DOM indices don't correspond to document.xml cell indices).
-    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
-      .filter((td) => !td.closest("header") && !td.closest("footer"));
-    const standaloneParagraphs = (
-      Array.from(container.querySelectorAll("p")) as HTMLElement[]
-    ).filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
-    const els = [...tds, ...standaloneParagraphs];
-
-    const existingKeys = new Set(fields.map((f) => f.key));
-    const textOrdinalsMap = new Map<string, number>();
-    const edits: DocxEdit[] = [];
-    const cellEdits: CellEdit[] = [];
-    const processedKeys = new Set<string>();
-    const scanOrder: string[] = [];
-    const seenInScan = new Set<string>();
-
-    // For cells the user typed into (empty originalText), try to infer a human
-    // label from the sibling/parent cell that describes the row.
-    function adjacentLabel(el: HTMLElement): string {
-      if (el.tagName !== "TD") return "";
-      const row = el.closest("tr");
-      if (!row) return "";
-      const rowTds = Array.from(row.querySelectorAll("td")) as HTMLElement[];
-      const idx = rowTds.indexOf(el);
-      if (idx > 0) {
-        const lbl = (rowTds[idx - 1]?.textContent ?? "").trim().slice(0, 80);
-        if (lbl) return lbl;
-      }
-      const prevRow = row.previousElementSibling as Element | null;
-      if (prevRow) {
-        const prevTds = Array.from(prevRow.querySelectorAll("td")) as HTMLElement[];
-        const lbl = (prevTds[idx]?.textContent ?? prevTds[0]?.textContent ?? "").trim().slice(0, 80);
-        if (lbl) return lbl;
-      }
-      return "";
-    }
-
-    for (const el of els) {
-      const originalText = originalTextsRef.current.get(el) ?? "";
-      const ordinal = textOrdinalsMap.get(originalText) ?? 0;
-      textOrdinalsMap.set(originalText, ordinal + 1);
-
-      // Prefer XML structural coord (set by assignDocxCellCoords) for empty cells.
-      // Fall back to global <td> index only when coord is unavailable.
-      const coord = el.tagName === "TD" ? (el.getAttribute("data-xml-coord") ?? undefined) : undefined;
-      const tdGlobalIndex = el.tagName === "TD" ? tds.indexOf(el) : -1;
-      const effectiveOrdinal = !originalText.trim() && tdGlobalIndex >= 0
-        ? tdGlobalIndex
-        : ordinal;
-
-      const currentText = el.textContent ?? "";
-
-      // Detect {{key}} patterns
-      const matches = [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)];
-      for (const match of matches) {
-        const key = match[1];
-        if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
-        if (existingKeys.has(key) || processedKeys.has(key)) continue;
-        // Key is in doc but not in current schema.
-        // If it was in schema at render time → it was deleted from sidebar and
-        // the chip is stale — skip to avoid re-adding it.
-        if (initialFieldKeysRef.current.has(key)) continue;
-        processedKeys.add(key);
-        const label = !originalText.trim()
-          ? (adjacentLabel(el) || key.replace(/_/g, " "))
-          : (originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " "));
-        edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label, coord });
-      }
-
-      // Collect a full-cell override for any cell that has {{key}} patterns.
-      // This lets the server write ALL tokens in one shot so they don't overwrite
-      // each other in multi-key cells.
-      // Keep: keys already in schema (existingKeys) + keys just discovered in this
-      // save session (processedKeys). Strip only keys that are truly gone from both.
-      // Without processedKeys here, a newly typed {{new_key}} in a cell that also has
-      // {{existing_key}} would be stripped from cleanedContent → two injectAtCoord
-      // calls hit the same coord → second one overwrites the first.
-      if (matches.length > 0) {
-        const cleanedContent = currentText
-          .replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (full, k) =>
-            (existingKeys.has(k) || processedKeys.has(k) ? full : ""))
-          .replace(/\s+/g, " ")
-          .trim();
-        // Generate a cellEdit when there are still valid keys remaining OR when
-        // we removed at least one key (cell must be overwritten to erase the
-        // placeholder from the DOCX — without this, {{removed_key}} stays in
-        // the file and keeps showing after the field is deleted from the sidebar).
-        const hadRemovedKeys = matches.some(
-          (m) => !existingKeys.has(m[1]) && !processedKeys.has(m[1]),
-        );
-        if (hadRemovedKeys || /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(cleanedContent)) {
-          const alreadyRecorded = cellEdits.some(
-            (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
-          );
-          if (!alreadyRecorded) {
-            cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: cleanedContent, coord });
-          }
-        }
-      }
-
-      // Detect cells that originally had chips but the user cut/moved them away.
-      // Without this, the old {{key}} stays in the DOCX file after a cut-paste move.
-      if (matches.length === 0) {
-        const origWithChips = originalTextsWithChipsRef.current.get(el) ?? "";
-        if (/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(origWithChips)) {
-          const alreadyRecorded = cellEdits.some(
-            (ce) => ce.cellText === originalText && ce.ordinal === effectiveOrdinal,
-          );
-          if (!alreadyRecorded) {
-            cellEdits.push({ cellText: originalText, ordinal: effectiveOrdinal, newContent: currentText.replace(/\s+/g, " ").trim(), coord });
-          }
-        }
-      }
-
-      // Detect bare snake_case identifiers typed without {{ }} (must contain underscore)
-      if (matches.length === 0) {
-        const bare = currentText.trim().match(/^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/);
-        if (bare) {
-          const key = bare[1];
-          if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
-          if (!existingKeys.has(key) && !processedKeys.has(key)) {
-            processedKeys.add(key);
-            const label = adjacentLabel(el) || key.replace(/_/g, " ");
-            edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role: deriveRole(key), label, coord });
-          }
-        }
-      }
-    }
-
-    // Fields that were visible in the doc at render time but are no longer found.
-    // Keys that are in the schema but were never placed in the doc (e.g. just added
-    // via sidebar) are NOT in initialDocKeys and must NOT be treated as removed.
-    const removedKeys = [...existingKeys].filter(
-      (k) => !seenInScan.has(k) && initialDocKeysRef.current.has(k),
-    );
-
-    onSaveEdits(edits, scanOrder, removedKeys, cellEdits);
-    if (edits.length > 0) setSaveCount((n) => n + edits.length);
-  }
 
   useEffect(() => {
     setPhase("loading");
@@ -424,10 +222,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
-    // Don't re-walk the DOM while the user is actively editing — the walker
-    // replaces text nodes which kills the cursor position.
-    const active = document.activeElement as HTMLElement | null;
-    if (active?.contentEditable === "true" && container.contains(active)) return;
     const roleMap = new Map(fields.map((f) => [f.key, f.role]));
 
     // CHIP INVARIANT: a chip must only be created/kept for a key that exists in
@@ -479,20 +273,15 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const m = part.match(/^\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}$/);
         if (m) {
           const key = m[1];
-          // Don't recreate chips for fields that were deleted from the sidebar this session.
-          // A deleted key is one that was in the original schema (initialFieldKeysRef) but
-          // is no longer in roleMap. Newly typed keys (never in schema) must still get chips.
-          const wasDeleted = !roleMap.has(key) && initialFieldKeysRef.current.has(key);
-          if (wasDeleted) {
-            frag.appendChild(document.createTextNode(part));
-          } else {
+          if (roleMap.has(key)) {
             const isIa = roleMap.get(key) === "ia_sugerida";
             const span = document.createElement("span");
             span.setAttribute("data-field-chip", key);
-            span.setAttribute("contenteditable", "false");
             span.style.cssText = chipCss(isIa);
             span.textContent = part;
             frag.appendChild(span);
+          } else {
+            frag.appendChild(document.createTextNode(part));
           }
         } else {
           frag.appendChild(document.createTextNode(part));
@@ -534,7 +323,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       const isIa = field.role === "ia_sugerida";
       const chip = document.createElement("span");
       chip.setAttribute("data-field-chip", key);
-      chip.setAttribute("contenteditable", "false");
       chip.style.cssText = [
         "display:inline-block", "padding:2px 8px", "border-radius:6px",
         "font-family:monospace", "font-size:10px", "font-weight:700",
@@ -579,44 +367,50 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     return () => { cancelled = true; };
   }, [phase]);
 
-  // Contenteditable — make cells editable, avoiding nested contenteditable
+  // Capture original cell texts + doc-visible keys when doc finishes rendering.
+  // originalTextsRef: stripped of chip tokens → used by handleSaveEdits ordinal counts
+  // initialDocKeysRef: keys visible in doc → used to detect user-deleted chips
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
-
-    // Only td elements + standalone p elements (not inside td) become contenteditable.
-    // Nested contenteditable (td AND p inside td) causes browser to render stacked
-    // focus rings at every level, creating the "concentric rings" visual artifact.
-    //
-    // Exclude header/footer <td>s: they are in separate DOCX XML files so their
-    // global DOM index does NOT correspond to indices in word/document.xml.
     const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
       .filter((td) => !td.closest("header") && !td.closest("footer"));
-    const standaloneParagraphs = (
-      Array.from(container.querySelectorAll("p")) as HTMLElement[]
-    ).filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
-    const editableEls = [...tds, ...standaloneParagraphs];
-
-    // Capture original text BEFORE user edits, stripping {{key}} chip text so
-    // ordinal counting in handleSaveEdits matches the clean original DOCX text
-    // that the server uses for injectRawCell / injectAtCell fallback paths.
+    const standaloneParagraphs = (Array.from(container.querySelectorAll("p")) as HTMLElement[])
+      .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
     originalTextsRef.current = new Map();
-    originalTextsWithChipsRef.current = new Map();
-    for (const el of editableEls) {
-      const raw = (el.textContent ?? "").replace(/\s+/g, " ").trim();
-      originalTextsWithChipsRef.current.set(el, raw);
-      const clean = raw.replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "").replace(/\s+/g, " ").trim();
+    for (const el of [...tds, ...standaloneParagraphs]) {
+      const clean = (el.textContent ?? "")
+        .replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
       originalTextsRef.current.set(el, clean);
     }
+    // Snapshot keys visible in the doc (chips + raw {{}} text)
+    const docKeys = new Set<string>();
+    for (const m of (container.textContent ?? "").matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)) {
+      docKeys.add(m[1]);
+    }
+    initialDocKeysRef.current = docKeys;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
-    // Chips inside contenteditable cells must be atomic (non-editable) so the
-    // user can select and delete them whole but cannot type inside them.
+  // Contenteditable — cells are editable; chips inside are atomic (non-editable)
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
+      .filter((td) => !td.closest("header") && !td.closest("footer"));
+    const standaloneParagraphs = (Array.from(container.querySelectorAll("p")) as HTMLElement[])
+      .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
+    const editableEls = [...tds, ...standaloneParagraphs];
+
+    // Chips must be atomic so the user can delete them whole but not type inside.
     for (const chip of Array.from(container.querySelectorAll<HTMLElement>("[data-field-chip]"))) {
       chip.setAttribute("contenteditable", "false");
     }
 
-    // Enter → <br> (prevents browser from inserting <div>/<p> wrappers which break layout).
-    // Paste → plain text only (strips HTML that would corrupt cell structure).
+    // Enter → <br> (prevents browser from inserting <div>/<p> wrappers).
+    // Paste → plain text only (strips HTML that would break cell structure).
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Enter") return;
       e.preventDefault();
@@ -631,7 +425,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       sel.removeAllRanges();
       sel.addRange(range);
     }
-
     function onPaste(e: ClipboardEvent) {
       e.preventDefault();
       const text = e.clipboardData?.getData("text/plain") ?? "";
@@ -645,14 +438,12 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       sel.removeAllRanges();
       sel.addRange(range);
     }
-
     for (const el of editableEls) {
       el.contentEditable = "true";
       el.style.cursor = "text";
       el.addEventListener("keydown", onKeyDown);
       el.addEventListener("paste", onPaste);
     }
-
     return () => {
       for (const el of editableEls) {
         el.contentEditable = "false";
@@ -664,27 +455,78 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  // Capture the schema keys and doc-visible keys each time the doc finishes rendering.
-  // No `fields` dep — intentionally captures the snapshot at render time so that
-  // subsequent sidebar changes (add/remove) are detectable in handleSaveEdits.
-  useEffect(() => {
-    if (phase !== "done" || !containerRef.current) return;
-    initialFieldKeysRef.current = new Set(fields.map((f) => f.key));
-    const allText = containerRef.current.textContent ?? "";
-    const docKeys = new Set<string>();
-    for (const m of allText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)) {
-      docKeys.add(m[1]);
-    }
-    initialDocKeysRef.current = docKeys;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  // handleSaveEdits: scans for {{key}} patterns in edited cells and sends them
+  // as TOKEN-ONLY cellEdits (never full cell content) so the server uses
+  // safeAppendToken — the only injection path that cannot corrupt cell structure.
+  function handleSaveEdits() {
+    if (!containerRef.current) return;
+    const container = containerRef.current;
+    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
+      .filter((td) => !td.closest("header") && !td.closest("footer"));
+    const standaloneParagraphs = (Array.from(container.querySelectorAll("p")) as HTMLElement[])
+      .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
+    const els = [...tds, ...standaloneParagraphs];
 
-  // Placement mode: when placementKey is set, suspend contenteditable and turn cells into click targets
+    const existingKeys = new Set(fields.map((f) => f.key));
+    const textOrdinalsMap = new Map<string, number>();
+    const edits: DocxEdit[] = [];
+    // One cellEdit per key: newContent is ONLY "{{key}}", never full cell text.
+    // safeAppendToken on the server handles the rest safely.
+    const cellEdits: CellEdit[] = [];
+    const scanOrder: string[] = [];
+    const seenInScan = new Set<string>();
+
+    for (const el of els) {
+      const originalText = originalTextsRef.current.get(el) ?? "";
+      const ordinal = textOrdinalsMap.get(originalText) ?? 0;
+      textOrdinalsMap.set(originalText, ordinal + 1);
+      const coord = el.tagName === "TD" ? (el.getAttribute("data-xml-coord") ?? undefined) : undefined;
+      const tdIndex = el.tagName === "TD" ? tds.indexOf(el) : -1;
+      const effectiveOrdinal = !originalText.trim() && tdIndex >= 0 ? tdIndex : ordinal;
+
+      const currentText = el.textContent ?? "";
+      const matches = [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)];
+
+      for (const match of matches) {
+        const key = match[1];
+        if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
+
+        // New field discovered in the document (not in schema yet)
+        if (!existingKeys.has(key)) {
+          const label = originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " ");
+          const role: "manual" | "ia_sugerida" =
+            /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade/.test(key)
+              ? "ia_sugerida" : "manual";
+          edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role, label, coord });
+        }
+
+        // Record position for this key (new or repositioned existing key).
+        // Send ONLY the token — safeAppendToken handles empty vs non-empty cells.
+        if (!cellEdits.some((ce) => ce.newContent === `{{${key}}}`)) {
+          cellEdits.push({
+            cellText: originalText,
+            ordinal: effectiveOrdinal,
+            newContent: `{{${key}}}`,
+            coord,
+          });
+        }
+      }
+    }
+
+    // Detect chips the user manually removed from cells (were in doc at render, gone now)
+    const removedKeys = [...existingKeys].filter(
+      (k) => !seenInScan.has(k) && initialDocKeysRef.current.has(k),
+    );
+
+    onSaveEdits(edits, scanOrder, removedKeys, cellEdits);
+  }
+
+  // Placement mode: suspend contenteditable, turn cells into click targets
   useEffect(() => {
     if (phase !== "done" || !containerRef.current || !placementKey) return;
     const container = containerRef.current;
 
-    // Suspend existing contenteditable
+    // Suspend contenteditable while in placement mode
     const editables = Array.from(container.querySelectorAll<HTMLElement>("[contenteditable='true']"));
     for (const el of editables) el.contentEditable = "false";
 
@@ -692,7 +534,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       (td) => !td.closest("header") && !td.closest("footer"),
     );
 
-    // Build per-cell ordinal mapping (mirrors handleSaveEdits counting)
+    // Build per-cell ordinal mapping for placement
     const textCounts = new Map<string, number>();
     const cellInfo = new Map<HTMLElement, { text: string; ordinal: number }>();
     for (const td of tds) {
@@ -722,6 +564,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       container.classList.remove("docx-placement-mode");
       document.removeEventListener("keydown", handleKeyDown);
       for (const td of tds) td.removeEventListener("click", handleClick);
+      // Restore contenteditable
       for (const el of editables) el.contentEditable = "true";
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -736,14 +579,15 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         .docx-html-preview img { max-width: 100%; height: auto; }
         .docx-html-preview section { overflow: visible !important; }
         .docx-html-preview p { margin: 0.2em 0; }
-        .docx-html-preview td[contenteditable]:focus,
-        .docx-html-preview td[contenteditable]:focus-within,
-        .docx-html-preview p[contenteditable]:focus {
-          outline: 2px solid rgba(139,92,246,0.6) !important;
+        .docx-html-preview td[contenteditable='true']:focus,
+        .docx-html-preview td[contenteditable='true']:focus-within,
+        .docx-html-preview p[contenteditable='true']:focus {
+          outline: 2px solid rgba(139,92,246,0.5) !important;
           border-radius: 2px;
         }
         .docx-placement-mode td { cursor: pointer !important; user-select: none; }
         .docx-placement-mode td:hover { background: rgba(99,102,241,0.12) !important; outline: 2px dashed rgba(99,102,241,0.5) !important; border-radius: 2px; }
+        [data-field-chip] { cursor: pointer; }
         [data-field-chip]:hover { filter: brightness(0.92); }
       `}</style>
 
@@ -767,112 +611,28 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
           </button>
         </div>
       ) : (
-        <div className="flex shrink-0 items-center gap-2 border-b border-violet-100 bg-violet-50 px-3 py-2">
-          <p className="flex-1 text-[11px] text-violet-600">
-            Clique em qualquer célula para editar &bull; Para posicionar um campo:{" "}
-            <code className="rounded bg-violet-100 px-1 font-mono text-violet-700">{`{{nome_do_campo}}`}</code>
+        <div className="flex shrink-0 items-center gap-2 border-b border-violet-50 bg-violet-50 px-3 py-1.5">
+          <p className="flex-1 text-[11px] text-violet-500">
+            Edite as células &bull; digite{" "}
+            <code className="rounded bg-violet-100 px-1 font-mono text-[10px] text-violet-700">{`{{chave}}`}</code>{" "}
+            para posicionar um campo &bull; clique num chip para configurar
           </p>
-          {saveCount > 0 && (
-            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-              {saveCount} campo{saveCount !== 1 ? "s" : ""} adicionado{saveCount !== 1 ? "s" : ""}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={handleSaveEdits}
-            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
-          >
-            <Save className="h-3 w-3" />
-            Salvar edições
-          </button>
-        </div>
-      )}
-
-      {/* Rich-text formatting toolbar + zoom (single row) */}
-      {phase === "done" && (
-        <div
-          className="flex shrink-0 items-center gap-0.5 border-b border-slate-100 bg-white px-2 py-1"
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          {/* Font family */}
-          <select
-            className="h-6 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-700 focus:outline-none"
-            defaultValue="Arial"
-            onFocus={saveSelection}
-            onChange={(e) => fmtFont(e.target.value)}
-          >
-            {TOOLBAR_FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
-
-          {/* Font size */}
-          <select
-            className="h-6 w-14 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-700 focus:outline-none"
-            defaultValue="12"
-            onFocus={saveSelection}
-            onChange={(e) => fmtSize(e.target.value)}
-          >
-            {TOOLBAR_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-
-          <div className="mx-0.5 h-4 w-px bg-slate-200" />
-
-          {/* Bold / Italic */}
-          <button type="button" title="Negrito" onClick={() => fmt("bold")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <Bold className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-          <button type="button" title="Itálico" onClick={() => fmt("italic")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <Italic className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-
-          <div className="mx-0.5 h-4 w-px bg-slate-200" />
-
-          {/* Alignment */}
-          <button type="button" title="Alinhar à esquerda" onClick={() => fmt("justifyLeft")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <AlignLeft className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-          <button type="button" title="Centralizar" onClick={() => fmt("justifyCenter")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <AlignCenter className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-          <button type="button" title="Alinhar à direita" onClick={() => fmt("justifyRight")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <AlignRight className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-          <button type="button" title="Justificar" onClick={() => fmt("justifyFull")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <AlignJustify className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-
-          <div className="mx-0.5 h-4 w-px bg-slate-200" />
-
-          {/* Lists */}
-          <button type="button" title="Lista com marcadores" onClick={() => fmt("insertUnorderedList")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <List className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-          <button type="button" title="Lista numerada" onClick={() => fmt("insertOrderedList")}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100">
-            <ListOrdered className="h-3.5 w-3.5 text-slate-700" />
-          </button>
-
-          {/* Item 15: zoom — right-aligned in the same toolbar row */}
-          <div className="ml-auto flex items-center gap-1.5">
-            <div className="mr-0.5 h-4 w-px bg-slate-200" />
+          <div className="flex shrink-0 items-center gap-1.5">
             <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
             <input
-              type="range"
-              min={70}
-              max={150}
-              step={5}
-              value={zoom}
+              type="range" min={70} max={150} step={5} value={zoom}
               onChange={(e) => onZoomChange?.(Number(e.target.value))}
-              onMouseDown={(e) => e.stopPropagation()}
               className="h-1 w-20 accent-violet-600"
             />
             <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>
+            <button
+              type="button"
+              onClick={handleSaveEdits}
+              className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
+            >
+              <Save className="h-3 w-3" />
+              Salvar edições
+            </button>
           </div>
         </div>
       )}
@@ -1055,7 +815,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       if (!panelResizeRef.current.dragging) return;
       e.preventDefault();
       const delta = panelResizeRef.current.startX - e.clientX;
-      const maxW = Math.floor(window.innerWidth * 0.30);
+      const maxW = Math.floor(window.innerWidth * 0.35);
       const next = Math.max(240, Math.min(maxW, panelResizeRef.current.startW + delta));
       setPanelWidth(next);
     }
@@ -1403,10 +1163,12 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       [key]: { cellText, ordinal, ...(coord ? { coord } : {}) },
     };
     setFieldPositions(newPos);
+    // Always use the simple token — safeAppendToken on the server handles
+    // empty vs non-empty cells correctly without destroying structure.
     const cellEdit: CellEdit = {
       cellText,
       ordinal,
-      newContent: cellText.trim() ? `${cellText.trim()} {{${key}}}` : `{{${key}}}`,
+      newContent: `{{${key}}}`,
       coord,
     };
     handleSave(fields, newPos, true, [cellEdit]);
@@ -2465,67 +2227,56 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           {/* Item 16: resizable right panel */}
           <div
             ref={panelScrollRef}
-            style={!panelCollapsed ? { width: panelWidth + "px", maxWidth: "30%" } : undefined}
+            style={panelCollapsed ? { display: "none" } : { width: panelWidth + "px", maxWidth: "35%" }}
             className={`min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white [overflow-anchor:none] shrink-0 ${
-              mobileTab === "campos"
-                ? "flex flex-col flex-1"
-                : panelCollapsed
-                  ? "hidden"
-                  : "hidden xl:flex xl:flex-col"
+              mobileTab === "campos" ? "flex flex-col flex-1" : "hidden xl:flex xl:flex-col"
             }`}
           >
-            {/* Sidebar header: title + collapse button */}
-            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-100 bg-white px-4 py-3 shrink-0">
-              <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Campos</span>
-              <button
-                type="button"
-                onClick={() => setPanelCollapsed(true)}
-                className="flex items-center justify-center rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-                title="Recolher painel"
-              >
-                <PanelRightClose className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
             {/* Scrollable content */}
             <div className="flex flex-col gap-0 p-4">
-            {headerActionsEl && createPortal(
-              <>
-                <button
-                  type="button"
-                  onClick={() => { setShowVersions(true); void loadVersions(); }}
-                  className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-                  title="Histórico de versões"
-                >
-                  <Clock className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowHelp(true)}
-                  className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-                  title="Ajuda"
-                >
-                  <HelpCircle className="h-3.5 w-3.5" />
-                </button>
-              </>,
-              headerActionsEl,
-            )}
             {fieldsPanel}
-            </div>{/* end scrollable content */}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Expand button — appears when sidebar is collapsed (desktop only) */}
-      {panelCollapsed && (
-        <button
-          type="button"
-          onClick={() => setPanelCollapsed(false)}
-          className="fixed right-4 top-1/2 z-50 hidden -translate-y-1/2 items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-md transition hover:border-violet-500 hover:text-violet-600 xl:flex"
-          title="Mostrar painel de campos"
-        >
-          <PanelRightOpen className="h-4 w-4" />
-        </button>
+      {headerActionsEl && createPortal(
+        <>
+          <button
+            type="button"
+            onClick={() => { setShowVersions(true); void loadVersions(); }}
+            className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+            title="Histórico de versões"
+          >
+            <Clock className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowHelp(true)}
+            className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+            title="Ajuda"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (panelCollapsed) {
+                setPanelWidth(Math.floor(window.innerWidth * 0.35));
+                setPanelCollapsed(false);
+              } else {
+                setPanelCollapsed(true);
+              }
+            }}
+            className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+            title={panelCollapsed ? "Mostrar painel de campos" : "Recolher painel de campos"}
+          >
+            {panelCollapsed
+              ? <PanelRightOpen className="h-3.5 w-3.5" />
+              : <PanelRightClose className="h-3.5 w-3.5" />}
+          </button>
+        </>,
+        headerActionsEl,
       )}
       </>
     );

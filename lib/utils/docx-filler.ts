@@ -90,12 +90,82 @@ function replaceFirst(haystack: string, needle: string, replacement: string): st
 
 function stripChangeTracking(xml: string): string {
   return xml
+    // Structural property change history (revision diffs on tables, rows, cells, runs, paras)
     .replace(/<w:tblPrChange\b[^>]*>[\s\S]*?<\/w:tblPrChange>/g, "")
     .replace(/<w:tblGridChange\b[^>]*>[\s\S]*?<\/w:tblGridChange>/g, "")
     .replace(/<w:trPrChange\b[^>]*>[\s\S]*?<\/w:trPrChange>/g, "")
     .replace(/<w:tcPrChange\b[^>]*>[\s\S]*?<\/w:tcPrChange>/g, "")
     .replace(/<w:rPrChange\b[^>]*>[\s\S]*?<\/w:rPrChange>/g, "")
-    .replace(/<w:pPrChange\b[^>]*>[\s\S]*?<\/w:pPrChange>/g, "");
+    .replace(/<w:pPrChange\b[^>]*>[\s\S]*?<\/w:pPrChange>/g, "")
+    // Tracked insertions / deletions (carry their own runs which distort the text stream)
+    .replace(/<w:ins\b[^>]*>[\s\S]*?<\/w:ins>/g, "")
+    .replace(/<w:del\b[^>]*>[\s\S]*?<\/w:del>/g, "")
+    // Spellcheck / grammar markers — self-closing, appear BETWEEN runs, splitting tokens
+    .replace(/<w:proofErr\b[^/]*/g, "")
+    .replace(/<w:proofErr\/>/g, "")
+    // Bookmark anchors — self-closing pair, appear between or inside runs
+    .replace(/<w:bookmarkStart\b[^/]*\/>/g, "")
+    .replace(/<w:bookmarkEnd\b[^/]*\/>/g, "");
+}
+
+/**
+ * Within each paragraph, merges consecutive <w:r> elements that share the same
+ * <w:rPr> (or both lack one) and contain only <w:t> nodes (no <w:br>, drawings,
+ * field codes, etc.).
+ *
+ * Run fragmentation is the root cause of "{{token}} not found" failures: Word
+ * splits a single typed token across several <w:r> nodes due to spellcheck,
+ * autocorrect, or revision-session boundaries.  After stripping <w:proofErr>
+ * and bookmark elements (see stripChangeTracking), adjacent runs are truly
+ * adjacent — this pass unifies their text into one run so every subsequent
+ * XML scan sees the complete token string.
+ */
+function mergeAdjacentRuns(xml: string): string {
+  return xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paraXml) => {
+    let result = paraXml;
+    let changed = true;
+    while (changed) {
+      const prev = result;
+      result = result.replace(
+        // Two adjacent <w:r> elements with (optional) identical rPr and text-only bodies
+        /<w:r(?:\s[^>]*)?>(<w:rPr>[\s\S]*?<\/w:rPr>)?([\s\S]*?)<\/w:r>\s*<w:r(?:\s[^>]*)?>(<w:rPr>[\s\S]*?<\/w:rPr>)?([\s\S]*?)<\/w:r>/g,
+        (match, rPr1, body1, rPr2, body2) => {
+          const p1 = rPr1 ?? "";
+          const p2 = rPr2 ?? "";
+          if (p1 !== p2) return match;
+          // Never merge runs containing non-text special elements
+          if (/<w:br|<w:drawing|<w:sym|<w:fldChar|<w:instrText/.test(body1 + body2)) {
+            return match;
+          }
+          const extractTexts = (body: string) =>
+            [...body.matchAll(/<w:t(?:[^>]*)?>([^<]*)<\/w:t>/g)]
+              .map((m) => m[1])
+              .join("");
+          const merged = extractTexts(body1) + extractTexts(body2);
+          const needsPreserve = /^\s|\s$| {2}/.test(merged);
+          const tAttr = needsPreserve ? ' xml:space="preserve"' : "";
+          return `<w:r>${p1}<w:t${tAttr}>${merged}</w:t></w:r>`;
+        },
+      );
+      changed = result !== prev;
+    }
+    return result;
+  });
+}
+
+/**
+ * Full XML normalization pipeline applied to word/document.xml before any
+ * injection or scan operation.  Order matters:
+ *   1. Strip revision/tracking noise (proofErr, bookmarks, ins, del) so runs
+ *      that were split by markers become truly adjacent.
+ *   2. Merge those newly-adjacent runs with identical formatting into single runs.
+ *
+ * This is Route 1 ("XML Run Normalization") from the engineering analysis.
+ * It makes the entire injection pipeline immune to Word's token fragmentation
+ * without changing any document content or formatting.
+ */
+function normalizeDocxXml(xml: string): string {
+  return mergeAdjacentRuns(stripChangeTracking(xml));
 }
 
 // ── Row / cell parser ────────────────────────────────────────────────────────
@@ -614,9 +684,65 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
 // ── Cell content writer ──────────────────────────────────────────────────────
 
 /**
+ * Safely appends a single {{key}} token to a <w:tc> cell without destroying
+ * existing content or multi-paragraph structure.
+ *
+ * Rules derived from analysis of 3 school planning templates:
+ *   - Empty cells (value slots):   token replaces the empty <w:t>
+ *   - Non-empty cells (labels):    token is appended as a new run at the end
+ *                                  of the last <w:p>, preserving all label text
+ *   - Idempotent: returns cellXml unchanged if token is already present
+ */
+function safeAppendToken(cellXml: string, token: string): string {
+  if (cellXml.includes(token)) return cellXml; // idempotent
+
+  // Check if cell has any real text content (not just whitespace)
+  const allText = [...cellXml.matchAll(/<w:t(?:[^>]*)?>([^<]*)<\/w:t>/g)]
+    .map((m) => m[1]).join("").trim();
+
+  if (!allText) {
+    // EMPTY cell (value slot): write token into first <w:t>
+    let first = true;
+    const result = cellXml.replace(/<w:t(?:[^>]*)?>([^<]*)<\/w:t>/g, (match) => {
+      if (first) { first = false; return `<w:t xml:space="preserve">${token}</w:t>`; }
+      return "<w:t/>";
+    });
+    if (!first) return result;
+    // No <w:t> at all — inject into first <w:p>
+    const paraClose = cellXml.indexOf("</w:p>");
+    if (paraClose !== -1) {
+      return cellXml.slice(0, paraClose)
+        + `<w:r><w:t xml:space="preserve">${token}</w:t></w:r>`
+        + cellXml.slice(paraClose);
+    }
+    return cellXml;
+  }
+
+  // NON-EMPTY cell (has label text): append token as a new run at the end of
+  // the last <w:p> — never overwrites label text, never destroys structure.
+  const lastParaClose = cellXml.lastIndexOf("</w:p>");
+  if (lastParaClose !== -1) {
+    return cellXml.slice(0, lastParaClose)
+      + `<w:r><w:t xml:space="preserve"> ${token}</w:t></w:r>`
+      + cellXml.slice(lastParaClose);
+  }
+
+  // Fallback: no paragraphs found — append before </w:tc>
+  const tcClose = cellXml.lastIndexOf("</w:tc>");
+  if (tcClose !== -1) {
+    return cellXml.slice(0, tcClose)
+      + `<w:p><w:r><w:t xml:space="preserve"> ${token}</w:t></w:r></w:p>`
+      + cellXml.slice(tcClose);
+  }
+
+  return cellXml;
+}
+
+/**
  * Replaces ALL <w:t> text in a cell with `content`.
  * Sets the first <w:t> to the new content and empties every subsequent one.
- * Used for inline "Label: value" cells where we must erase the original value.
+ * ONLY use for simple single-paragraph cells where full replacement is correct.
+ * For multi-paragraph cells, use safeAppendToken instead.
  */
 function clearAndSetCellText(cellXml: string, content: string): string {
   let first = true;
@@ -737,7 +863,7 @@ export function injectAtCell(
   const xmlPath = "word/document.xml";
   if (!zip.files[xmlPath]) return docxBuffer;
 
-  let xml = zip.files[xmlPath].asText();
+  let xml = normalizeDocxXml(zip.files[xmlPath].asText());
   const placeholder = `{{${fieldKey}}}`;
 
   const tcRegex = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
@@ -815,7 +941,7 @@ export function injectRawCell(
   const xmlPath = "word/document.xml";
   if (!zip.files[xmlPath]) return docxBuffer;
 
-  let xml = zip.files[xmlPath].asText();
+  let xml = normalizeDocxXml(zip.files[xmlPath].asText());
   const tcRegex = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
   let match: RegExpExecArray | null;
 
@@ -875,7 +1001,7 @@ export function injectAtCoord(
   const xmlPath = "word/document.xml";
   if (!zip.files[xmlPath]) return docxBuffer;
 
-  let xml = zip.files[xmlPath].asText();
+  let xml = normalizeDocxXml(zip.files[xmlPath].asText());
 
   let ti = 0;
   let injected = false;
@@ -894,7 +1020,12 @@ export function injectAtCoord(
         if (injected || ci !== targetCi) { ci++; return tcXml; }
         ci++;
         injected = true;
-        return clearAndSetCellText(tcXml, content);
+        // Use safeAppendToken when injecting a simple {{key}} token so we never
+        // destroy existing label text or multi-paragraph cell structure.
+        const isSimpleToken = /^\{\{[A-Za-z_][A-Za-z0-9_]*\}\}$/.test(content.trim());
+        return isSimpleToken
+          ? safeAppendToken(tcXml, content.trim())
+          : clearAndSetCellText(tcXml, content);
       });
       return newTr;
     });
@@ -929,15 +1060,12 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
   const xmlPath = "word/document.xml";
   if (!zip.files[xmlPath]) throw new Error("DOCX inválido: word/document.xml não encontrado.");
 
-  let xml = zip.files[xmlPath].asText();
+  let xml = normalizeDocxXml(zip.files[xmlPath].asText());
   // Idempotency check via projected plain text — immune to OOXML run fragmentation.
   // xml.includes("{{key}}") fails when Word splits the token across multiple <w:r> nodes;
   // extractText joins all <w:t> content across run boundaries before checking.
   const projectedText = extractText(xml);
   if (schema.every((f) => projectedText.includes(`{{${f.key}}}`))) return docxBuffer;
-
-  // Only strip change tracking, preserve all other formatting
-  xml = stripChangeTracking(xml);
 
   const rows = parseRows(xml);
   // Pre-populate `used` with fields already present in the document so
@@ -1708,7 +1836,7 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
   const xmlPath = "word/document.xml";
   if (!zip.files[xmlPath]) return [];
 
-  const xml = stripChangeTracking(zip.files[xmlPath].asText());
+  const xml = normalizeDocxXml(zip.files[xmlPath].asText());
   const rows = parseRows(xml);
   const pairs: StructuralPair[] = [];
   const seenLabels = new Set<string>();
@@ -1739,9 +1867,19 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
           // skip ALL CAPS paragraphs that somehow slipped through (safety guard).
           const pHasMixed = /[a-z]/.test(pt.normalize("NFD").replace(/[̀-ͯ]/g, ""));
           if (!pHasMixed && !pt.endsWith(":")) continue; // title paragraph within cell
-          const label = pt.replace(/:+$/, "").replace(/^-\s*/, "").trim();
-          if (label.length < 2) continue;
-          addPair({ label, valuePreview: "", pattern: "inline_colon" });
+          const rawLabel = pt.replace(/:+$/, "").replace(/^-\s*/, "").trim();
+          if (rawLabel.length < 2) continue;
+          // Inline multi-label within one paragraph: "Área/Componente: Turma"
+          // Only split when ALL parts look like word-labels (no digits/dates as values).
+          if (rawLabel.includes(": ")) {
+            const parts = rawLabel.split(/:\s+/).map((s) => s.trim()).filter((s) => s.length >= 2);
+            const allWordLike = parts.every((p) => /^[-\s]*[A-Za-zÀ-ÿ()\s/]+$/.test(p));
+            if (allWordLike && parts.length >= 2) {
+              for (const label of parts) addPair({ label, valuePreview: "", pattern: "inline_colon" });
+              continue;
+            }
+          }
+          addPair({ label: rawLabel, valuePreview: "", pattern: "inline_colon" });
         }
         continue; // don't also run the concatenated-text scan for this cell
       }
@@ -1750,6 +1888,18 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       const t = row.cellTexts[ci].trim();
       // Rule 15: skip instructional cells ("Obs:", "Nota:", etc.) inside tables too
       if (isInstructionalBlock(t)) continue;
+
+      // Inline multi-label in single cell text: "Área/Componente: Turma:" (ends with ":")
+      // Only split when ALL parts are word-like (not "Label: 2026-01-01:").
+      if (t.endsWith(":") && t.includes(": ")) {
+        const parts = t.split(/:\s+/).map((s) => s.trim()).filter((s) => s.length >= 2);
+        const allWordLike = parts.every((p) => /^[-\s]*[A-Za-zÀ-ÿ()\s/]+$/.test(p));
+        if (allWordLike && parts.length >= 2) {
+          for (const label of parts) addPair({ label, valuePreview: "", pattern: "inline_colon" });
+          continue;
+        }
+      }
+
       const colonIdx = t.indexOf(":");
       if (colonIdx <= 1 || colonIdx >= t.length - 1) continue;
       const label = t.slice(0, colonIdx).trim();
@@ -2087,7 +2237,10 @@ export function stripNonSchemaTokens(docxBuffer: Buffer, validKeys: Set<string>)
   const xmlPath = "word/document.xml";
   if (!zip.files[xmlPath]) return docxBuffer;
 
-  let xml = zip.files[xmlPath].asText();
+  // Normalize first: strip revision noise and merge fragmented runs so that
+  // both pass 1 (string match) and pass 2 (paragraph defragmentation) operate
+  // on clean, unified runs.  This is idempotent — safe to call more than once.
+  let xml = normalizeDocxXml(zip.files[xmlPath].asText());
 
   // ── Pass 1: non-fragmented tokens ──────────────────────────────────────────
   xml = xml.replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (match, key: string) =>
