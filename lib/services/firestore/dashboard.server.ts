@@ -195,16 +195,23 @@ export interface PlanoComNome extends PlanoRecord {
   template_deletado: boolean;
 }
 
+export interface PlanoFilters {
+  q?: string;
+  status?: string;
+  templateId?: string;
+}
+
 export async function getUserPlanosComNome(
   userId: string,
   pageSize = 20,
   page = 1,
+  filters?: PlanoFilters,
 ): Promise<{ items: PlanoComNome[]; total: number }> {
   const adminDb = getAdminDb();
   const snapshot = await adminDb.collection("magins_planos_aula").where("user_id", "==", userId).get();
 
   // Sort all in memory (Firestore orderBy needs composite index; this is safe at current scale)
-  const allPlanos = snapshot.docs
+  let allPlanos = snapshot.docs
     .map((doc) => {
       const d = doc.data();
       return {
@@ -220,6 +227,24 @@ export async function getUserPlanosComNome(
       };
     })
     .sort((a, b) => b.data_geracao.localeCompare(a.data_geracao));
+
+  // Apply filters before pagination
+  if (filters?.status) {
+    allPlanos = allPlanos.filter((p) => p.status === filters.status);
+  }
+  if (filters?.templateId) {
+    allPlanos = allPlanos.filter((p) => p.template_id === filters.templateId);
+  }
+  if (filters?.q) {
+    const qLower = filters.q.toLowerCase().trim();
+    allPlanos = allPlanos.filter((p) => {
+      const titulo = typeof p.conteudo_gerado?._plano_titulo === "string"
+        ? p.conteudo_gerado._plano_titulo.toLowerCase() : "";
+      const tplNome = typeof p.conteudo_gerado?.template_nome === "string"
+        ? p.conteudo_gerado.template_nome.toLowerCase() : "";
+      return titulo.includes(qLower) || tplNome.includes(qLower);
+    });
+  }
 
   const total = allPlanos.length;
   const skip = (page - 1) * pageSize;

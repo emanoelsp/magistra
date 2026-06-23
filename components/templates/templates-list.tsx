@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Edit2, Eye, FileText, FilePen, Plus, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Copy, Edit2, Eye, FileText, FilePen, Plus, Sparkles, Trash2 } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateOption } from "../../lib/types/firestore";
@@ -30,12 +30,30 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   const router = useRouter();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [page, setPage] = useState(0);
 
   const totalPages = Math.ceil(templates.length / PAGE_SIZE);
   const visibleTemplates = templates.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  async function handleDuplicate(templateId: string) {
+    setError(null);
+    setDuplicatingId(templateId);
+    try {
+      const res = await fetch(`/api/templates/${templateId}/duplicar`, { method: "POST" });
+      const data = (await res.json()) as { ok?: boolean; nome?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Erro ao duplicar.");
+      setSuccessMsg(`"${data.nome}" criado com sucesso.`);
+      setTimeout(() => setSuccessMsg(null), 4000);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível duplicar o template.");
+    } finally {
+      setDuplicatingId(null);
+    }
+  }
 
   async function handleDelete(templateId: string) {
     const templateName = templates.find((t) => t.id === templateId)?.nome ?? "Template";
@@ -239,6 +257,17 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
                       <Eye className="h-3.5 w-3.5" />
                       Visualizar
                     </Link>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleDuplicate(template.id)}
+                      disabled={duplicatingId === template.id}
+                      title="Criar uma cópia deste template"
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      {duplicatingId === template.id ? "Duplicando…" : "Duplicar"}
+                    </button>
 
                     <Link
                       href={`/dashboard/templates/${template.id}/editar`}

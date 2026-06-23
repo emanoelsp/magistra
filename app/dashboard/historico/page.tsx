@@ -8,6 +8,7 @@ import {
   getUserTemplateOptions,
 } from "../../../lib/services/firestore/dashboard.server";
 import { HistoricoTabs } from "./historico-tabs";
+import { HistoricoFilters } from "./historico-filters";
 import { DownloadPlanButton } from "../../../components/planos/download-plan-button";
 
 export const dynamic = "force-dynamic";
@@ -29,37 +30,47 @@ function formatDate(iso: string) {
   );
 }
 
-function pageUrl(tab: string, page: number) {
-  return `/dashboard/historico?tab=${tab}&page=${page}`;
+function pageUrl(tab: string, page: number, filters: { q?: string; status?: string; templateId?: string }) {
+  const sp = new URLSearchParams({ tab, page: String(page) });
+  if (filters.q) sp.set("q", filters.q);
+  if (filters.status) sp.set("status", filters.status);
+  if (filters.templateId) sp.set("templateId", filters.templateId);
+  return `/dashboard/historico?${sp.toString()}`;
 }
 
 interface PageProps {
-  searchParams: Promise<{ tab?: string; page?: string }>;
+  searchParams: Promise<{ tab?: string; page?: string; q?: string; status?: string; templateId?: string }>;
 }
 
 export default async function HistoricoPage({ searchParams }: PageProps) {
   const user = await requireCurrentUserProfile();
-  const { tab: tabParam, page: pageParam } = await searchParams;
+  const { tab: tabParam, page: pageParam, q, status: statusParam, templateId } = await searchParams;
 
   const tab = tabParam === "templates" ? "templates" : "planos";
   const page = Math.max(1, Number(pageParam) || 1);
+  const filters = { q, status: statusParam, templateId };
 
   const [planosResult, templates] = await Promise.all([
-    getUserPlanosComNome(user.uid, PAGE_SIZE, page),
+    getUserPlanosComNome(user.uid, PAGE_SIZE, page, filters),
     getUserTemplateOptions(user.uid),
   ]);
 
   const planos = planosResult.items;
   const totalPlanos = planosResult.total;
 
-  const templateTotalPages = Math.max(1, Math.ceil(templates.length / PAGE_SIZE));
+  // Filter templates by search query (client-server: filter in memory)
+  const filteredTemplates = q
+    ? templates.filter((t) => t.nome.toLowerCase().includes(q.toLowerCase()))
+    : templates;
+
+  const templateTotalPages = Math.max(1, Math.ceil(filteredTemplates.length / PAGE_SIZE));
   const totalPages = tab === "planos"
     ? Math.max(1, Math.ceil(totalPlanos / PAGE_SIZE))
     : templateTotalPages;
   const safePage = Math.min(page, totalPages);
   const pageItems = tab === "planos"
     ? planos
-    : templates.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+    : filteredTemplates.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -88,32 +99,58 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
         <HistoricoTabs totalPlanos={totalPlanos} totalTemplates={templates.length} />
       </Suspense>
 
+      {/* Filters */}
+      <Suspense fallback={null}>
+        <HistoricoFilters
+          tab={tab}
+          templates={templates.map((t) => ({ id: t.id, nome: t.nome }))}
+        />
+      </Suspense>
+
       {/* Lista */}
       {pageItems.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center">
           {tab === "planos" ? (
             <>
               <FileText className="mx-auto h-10 w-10 text-slate-300" />
-              <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum plano ainda</h2>
-              <p className="mt-2 text-sm text-slate-500">Gere seu primeiro plano no assistente.</p>
-              <Link
-                href="/dashboard/gerar"
-                className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                Gerar plano
-              </Link>
+              {filters.q || filters.status || filters.templateId ? (
+                <>
+                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum plano encontrado</h2>
+                  <p className="mt-2 text-sm text-slate-500">Tente outros termos ou limpe os filtros.</p>
+                </>
+              ) : (
+                <>
+                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum plano ainda</h2>
+                  <p className="mt-2 text-sm text-slate-500">Gere seu primeiro plano no assistente.</p>
+                  <Link
+                    href="/dashboard/gerar"
+                    className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                  >
+                    Gerar plano
+                  </Link>
+                </>
+              )}
             </>
           ) : (
             <>
               <FolderKanban className="mx-auto h-10 w-10 text-slate-300" />
-              <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum template ainda</h2>
-              <p className="mt-2 text-sm text-slate-500">Suba o modelo da sua escola para começar.</p>
-              <Link
-                href="/dashboard/templates"
-                className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                Adicionar template
-              </Link>
+              {filters.q ? (
+                <>
+                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum template encontrado</h2>
+                  <p className="mt-2 text-sm text-slate-500">Tente outros termos de busca.</p>
+                </>
+              ) : (
+                <>
+                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum template ainda</h2>
+                  <p className="mt-2 text-sm text-slate-500">Suba o modelo da sua escola para começar.</p>
+                  <Link
+                    href="/dashboard/templates"
+                    className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                  >
+                    Adicionar template
+                  </Link>
+                </>
+              )}
             </>
           )}
         </div>
@@ -226,7 +263,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
       {totalPages > 1 && (
         <div className="flex items-center justify-between gap-4 pt-2">
           <Link
-            href={pageUrl(tab, safePage - 1)}
+            href={pageUrl(tab, safePage - 1, filters)}
             aria-disabled={safePage === 1}
             className={`inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-medium transition ${
               safePage === 1
@@ -244,7 +281,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
           </span>
 
           <Link
-            href={pageUrl(tab, safePage + 1)}
+            href={pageUrl(tab, safePage + 1, filters)}
             aria-disabled={safePage === totalPages}
             className={`inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-medium transition ${
               safePage === totalPages
