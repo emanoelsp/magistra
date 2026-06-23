@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Copy, Edit2, Eye, FileText, FilePen, Plus, Sparkles, Trash2 } from "lucide-react";
 
@@ -31,6 +31,10 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  // Modal Magis para confirmar nome antes de duplicar
+  const [duplicateModal, setDuplicateModal] = useState<{ id: string; nome: string } | null>(null);
+  const [duplicateNome, setDuplicateNome] = useState("");
+  const duplicateInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -38,11 +42,32 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   const totalPages = Math.ceil(templates.length / PAGE_SIZE);
   const visibleTemplates = templates.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  async function handleDuplicate(templateId: string) {
+  function openDuplicateModal(template: TemplateOption) {
+    const sugerido = template.nome.endsWith(" (cópia)") ? template.nome : `${template.nome} (cópia)`;
+    setDuplicateNome(sugerido);
+    setDuplicateModal({ id: template.id, nome: template.nome });
+  }
+
+  // Foca o input assim que o modal abre
+  useEffect(() => {
+    if (duplicateModal) {
+      setTimeout(() => duplicateInputRef.current?.select(), 50);
+    }
+  }, [duplicateModal]);
+
+  async function handleDuplicate() {
+    if (!duplicateModal) return;
+    const nome = duplicateNome.trim();
+    if (!nome) return;
     setError(null);
-    setDuplicatingId(templateId);
+    setDuplicatingId(duplicateModal.id);
+    setDuplicateModal(null);
     try {
-      const res = await fetch(`/api/templates/${templateId}/duplicar`, { method: "POST" });
+      const res = await fetch(`/api/templates/${duplicateModal.id}/duplicar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome }),
+      });
       const data = (await res.json()) as { ok?: boolean; nome?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Erro ao duplicar.");
       setSuccessMsg(`"${data.nome}" criado com sucesso.`);
@@ -135,9 +160,86 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
     </div>
   );
 
+  const duplicateModal_el = duplicateModal && (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      onClick={() => setDuplicateModal(null)}
+    >
+      <style>{`
+        @keyframes magis-pop {
+          from { opacity: 0; transform: scale(0.7) translateY(24px); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+      `}</style>
+      <div
+        className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-white p-8 shadow-2xl"
+        style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Avatar Magis */}
+        <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
+          <Sparkles className="h-7 w-7 text-white" />
+          <span
+            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
+            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}
+          >
+            <Copy className="h-3 w-3 text-white" />
+          </span>
+        </div>
+
+        {/* Balão de diálogo — estilo WhatsApp */}
+        <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4">
+          <div className="mb-2 flex items-center gap-1.5">
+            <Sparkles className="h-3 w-3 text-violet-500" />
+            <span className="text-xs font-bold text-violet-700">Magis</span>
+          </div>
+          <p className="text-sm leading-relaxed text-slate-800">
+            Antes de duplicarmos{" "}
+            <span className="font-semibold">"{duplicateModal.nome}"</span>, qual será o nome do novo template?
+          </p>
+        </div>
+
+        {/* Input do nome */}
+        <div className="w-full">
+          <input
+            ref={duplicateInputRef}
+            type="text"
+            value={duplicateNome}
+            onChange={(e) => setDuplicateNome(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void handleDuplicate(); if (e.key === "Escape") setDuplicateModal(null); }}
+            placeholder="Nome do template…"
+            aria-label="Nome do novo template"
+            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+          />
+        </div>
+
+        {/* Botões */}
+        <div className="flex w-full gap-3">
+          <button
+            type="button"
+            onClick={() => setDuplicateModal(null)}
+            className="flex-1 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDuplicate()}
+            disabled={!duplicateNome.trim()}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-50"
+          >
+            <Copy className="h-4 w-4" />
+            Duplicar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <>
       {deleteConfirmModal}
+      {duplicateModal_el}
 
       {successMsg && (
         <div className="mb-3 flex items-center gap-2.5 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
@@ -260,7 +362,7 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
 
                     <button
                       type="button"
-                      onClick={() => void handleDuplicate(template.id)}
+                      onClick={() => openDuplicateModal(template)}
                       disabled={duplicatingId === template.id}
                       title="Criar uma cópia deste template"
                       className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"

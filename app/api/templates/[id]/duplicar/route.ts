@@ -8,7 +8,7 @@ import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
 import { getLimitsStatus } from "../../../../../lib/services/limits";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -40,10 +40,14 @@ export async function POST(
       );
     }
 
+    const body = await request.json().catch(() => ({})) as { nome?: string };
     const originalNome = typeof tData.nome === "string" ? tData.nome : "Template";
-    const novoNome = originalNome.endsWith(" (cópia)")
-      ? originalNome
-      : `${originalNome} (cópia)`;
+    const novoNome =
+      typeof body.nome === "string" && body.nome.trim()
+        ? body.nome.trim()
+        : originalNome.endsWith(" (cópia)")
+          ? originalNome
+          : `${originalNome} (cópia)`;
 
     const novoTemplate: Record<string, unknown> = {
       user_id: user.uid,
