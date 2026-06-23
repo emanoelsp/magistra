@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2, LogOut } from "lucide-react";
+import { Building2, Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2, LogOut } from "lucide-react";
 
 const links = [
   { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
   { href: "/dashboard/templates", label: "Meus templates", icon: FileText },
+  { href: "/dashboard/escolas", label: "Minhas escolas", icon: Building2 },
   { href: "/dashboard/gerar", label: "Gerar plano", icon: Sparkles },
   { href: "/dashboard/historico", label: "Histórico", icon: Clock },
   { href: "/dashboard/suporte", label: "Suporte", icon: LifeBuoy },

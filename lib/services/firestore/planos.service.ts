@@ -77,6 +77,8 @@ export const planosService = {
       ...(Array.isArray(input.schema_campos) ? { schema_campos: input.schema_campos } : {}),
       ...(input.arquivo_url ? { arquivo_url: input.arquivo_url } : {}),
       ...(input.arquivo_fillable_url ? { arquivo_fillable_url: input.arquivo_fillable_url } : {}),
+      ...(input.turma_id ? { turma_id: input.turma_id } : {}),
+      ...(input.escola_id ? { escola_id: input.escola_id } : {}),
     });
 
     return planoRef.id;

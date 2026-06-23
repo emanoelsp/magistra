@@ -20,10 +20,16 @@ function getMpClient() {
   return new MercadoPagoConfig({ accessToken: token });
 }
 
+function resolveAppUrl(): string | null {
+  const raw = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim();
+  if (!raw || raw.includes("localhost") || raw.includes("127.0.0.1")) return null;
+  return raw;
+}
+
 async function getOrCreatePlanId(client: MercadoPagoConfig, plano: string): Promise<string> {
   const price = PLAN_PRICES_BRL[plano] ?? 0;
   const label = PLAN_LABELS[plano] ?? plano;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://planomagistra.com.br";
+  const appUrl = resolveAppUrl();
 
   const preApprovalPlan = new PreApprovalPlan(client);
 
@@ -43,7 +49,7 @@ async function getOrCreatePlanId(client: MercadoPagoConfig, plano: string): Prom
       payment_methods_allowed: {
         payment_types: [{ id: "credit_card" }, { id: "debit_card" }],
       },
-      back_url: `${appUrl}/planos/sucesso`,
+      ...(appUrl ? { back_url: `${appUrl}/planos/sucesso` } : {}),
     },
   });
 
@@ -64,7 +70,7 @@ export async function POST(request: Request) {
 
     const periodoRaw = body.periodo ?? "auto";
     const repetitions = periodoRaw !== "auto" ? parseInt(periodoRaw, 10) : undefined;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://planomagistra.com.br";
+    const appUrl = resolveAppUrl();
     const client = getMpClient();
     const preApproval = new PreApproval(client);
     const couponCode = (body.cupom ?? "").trim().toUpperCase() || null;
@@ -82,7 +88,7 @@ export async function POST(request: Request) {
           payer_email: user.email,
           reason: `PlanoMagistra - ${qty}x ${label}`,
           external_reference: `${user.uid}|${tipo}|${qty}`,
-          back_url: `${appUrl}/planos/sucesso?tipo=${tipo}&qty=${qty}`,
+          ...(appUrl ? { back_url: `${appUrl}/planos/sucesso?tipo=${tipo}&qty=${qty}` } : {}),
           auto_recurring: {
             frequency: 1,
             frequency_type: "months",
@@ -135,7 +141,7 @@ export async function POST(request: Request) {
         payer_email: user.email,
         reason: `PlanoMagistra - ${PLAN_LABELS[plano]}`,
         external_reference: `${user.uid}|${plano}|${couponCode ?? ""}`,
-        back_url: `${appUrl}/planos/sucesso?plano=${plano}`,
+        ...(appUrl ? { back_url: `${appUrl}/planos/sucesso?plano=${plano}` } : {}),
         auto_recurring: {
           frequency: 1,
           frequency_type: "months",

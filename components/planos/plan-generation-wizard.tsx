@@ -21,7 +21,7 @@ import { PlanEditor, type PlanEditorHandle } from "./plan-editor";
 import { DocxPreview } from "./docx-preview";
 import { planosService } from "../../lib/services/firestore/planos.service";
 import { templatesService } from "../../lib/services/firestore/templates.service";
-import type { TemplateFieldSchema, TemplateOption, TemplateRecord } from "../../lib/types/firestore";
+import type { TemplateFieldSchema, TemplateOption, TemplateRecord, TurmaRecord } from "../../lib/types/firestore";
 import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
 import {
   DownloadLimitDialog,
@@ -55,6 +55,7 @@ interface PlanGenerationWizardProps {
   preSelectedTemplateId?: string;
   recentPlanos?: RecentPlano[];
   resumeData?: ResumeData;
+  turmas?: TurmaRecord[];
 }
 
 function formatDate(value: string) {
@@ -111,6 +112,7 @@ export function PlanGenerationWizard({
   preSelectedTemplateId,
   recentPlanos = [],
   resumeData,
+  turmas = [],
 }: PlanGenerationWizardProps) {
   const router = useRouter();
 
@@ -140,6 +142,9 @@ export function PlanGenerationWizard({
   const [isSavingMeta, startSavingMeta] = useTransition();
   const [isPending, startTransition] = useTransition();
   const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
+  const [selectedTurmaId, setSelectedTurmaId] = useState("");
+  const [selectedEscolaId, setSelectedEscolaId] = useState("");
+  const [turmaFilterEscolaId, setTurmaFilterEscolaId] = useState("");
 
   const editorRef = useRef<PlanEditorHandle>(null);
   const hasAppliedResumeRef = useRef(false);
@@ -204,6 +209,38 @@ export function PlanGenerationWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId]);
 
+  // Escolas com turmas para o seletor rápido
+  const escolasComTurmas = Array.from(new Set(turmas.map((t) => t.escola_id))).map((eid) => {
+    const first = turmas.find((t) => t.escola_id === eid)!;
+    return { id: eid, nome: first.escola_nome };
+  }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  const turmasFiltradas = turmaFilterEscolaId
+    ? turmas.filter((t) => t.escola_id === turmaFilterEscolaId)
+    : turmas;
+
+  function applyTurma(turma: TurmaRecord) {
+    setSelectedTurmaId(turma.id);
+    setSelectedEscolaId(turma.escola_id);
+    setMetadataValues((prev) => {
+      const next = { ...prev };
+      const escolaField = manualFields.find((f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"));
+      if (escolaField) next[escolaField.key] = turma.escola_nome;
+      const turmaField = manualFields.find((f) =>
+        f.key.includes("turma") || f.key.includes("class") ||
+        f.label.toLowerCase().includes("turma") || f.label.toLowerCase().includes("class"),
+      );
+      if (turmaField) next[turmaField.key] = turma.nome;
+      if (turma.disciplina) {
+        const discField = manualFields.find((f) =>
+          f.key.includes("disciplina") || f.key.includes("componente") ||
+          f.label.toLowerCase().includes("disciplina") || f.label.toLowerCase().includes("componente"),
+        );
+        if (discField) next[discField.key] = turma.disciplina;
+      }
+      return next;
+    });
+  }
+
   // ── Navegação ───────────────────────────────────────────────────────────────
 
   function goNext() {
@@ -246,6 +283,8 @@ export function PlanGenerationWizard({
             status: "rascunho",
             conteudo_gerado: conteudo,
             schema_campos: selectedTemplate.schema_campos,
+            turma_id: selectedTurmaId || undefined,
+            escola_id: selectedEscolaId || undefined,
           });
       void doSave
         .then((id) => { if (typeof id === "string") setSavedPlanoId(id); })
@@ -280,6 +319,8 @@ export function PlanGenerationWizard({
           status: "rascunho",
           conteudo_gerado: conteudo,
           schema_campos: selectedTemplate.schema_campos,
+          turma_id: selectedTurmaId || undefined,
+          escola_id: selectedEscolaId || undefined,
         });
     void doSave
       .then((id) => { if (typeof id === "string") setSavedPlanoId(id); })
@@ -470,6 +511,61 @@ export function PlanGenerationWizard({
                     </p>
                   </div>
                 </div>
+
+                {/* Turma rápida — atalho que pré-preenche os campos abaixo */}
+                {turmas.length > 0 && (
+                  <div className="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-violet-600">
+                      ⚡ Atalho — selecionar turma salva
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {escolasComTurmas.length > 1 && (
+                        <div className="relative">
+                          <select
+                            value={turmaFilterEscolaId}
+                            onChange={(e) => setTurmaFilterEscolaId(e.target.value)}
+                            aria-label="Filtrar por escola"
+                            className="appearance-none rounded-xl border border-violet-300 bg-white py-2 pl-3 pr-8 text-sm text-slate-700 outline-none focus:border-violet-500"
+                          >
+                            <option value="">Todas as escolas</option>
+                            {escolasComTurmas.map((e) => (
+                              <option key={e.id} value={e.id}>{e.nome}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
+                        </div>
+                      )}
+                      <div className="relative">
+                        <select
+                          value={selectedTurmaId}
+                          onChange={(e) => {
+                            const t = turmas.find((t) => t.id === e.target.value);
+                            if (t) applyTurma(t);
+                          }}
+                          aria-label="Selecionar turma"
+                          className="appearance-none rounded-xl border border-violet-300 bg-white py-2 pl-3 pr-8 text-sm text-slate-700 outline-none focus:border-violet-500"
+                        >
+                          <option value="">Selecione a turma…</option>
+                          {turmasFiltradas.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {escolasComTurmas.length > 1 ? `${t.escola_nome} — ` : ""}{t.nome}{t.disciplina ? ` · ${t.disciplina}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
+                      </div>
+                      {selectedTurmaId && (
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedTurmaId(""); setSelectedEscolaId(""); }}
+                          className="text-xs text-violet-500 hover:text-violet-700"
+                        >
+                          Limpar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Template + Escola — campos obrigatórios em destaque */}
                 <div className="mb-5 grid gap-4 md:grid-cols-2">

@@ -310,7 +310,16 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [planoId, setPlanoId] = useState<string | null>(initialPlanoId ?? null);
   const [autoSuggestedOnce, setAutoSuggestedOnce] = useState(false);
-  const [generalContext, setGeneralContext] = useState("");
+
+  // When resuming a renewed plan, pre-seed generalContext so every Magis call
+  // knows to update curriculum references for the new school year.
+  const isRenewal = typeof initialValues?._renovado_de === "string" && initialValues._renovado_de.trim().length > 0;
+  const renewalYear = typeof initialValues?._ano_letivo === "string" ? initialValues._ano_letivo : String(new Date().getFullYear());
+  const [generalContext, setGeneralContext] = useState(
+    isRenewal
+      ? `Este plano é uma renovação para o ano letivo ${renewalYear}. Atualize todas as sugestões para refletir as mudanças curriculares e referências mais recentes disponíveis para ${renewalYear}.`
+      : "",
+  );
 
   // Document HTML state
   const [docHtml, setDocHtml] = useState<string | null>(null);

@@ -198,6 +198,8 @@ export async function POST(request: Request) {
       : undefined;
     const fieldAiInstructions = fieldSchema?.aiInstructions?.trim() ?? "";
 
+    const anoLetivo = new Date().getFullYear();
+
     const metaLines = Object.entries(sanitizedMetadata)
       .filter(([, v]) => v.trim())
       .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`);
@@ -316,6 +318,7 @@ Gere de 3 a 5 sugestões de preenchimento para o campo indicado em <campo>. Cada
 3. Se <habilidades_bncc> estiver presente, use EXCLUSIVAMENTE os códigos listados ali — nunca invente outros.
 4. Se <instrucao_do_professor> estiver presente, respeite-a como prioridade máxima.
 5. SEMPRE inicie o campo "label" de cada sugestão com um verbo de ação no infinitivo (ex: Identificar, Analisar, Resolver, Produzir, Aplicar, Criar, Comparar, Explicar, Desenvolver, Elaborar, Utilizar, Observar, Registrar, Avaliar, Planejar, Discutir, Investigar, Relacionar, Selecionar, Organizar). Isso vale para todos os tipos de campo.
+6. Este plano é para o ano letivo ${anoLetivo}. As sugestões devem refletir o currículo vigente nesse ano — use as versões e atualizações mais recentes da BNCC, SAEB e currículos territoriais disponíveis.
 </regras>
 <exemplos>
 ${fewShotExample}
@@ -427,6 +430,7 @@ Responda SOMENTE com JSON válido:
       `<contexto>`,
       `  <template>${template.nome}</template>`,
       `  <turma>${contexto}</turma>`,
+      `  <ano_letivo>${anoLetivo}</ano_letivo>`,
       ...(extraContext?.trim() ? [`  <contexto_extra>${extraContext.trim()}</contexto_extra>`] : []),
       ...(filledFieldsLines.length > 0 ? [`  <outros_campos_ja_preenchidos>`, ...filledFieldsLines, `  </outros_campos_ja_preenchidos>`] : []),
       `</contexto>`,

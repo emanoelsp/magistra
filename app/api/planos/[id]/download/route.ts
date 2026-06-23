@@ -486,6 +486,26 @@ export async function GET(
 
     const planoKey = user.plano?.trim().toLowerCase() || "free";
     const limits = PLAN_LIMITS[planoKey] ?? PLAN_LIMITS.free;
+
+    // Planos no plano free expiram após 90 dias — inclui ex-assinantes que cancelaram
+    const FREE_EXPIRY_DAYS = 90;
+    const isFreePlan = planoKey === "free";
+    if (isFreePlan && planoData.data_geracao) {
+      const geradoEm = new Date(planoData.data_geracao).getTime();
+      const daysOld = Math.floor((Date.now() - geradoEm) / (1000 * 60 * 60 * 24));
+      if (daysOld >= FREE_EXPIRY_DAYS) {
+        return NextResponse.json(
+          {
+            error: "PLAN_EXPIRED",
+            daysOld,
+            expiryDays: FREE_EXPIRY_DAYS,
+            data_geracao: planoData.data_geracao,
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     const currentDownloads = planoData.downloads ?? 0;
 
     if (currentDownloads >= limits.maxDownloadsPerPlano) {

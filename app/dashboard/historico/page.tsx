@@ -1,15 +1,17 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronLeft, ChevronRight, Clock, Edit2, FileText, FolderKanban, Pencil } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Clock, Edit2, FileText, FolderKanban, Lock, Pencil } from "lucide-react";
 
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import {
   getUserPlanosComNome,
   getUserTemplateOptions,
 } from "../../../lib/services/firestore/dashboard.server";
+import { getUserTurmas } from "../../../lib/services/firestore/escolas.server";
 import { HistoricoTabs } from "./historico-tabs";
 import { HistoricoFilters } from "./historico-filters";
 import { DownloadPlanButton } from "../../../components/planos/download-plan-button";
+import { RenovarPlanoButton } from "../../../components/planos/renovar-plano-button";
 
 export const dynamic = "force-dynamic";
 
@@ -30,29 +32,44 @@ function formatDate(iso: string) {
   );
 }
 
-function pageUrl(tab: string, page: number, filters: { q?: string; status?: string; templateId?: string }) {
+function pageUrl(tab: string, page: number, filters: { q?: string; status?: string; templateId?: string; turmaId?: string }) {
   const sp = new URLSearchParams({ tab, page: String(page) });
   if (filters.q) sp.set("q", filters.q);
   if (filters.status) sp.set("status", filters.status);
   if (filters.templateId) sp.set("templateId", filters.templateId);
+  if (filters.turmaId) sp.set("turmaId", filters.turmaId);
   return `/dashboard/historico?${sp.toString()}`;
 }
 
 interface PageProps {
-  searchParams: Promise<{ tab?: string; page?: string; q?: string; status?: string; templateId?: string }>;
+  searchParams: Promise<{ tab?: string; page?: string; q?: string; status?: string; templateId?: string; turmaId?: string }>;
+}
+
+const FREE_EXPIRY_DAYS = 90;
+const CURRENT_YEAR = new Date().getFullYear();
+
+function isPlanExpired(dataGeracao: string, userPlano: string): boolean {
+  if (userPlano !== "free") return false;
+  const daysOld = Math.floor((Date.now() - new Date(dataGeracao).getTime()) / (1000 * 60 * 60 * 24));
+  return daysOld >= FREE_EXPIRY_DAYS;
+}
+
+function isPreviousYear(dataGeracao: string): boolean {
+  return new Date(dataGeracao).getFullYear() < CURRENT_YEAR;
 }
 
 export default async function HistoricoPage({ searchParams }: PageProps) {
   const user = await requireCurrentUserProfile();
-  const { tab: tabParam, page: pageParam, q, status: statusParam, templateId } = await searchParams;
+  const { tab: tabParam, page: pageParam, q, status: statusParam, templateId, turmaId } = await searchParams;
 
   const tab = tabParam === "templates" ? "templates" : "planos";
   const page = Math.max(1, Number(pageParam) || 1);
-  const filters = { q, status: statusParam, templateId };
+  const filters = { q, status: statusParam, templateId, turmaId };
 
-  const [planosResult, templates] = await Promise.all([
+  const [planosResult, templates, turmas] = await Promise.all([
     getUserPlanosComNome(user.uid, PAGE_SIZE, page, filters),
     getUserTemplateOptions(user.uid),
+    getUserTurmas(user.uid),
   ]);
 
   const planos = planosResult.items;
@@ -104,6 +121,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
         <HistoricoFilters
           tab={tab}
           templates={templates.map((t) => ({ id: t.id, nome: t.nome }))}
+          turmas={turmas.map((t) => ({ id: t.id, nome: t.nome, escola_nome: t.escola_nome }))}
         />
       </Suspense>
 
@@ -161,17 +179,25 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                 const status =
                   STATUS_CONFIG[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
                 const temConteudo = Object.keys(plano.conteudo_gerado ?? {}).length > 0;
+                const userPlano = (user.plano ?? "free").trim().toLowerCase();
+                const expired = plano.status === "gerado" && plano.data_geracao
+                  ? isPlanExpired(plano.data_geracao, userPlano)
+                  : false;
+                const previousYear = plano.status === "gerado" && plano.data_geracao
+                  ? isPreviousYear(plano.data_geracao)
+                  : false;
+                const planoYear = plano.data_geracao ? new Date(plano.data_geracao).getFullYear() : null;
                 return (
                   <div
                     key={plano.id}
                     className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="flex items-start gap-3">
-                      <span className={`mt-0.5 shrink-0 rounded-xl p-2 ${plano.template_deletado ? "bg-slate-100 text-slate-400" : "bg-violet-50 text-violet-600"}`}>
-                        <FileText className="h-4 w-4" />
+                      <span className={`mt-0.5 shrink-0 rounded-xl p-2 ${plano.template_deletado ? "bg-slate-100 text-slate-400" : expired ? "bg-slate-100 text-slate-400" : "bg-violet-50 text-violet-600"}`}>
+                        {expired ? <Lock className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
                       </span>
                       <div>
-                        <p className={`font-semibold ${plano.template_deletado ? "text-slate-400 line-through" : "text-slate-950"}`}>
+                        <p className={`font-semibold ${plano.template_deletado || expired ? "text-slate-400" : "text-slate-950"}`}>
                           {typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
                             ? plano.conteudo_gerado._plano_titulo
                             : plano.template_nome}
@@ -184,6 +210,17 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                           <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
                             {status.label}
                           </span>
+                          {previousYear && planoYear && (
+                            <span className="inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-700">
+                              Ano {planoYear}
+                            </span>
+                          )}
+                          {expired && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+                              <Lock className="h-3 w-3" />
+                              Expirado — plano {FREE_EXPIRY_DAYS} dias
+                            </span>
+                          )}
                           {plano.template_deletado && (
                             <span className="inline-block rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-500">
                               template excluído
@@ -193,13 +230,25 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
-                      {plano.status === "gerado" && temConteudo && (
+                      {plano.status === "gerado" && temConteudo && !expired && (
                         <DownloadPlanButton
                           planoId={plano.id}
                           format="pdf"
                           label="PDF"
                           className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:opacity-60"
                         />
+                      )}
+                      {plano.status === "gerado" && temConteudo && expired && (
+                        <Link
+                          href="/planos"
+                          className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500"
+                        >
+                          <Lock className="h-3.5 w-3.5" />
+                          Reativar acesso
+                        </Link>
+                      )}
+                      {plano.status === "gerado" && temConteudo && previousYear && !expired && (
+                        <RenovarPlanoButton planoId={plano.id} currentYear={CURRENT_YEAR} />
                       )}
                       {(plano.status === "rascunho" || plano.status === "aguardando_geracao") && (
                         <Link

@@ -5,6 +5,7 @@ import { PlanGenerationWizard, type ResumeData } from "../../../components/plano
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getAdminDb } from "../../../lib/firebase/admin";
 import { getUserPlanosComNome, getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
+import { getUserTurmas } from "../../../lib/services/firestore/escolas.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
 import { LimitActions } from "../../../components/dashboard/limit-actions";
 
@@ -27,11 +28,12 @@ interface GerarPlanoPageProps {
 export default async function GerarPlanoPage({ searchParams }: GerarPlanoPageProps) {
   const user = await requireCurrentUserProfile();
 
-  const [templates, params, limits, recentPlanosResult] = await Promise.all([
+  const [templates, params, limits, recentPlanosResult, turmas] = await Promise.all([
     getUserTemplateOptions(user.uid),
     searchParams,
     getLimitsStatus(user.uid, user.plano),
     getUserPlanosComNome(user.uid, 3, 1),
+    getUserTurmas(user.uid),
   ]);
 
   const { template: preSelectedId, resume: resumeId } = params;
@@ -177,6 +179,7 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
             preSelectedTemplateId={resumeData ? undefined : preSelectedId}
             recentPlanos={recentPlanosResult.items}
             resumeData={resumeData}
+            turmas={turmas}
           />
         )}
       </section>

@@ -199,6 +199,7 @@ export interface PlanoFilters {
   q?: string;
   status?: string;
   templateId?: string;
+  turmaId?: string;
 }
 
 export async function getUserPlanosComNome(
@@ -224,6 +225,8 @@ export async function getUserPlanosComNome(
             : {},
         data_geracao: toIsoString(d.data_geracao),
         status: (typeof d.status === "string" ? d.status : "rascunho") as PlanoStatus,
+        turma_id: typeof d.turma_id === "string" ? d.turma_id : undefined,
+        escola_id: typeof d.escola_id === "string" ? d.escola_id : undefined,
       };
     })
     .sort((a, b) => b.data_geracao.localeCompare(a.data_geracao));
@@ -234,6 +237,9 @@ export async function getUserPlanosComNome(
   }
   if (filters?.templateId) {
     allPlanos = allPlanos.filter((p) => p.template_id === filters.templateId);
+  }
+  if (filters?.turmaId) {
+    allPlanos = allPlanos.filter((p) => p.turma_id === filters.turmaId);
   }
   if (filters?.q) {
     const qLower = filters.q.toLowerCase().trim();

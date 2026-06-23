@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Clock, FileText, LayoutDashboard, Sparkles, User2 } from "lucide-react";
+import { Building2, Clock, FileText, LayoutDashboard, Sparkles, User2 } from "lucide-react";
 
 const NAV_LINKS = [
   { href: "/dashboard",           label: "Início",      icon: LayoutDashboard, exact: true },
   { href: "/dashboard/templates", label: "Templates",   icon: FileText },
   { href: "/dashboard/gerar",     label: "Gerar",       icon: Sparkles,        cta: true },
+  { href: "/dashboard/escolas",   label: "Escolas",     icon: Building2 },
   { href: "/dashboard/historico", label: "Histórico",   icon: Clock },
-  { href: "/dashboard/perfil",    label: "Perfil",      icon: User2 },
 ] as const;
 
 export function MobileNav() {

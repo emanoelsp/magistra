@@ -1,0 +1,54 @@
+import "server-only";
+import { NextResponse } from "next/server";
+import { getAdminDb } from "../../../lib/firebase/admin";
+import { requireCurrentUserProfile } from "../../../lib/auth/session";
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireCurrentUserProfile();
+    const body = (await request.json()) as {
+      escola_id?: string;
+      escola_nome?: string;
+      nome?: string;
+      ano_letivo?: number;
+      disciplina?: string;
+    };
+
+    const escola_id = body.escola_id?.trim() ?? "";
+    const escola_nome = body.escola_nome?.trim() ?? "";
+    const nome = body.nome?.trim() ?? "";
+    const ano_letivo =
+      typeof body.ano_letivo === "number" ? body.ano_letivo : new Date().getFullYear();
+    const disciplina = body.disciplina?.trim() || undefined;
+
+    if (!escola_id || !nome) {
+      return NextResponse.json(
+        { error: "escola_id e nome são obrigatórios." },
+        { status: 400 }
+      );
+    }
+
+    const db = getAdminDb();
+    const escolaSnap = await db.collection("magis_escolas").doc(escola_id).get();
+    if (!escolaSnap.exists || escolaSnap.data()?.user_id !== user.uid) {
+      return NextResponse.json({ error: "Escola não encontrada." }, { status: 404 });
+    }
+
+    const ref = db.collection("magis_turmas").doc();
+    const criado_em = new Date().toISOString();
+    const data: Record<string, unknown> = {
+      user_id: user.uid,
+      escola_id,
+      escola_nome: escola_nome || (escolaSnap.data()?.nome as string ?? ""),
+      nome,
+      ano_letivo,
+      criado_em,
+    };
+    if (disciplina) data.disciplina = disciplina;
+    await ref.set(data);
+
+    return NextResponse.json({ ok: true, id: ref.id, ...data });
+  } catch {
+    return NextResponse.json({ error: "Falha ao criar turma." }, { status: 500 });
+  }
+}

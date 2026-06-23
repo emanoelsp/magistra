@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Download, Loader2, Sparkles, X } from "lucide-react";
 
@@ -8,6 +9,15 @@ export interface DownloadLimitInfo {
   downloads: number;
   maxDownloads: number;
 }
+
+export interface PlanExpiredInfo {
+  error: "PLAN_EXPIRED";
+  daysOld: number;
+  expiryDays: number;
+  data_geracao: string;
+}
+
+type BlockedInfo = { kind: "limit"; data: DownloadLimitInfo } | { kind: "expired"; data: PlanExpiredInfo };
 
 export async function triggerDownload(url: string): Promise<DownloadLimitInfo | null> {
   const res = await fetch(url);
@@ -27,7 +37,7 @@ export async function triggerDownload(url: string): Promise<DownloadLimitInfo | 
     URL.revokeObjectURL(a.href);
     return null;
   }
-  if (res.status === 429) {
+  if (res.status === 403 || res.status === 429) {
     return (await res.json()) as DownloadLimitInfo;
   }
   throw new Error(`Erro ${res.status}`);
@@ -49,7 +59,7 @@ export function DownloadPlanButton({
   iconOnly = false,
 }: DownloadPlanButtonProps) {
   const [loading, setLoading] = useState(false);
-  const [limitInfo, setLimitInfo] = useState<DownloadLimitInfo | null>(null);
+  const [blocked, setBlocked] = useState<BlockedInfo | null>(null);
 
   const url =
     format === "pdf"
@@ -63,9 +73,14 @@ export function DownloadPlanButton({
     setLoading(true);
     try {
       const info = await triggerDownload(url);
-      if (info) setLimitInfo(info);
+      if (info) {
+        if ((info as unknown as PlanExpiredInfo).error === "PLAN_EXPIRED") {
+          setBlocked({ kind: "expired", data: info as unknown as PlanExpiredInfo });
+        } else {
+          setBlocked({ kind: "limit", data: info });
+        }
+      }
     } catch {
-      // generic errors: fallback to direct link
       window.open(url, "_blank");
     } finally {
       setLoading(false);
@@ -93,22 +108,26 @@ export function DownloadPlanButton({
         {!iconOnly && displayLabel}
       </button>
 
-      {limitInfo && (
-        <DownloadLimitDialog
-          info={limitInfo}
-          onClose={() => setLimitInfo(null)}
-        />
+      {blocked?.kind === "limit" && (
+        <DownloadLimitDialog info={blocked.data} onClose={() => setBlocked(null)} />
+      )}
+      {blocked?.kind === "expired" && (
+        <PlanExpiredDialog info={blocked.data} onClose={() => setBlocked(null)} />
       )}
     </>
   );
 }
 
-export function DownloadLimitDialog({
-  info,
+/* ── Shared modal shell ─────────────────────────────────────────────────── */
+
+function MagisModalShell({
   onClose,
+  children,
+  footer,
 }: {
-  info: DownloadLimitInfo;
   onClose: () => void;
+  children: React.ReactNode;
+  footer: React.ReactNode;
 }) {
   return (
     <div
@@ -126,7 +145,7 @@ export function DownloadLimitDialog({
         className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl"
         style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
       >
-        {/* Header WhatsApp */}
+        {/* Header */}
         <div className="flex shrink-0 items-center gap-3 bg-violet-700 px-5 py-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20">
             <Sparkles className="h-4 w-4 text-white" />
@@ -152,37 +171,112 @@ export function DownloadLimitDialog({
               <Sparkles className="h-3 w-3 text-white" />
             </div>
             <div className="flex max-w-[80%] flex-col gap-1">
-              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
-                <p className="text-sm text-slate-800">
-                  Você atingiu o limite de downloads para este plano. ⚠️
-                </p>
-              </div>
-              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
-                <p className="text-sm text-slate-700">
-                  Downloads usados:{" "}
-                  <strong>{info.downloads}/{info.maxDownloads}</strong>
-                </p>
-              </div>
-              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
-                <p className="text-sm text-slate-500">
-                  Para baixar novamente, crie um novo plano a partir do mesmo template. 📄
-                </p>
-              </div>
+              {children}
             </div>
           </div>
         </div>
 
-        {/* Botão */}
+        {/* Footer */}
         <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full rounded-2xl bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
-          >
-            Entendi
-          </button>
+          {footer}
         </div>
       </div>
     </div>
+  );
+}
+
+/* ── Limite de downloads ────────────────────────────────────────────────── */
+
+export function DownloadLimitDialog({
+  info,
+  onClose,
+}: {
+  info: DownloadLimitInfo;
+  onClose: () => void;
+}) {
+  return (
+    <MagisModalShell
+      onClose={onClose}
+      footer={
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full rounded-2xl bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
+        >
+          Entendi
+        </button>
+      }
+    >
+      <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+        <p className="text-sm text-slate-800">Você atingiu o limite de downloads para este plano. ⚠️</p>
+      </div>
+      <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+        <p className="text-sm text-slate-700">
+          Downloads usados: <strong>{info.downloads}/{info.maxDownloads}</strong>
+        </p>
+      </div>
+      <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+        <p className="text-sm text-slate-500">
+          Para baixar novamente, gere um novo plano a partir do mesmo template. 📄
+        </p>
+      </div>
+    </MagisModalShell>
+  );
+}
+
+/* ── Plano expirado (free > 90 dias) ───────────────────────────────────── */
+
+export function PlanExpiredDialog({
+  info,
+  onClose,
+}: {
+  info: PlanExpiredInfo;
+  onClose: () => void;
+}) {
+  const geradoEm = new Date(info.data_geracao).toLocaleDateString("pt-BR", { dateStyle: "long" });
+  const diasRestantes = info.expiryDays - info.daysOld;
+
+  return (
+    <MagisModalShell
+      onClose={onClose}
+      footer={
+        <div className="flex flex-col gap-2">
+          <Link
+            href="/planos"
+            onClick={onClose}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-violet-700"
+          >
+            <Sparkles className="h-4 w-4" />
+            Ver planos disponíveis
+          </Link>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-2xl border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-600 transition hover:border-slate-400"
+          >
+            Fechar
+          </button>
+        </div>
+      }
+    >
+      <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+        <p className="text-sm text-slate-800">
+          Este plano foi gerado em <strong>{geradoEm}</strong> e expirou no plano Explorador. 🔒
+        </p>
+      </div>
+      <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+        <p className="text-sm text-slate-700">
+          O plano gratuito permite baixar planos por até <strong>{info.expiryDays} dias</strong> após a geração.{" "}
+          {diasRestantes < 0
+            ? `Este plano expirou há ${Math.abs(diasRestantes)} dias.`
+            : ""}
+        </p>
+      </div>
+      <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+        <p className="text-sm text-slate-500">
+          Com um plano pago você acessa todos os planos sem limite de tempo — e pode regerar com as atualizações do currículo do próximo ano! 🗓️
+        </p>
+      </div>
+    </MagisModalShell>
   );
 }

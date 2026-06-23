@@ -118,6 +118,8 @@ export interface PlanoRecord {
   /** Snapshotted at finalization so download survives template deletion or file replacement. */
   arquivo_url?: string;
   arquivo_fillable_url?: string;
+  turma_id?: string;
+  escola_id?: string;
 }
 
 export interface CreatePlanoInput {
@@ -129,6 +131,8 @@ export interface CreatePlanoInput {
   schema_campos?: TemplateFieldSchema[];
   arquivo_url?: string;
   arquivo_fillable_url?: string;
+  turma_id?: string;
+  escola_id?: string;
 }
 
 export interface UpdatePlanoInput {
@@ -274,4 +278,22 @@ export interface GerarPlanoWizardValues {
   referenciaSaeb: string;
   observacoes: string;
   aprovacaoIA: boolean;
+}
+
+export interface EscolaRecord {
+  id: string;
+  user_id: string;
+  nome: string;
+  criado_em: string;
+}
+
+export interface TurmaRecord {
+  id: string;
+  user_id: string;
+  escola_id: string;
+  escola_nome: string;
+  nome: string;
+  ano_letivo: number;
+  disciplina?: string;
+  criado_em: string;
 }
