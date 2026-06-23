@@ -163,11 +163,8 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
         deletado: Boolean(templateData.deleted_at),
       };
     })
-    // Active templates first (sorted by date), deleted templates after
-    .sort((left, right) => {
-      if (left.deletado !== right.deletado) return left.deletado ? 1 : -1;
-      return right.criadoEm.localeCompare(left.criadoEm);
-    });
+    .filter((t) => !t.deletado)
+    .sort((left, right) => right.criadoEm.localeCompare(left.criadoEm));
 }
 
 export async function getUserPlanos(userId: string): Promise<PlanoRecord[]> {
