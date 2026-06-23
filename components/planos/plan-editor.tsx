@@ -331,6 +331,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   // Always holds the latest savePlano to avoid stale closures in the debounce timer
   const latestSavePlanoRef = useRef<((status: "rascunho" | "gerado") => Promise<string>) | null>(null);
 
+  // Bulk generation ("Gerar com Magis") — ref tracks latest values to avoid stale closure
+  const valuesRef = useRef(values);
+  useEffect(() => { valuesRef.current = values; }, [values]);
+  const bulkCancelRef = useRef(false);
+  const [bulkGenerating, setBulkGenerating] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number; currentLabel: string } | null>(null);
+
   const hasDocx =
     (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
 
@@ -496,6 +503,78 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values]);
+
+  async function generateAllIaFields() {
+    if (bulkGenerating || loadingField) return;
+    const emptyFields = iaFields.filter((f) => !valuesRef.current[f.key]?.trim());
+    if (emptyFields.length === 0) {
+      showMagisToast("Todos os campos já estão preenchidos!", "info");
+      return;
+    }
+    setBulkGenerating(true);
+    bulkCancelRef.current = false;
+    let filled = 0;
+
+    for (let i = 0; i < emptyFields.length; i++) {
+      if (bulkCancelRef.current) break;
+      const field = emptyFields[i];
+      setBulkProgress({ current: i + 1, total: emptyFields.length, currentLabel: field.label });
+      try {
+        const currentVals = valuesRef.current;
+        const res = await fetch("/api/ia/campo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            templateId: template.id,
+            fieldKey: field.key,
+            fieldLabel: field.label,
+            fieldGroup: field.group,
+            metadata,
+            ...(generalContext ? { extraContext: generalContext } : {}),
+            currentValues: Object.fromEntries(
+              iaFields
+                .filter((f) => f.key !== field.key && currentVals[f.key]?.trim())
+                .map((f) => [f.key, currentVals[f.key]!]),
+            ),
+          }),
+        });
+        if (!res.ok) continue;
+        const d = (await res.json()) as { sugestoes?: IaSugestao[] };
+        const sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
+        if (sugestoes.length > 0) {
+          const best = sugestoes[0];
+          const html = best.descricao
+            ? `<p><strong>${best.label}</strong></p><p>${best.descricao}</p>`
+            : `<p>${best.label}</p>`;
+          const text = best.descricao ? `${best.label}: ${best.descricao}` : best.label;
+          const inserted = field.role === "ia_sugerida" ? html : text;
+          setValues((prev) => ({ ...prev, [field.key]: inserted }));
+          setSuggestions((prev) => ({ ...prev, [field.key]: sugestoes }));
+          if (docContainerRef.current) {
+            const cell = docContainerRef.current.querySelector<HTMLElement>(`[data-field-key="${field.key}"]`);
+            if (cell) {
+              if (field.role === "ia_sugerida") cell.innerHTML = html;
+              else cell.textContent = text;
+            }
+          }
+          filled++;
+        }
+      } catch {
+        // Continue to next field on error
+      }
+    }
+
+    setBulkGenerating(false);
+    setBulkProgress(null);
+    if (!bulkCancelRef.current) {
+      showMagisToast(
+        filled > 0
+          ? `Pronto! Magis preencheu ${filled} campo${filled !== 1 ? "s" : ""}. Revise e ajuste o que quiser.`
+          : "Não consegui gerar sugestões agora. Tente campo a campo.",
+        filled > 0 ? "success" : "error",
+      );
+    }
+  }
 
   function trackSugestaoAceita(sugestaoId: string, tipo: "titulo" | "completo") {
     void fetch("/api/ia/aceitar", {
@@ -964,24 +1043,136 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
 
         {/* ── Right: AI chatbot panel (hidden in preview mode) ── */}
         {!previewMode && (
-          <AIChatPanel
-            activeField={activeField}
-            activeFieldMeta={activeFieldMeta}
-            suggestions={activeSuggestions}
-            isLoading={loadingField === activeFieldKey}
-            streamingCharCount={loadingField === activeFieldKey ? streamingCharCount : 0}
-            error={suggestError}
-            metadata={metadata}
-            metadataComplete={metadataComplete}
-            generalContext={generalContext}
-            templateEstado={template.estado ?? null}
-            templateTipoPlano={template.tipo_plano ?? null}
-            onGeneralContextChange={setGeneralContext}
-            onInsert={insertSuggestion}
-            onGenerate={(extraContext, bypass) => {
-              if (activeField) void fetchSuggestionsForField(activeField, metadata, extraContext, bypass);
-            }}
-          />
+          bulkGenerating && bulkProgress ? (
+            /* Bulk generation progress panel */
+            <div className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-slate-50 xl:w-96">
+              <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-600">
+                  <Sparkles className="h-4 w-4 text-white" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-slate-900">Magis — Gerando plano…</p>
+                  <p className="text-xs text-slate-500">{bulkProgress.current} de {bulkProgress.total} campos</p>
+                </div>
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-500" aria-label="Gerando campos" role="status" />
+              </div>
+              <div className="flex flex-1 flex-col gap-5 p-5" aria-live="polite" aria-label="Progresso de geração">
+                {/* Progress bar */}
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between text-xs text-slate-500">
+                    <span>Progresso</span>
+                    <span className="font-medium text-violet-700">{Math.round((bulkProgress.current / bulkProgress.total) * 100)}%</span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200" role="progressbar" aria-valuenow={bulkProgress.current} aria-valuemin={0} aria-valuemax={bulkProgress.total} aria-label={`Gerando campo ${bulkProgress.current} de ${bulkProgress.total}`}>
+                    <div
+                      className="h-full rounded-full bg-violet-500 transition-all duration-500"
+                      style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+                {/* Current field card */}
+                <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
+                  <div className="mb-2 flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" />
+                    <span className="text-xs font-semibold text-violet-700">Gerando agora:</span>
+                  </div>
+                  <p className="text-sm font-medium text-slate-800">{bulkProgress.currentLabel}</p>
+                </div>
+                {/* Steps list */}
+                <div className="space-y-1.5">
+                  {Array.from({ length: bulkProgress.total }, (_, i) => {
+                    const done = i < bulkProgress.current - 1;
+                    const active = i === bulkProgress.current - 1;
+                    return (
+                      <div key={i} className={`flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs transition ${active ? "bg-violet-50 font-medium text-violet-700" : done ? "text-slate-400" : "text-slate-300"}`}>
+                        {done
+                          ? <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">✓</span>
+                          : active
+                            ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-500" />
+                            : <span className="h-4 w-4 shrink-0 rounded-full border border-slate-200 bg-white" />
+                        }
+                        <span className="truncate">{iaFields[i]?.label ?? `Campo ${i + 1}`}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Cancel */}
+                <button
+                  type="button"
+                  onClick={() => { bulkCancelRef.current = true; }}
+                  className="mt-auto text-xs text-slate-400 underline underline-offset-2 hover:text-slate-600"
+                >
+                  Cancelar geração
+                </button>
+              </div>
+            </div>
+          ) : (
+            <AIChatPanel
+              activeField={activeField}
+              activeFieldMeta={activeFieldMeta}
+              suggestions={activeSuggestions}
+              isLoading={loadingField === activeFieldKey}
+              streamingCharCount={loadingField === activeFieldKey ? streamingCharCount : 0}
+              error={suggestError}
+              metadata={metadata}
+              metadataComplete={metadataComplete}
+              generalContext={generalContext}
+              templateEstado={template.estado ?? null}
+              templateTipoPlano={template.tipo_plano ?? null}
+              onGeneralContextChange={setGeneralContext}
+              onInsert={insertSuggestion}
+              onGenerate={(extraContext, bypass) => {
+                if (activeField) void fetchSuggestionsForField(activeField, metadata, extraContext, bypass);
+              }}
+              onRegenerate={
+                activeField?.role === "ia_sugerida" && activeFieldKey && values[activeFieldKey]?.trim()
+                  ? async () => {
+                      if (loadingField || !activeField) return;
+                      setSuggestError(null);
+                      setLoadingField(activeField.key);
+                      setStreamingCharCount(0);
+                      try {
+                        const res = await fetch("/api/ia/campo", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            templateId: template.id,
+                            fieldKey: activeField.key,
+                            fieldLabel: activeField.label,
+                            fieldGroup: activeField.group,
+                            metadata,
+                            bypassCache: true,
+                            currentValues: Object.fromEntries(
+                              iaFields
+                                .filter((f) => f.key !== activeField.key && values[f.key]?.trim())
+                                .map((f) => [f.key, values[f.key]!]),
+                            ),
+                          }),
+                        });
+                        if (!res.ok) throw new Error("Falha na regeneração.");
+                        const d = (await res.json()) as { sugestoes?: IaSugestao[] };
+                        const sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
+                        if (sugestoes.length > 0) {
+                          setSuggestions((prev) => ({ ...prev, [activeField.key]: sugestoes }));
+                          insertSuggestion(sugestoes[0], "full");
+                          showMagisToast("Campo regenerado! Verifique o novo conteúdo.", "success");
+                        }
+                      } catch {
+                        setSuggestError("Não consegui regenerar. Tente novamente.");
+                      } finally {
+                        setLoadingField(null);
+                        setStreamingCharCount(0);
+                      }
+                    }
+                  : undefined
+              }
+              onGenerateAll={
+                wizardMode && iaFields.some((f) => !values[f.key]?.trim())
+                  ? () => void generateAllIaFields()
+                  : undefined
+              }
+            />
+          )
         )}
         {previewMode && (
           <div className="flex w-64 shrink-0 flex-col items-center justify-center gap-4 border-l border-slate-100 bg-slate-50 p-6 text-center">
@@ -1188,6 +1379,10 @@ interface AIChatPanelProps {
   onGeneralContextChange: (v: string) => void;
   onInsert: (s: IaSugestao, mode: "label" | "full") => void;
   onGenerate: (extraContext?: string, bypassCache?: boolean) => void;
+  /** Fetches fresh suggestion and auto-inserts best result — one-click regenerate */
+  onRegenerate?: () => void;
+  /** When provided, shows "Gerar com Magis" button for one-click bulk generation */
+  onGenerateAll?: () => void;
 }
 
 // Keys whose values are not relevant for pedagogical content generation.
@@ -1210,6 +1405,8 @@ function AIChatPanel({
   onGeneralContextChange,
   onInsert,
   onGenerate,
+  onRegenerate,
+  onGenerateAll,
 }: AIChatPanelProps) {
   const [contextInput, setContextInput] = useState("");
   const [showGeneralCtx, setShowGeneralCtx] = useState(false);
@@ -1249,17 +1446,27 @@ function AIChatPanel({
             {fieldLabel ? `Campo: ${fieldLabel}` : "Selecione um campo"}
           </p>
         </div>
-        {isLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-500" />}
+        {isLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-500" aria-label="Gerando sugestões" role="status" />}
       </div>
 
       {/* Chat area */}
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+      <div className="flex-1 space-y-3 overflow-y-auto p-4" aria-live="polite" aria-label="Painel de sugestões da Magis">
         {/* Magis intro — always visible */}
         <ChatBubble>
           <p className="text-sm text-slate-700">
             Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica.
             Clique nos campos com borda em <span className="font-bold text-violet-600">roxo</span> que sugiro o conteúdo para você!
           </p>
+          {onGenerateAll && metadataComplete && (
+            <button
+              type="button"
+              onClick={onGenerateAll}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[.98]"
+            >
+              <Sparkles className="h-4 w-4" />
+              Gerar todos os campos com Magis
+            </button>
+          )}
         </ChatBubble>
 
         {/* Context bubble */}
@@ -1435,7 +1642,18 @@ function AIChatPanel({
 
       {/* Action bar */}
       <div className="shrink-0 border-t border-slate-200 bg-white p-3 space-y-2">
-        {fieldLabel && !isLoading && suggestions.length > 0 && (
+        {fieldLabel && !isLoading && onRegenerate && (
+          <button
+            type="button"
+            onClick={onRegenerate}
+            disabled={!metadataComplete}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-50 border border-violet-200 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50"
+          >
+            <WandSparkles className="h-3.5 w-3.5" />
+            Regenerar este campo
+          </button>
+        )}
+        {fieldLabel && !isLoading && suggestions.length > 0 && !onRegenerate && (
           <button
             type="button"
             onClick={() => onGenerate(undefined, true)}
@@ -1457,6 +1675,7 @@ function AIChatPanel({
                 ? "Adicionar contexto ao campo…"
                 : "Selecione um campo primeiro…"
             }
+            aria-label="Contexto adicional para a Magis"
             disabled={!fieldLabel || isLoading}
             className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 disabled:opacity-50"
           />
@@ -1464,6 +1683,7 @@ function AIChatPanel({
             type="button"
             onClick={sendContext}
             disabled={!contextInput.trim() || !fieldLabel || isLoading || !metadataComplete}
+            aria-label="Enviar contexto para a Magis"
             className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-600 text-white transition hover:bg-violet-500 disabled:opacity-40"
           >
             <Send className="h-3.5 w-3.5" />

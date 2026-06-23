@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Download, Edit2, FileText, FolderKanban, Pencil, Plus, Sparkles, Upload } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Circle, Download, Edit2, FileText, FolderKanban, Pencil, Plus, Sparkles, Upload } from "lucide-react";
 
 function MagisBubble({ children }: { children: React.ReactNode }) {
   return (
@@ -101,7 +101,11 @@ export default async function DashboardPage() {
   const planos = planosResult.items;
   const primeiroNome = (user.nome ?? user.email ?? "Professor").split(" ")[0];
   const temTemplates = stats.totalTemplates > 0;
+  const temCamposConfigurados = templates.some((t) => t.campo_count > 0);
+  const temPlanos = stats.totalPlanos > 0;
   const canAddTemplate = limits.canCreateTemplate;
+  // Show onboarding checklist until the professor generates their first plan
+  const showOnboarding = !temPlanos;
 
   return (
     <div className="flex flex-col gap-8">
@@ -152,72 +156,104 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      {/* Primeiros passos — exibido apenas quando não há templates */}
-      {!temTemplates && (
-        <section className="rounded-[2rem] border-2 border-dashed border-indigo-200 bg-indigo-50 px-8 py-10">
-          <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">
-            Por onde começar
-          </p>
-          <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
-            3 passos para o seu primeiro plano de aula
-          </h2>
+      {/* Onboarding checklist — shown until the professor generates their first plan */}
+      {showOnboarding && (
+        <section className="rounded-[2rem] border border-indigo-100 bg-gradient-to-br from-indigo-50 to-violet-50 px-8 py-8 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-indigo-500">Primeiros passos</p>
+              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
+                {temTemplates && temCamposConfigurados
+                  ? "Falta só um passo — gere seu primeiro plano!"
+                  : "3 passos para o seu primeiro plano de aula"}
+              </h2>
+            </div>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm ring-1 ring-slate-200">
+              {[temTemplates, temCamposConfigurados, temPlanos].filter(Boolean).length} / 3 concluídos
+            </span>
+          </div>
 
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            {/* Step 1 */}
-            <div className="flex flex-col gap-3 rounded-2xl bg-white p-5 shadow-sm">
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white">
-                <Upload className="h-5 w-5" />
-              </span>
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            {/* Step 1 — Subir template */}
+            <div className={`flex flex-col gap-3 rounded-2xl p-5 shadow-sm transition ${temTemplates ? "bg-emerald-50 border border-emerald-200" : "bg-white border border-slate-200"}`}>
+              <div className="flex items-center justify-between">
+                <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${temTemplates ? "bg-emerald-600" : "bg-indigo-600"} text-white`}>
+                  {temTemplates ? <Check className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+                </span>
+                {temTemplates
+                  ? <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                  : <Circle className="h-5 w-5 text-slate-300" />}
+              </div>
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Passo 1</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  Suba o template da sua escola
-                </p>
+                <p className={`text-xs font-bold uppercase tracking-wider ${temTemplates ? "text-emerald-600" : "text-indigo-600"}`}>Passo 1</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">Suba o template da escola</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Envie o arquivo Word (.docx) com o modelo de plano de aula usado na sua escola.
+                  Envie o arquivo Word (.docx) com o modelo de plano de aula da sua escola.
                 </p>
               </div>
-              <Link
-                href="/dashboard/templates"
-                className="mt-auto inline-flex items-center gap-1.5 self-start rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500"
-              >
-                Começar aqui
-                <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
+              {!temTemplates && (
+                <Link
+                  href="/dashboard/templates"
+                  className="mt-auto inline-flex items-center gap-1.5 self-start rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500"
+                >
+                  Subir agora
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              )}
             </div>
 
-            {/* Step 2 */}
-            <div className="flex flex-col gap-3 rounded-2xl bg-white p-5 shadow-sm">
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-600 text-white">
-                <Sparkles className="h-5 w-5" />
-              </span>
+            {/* Step 2 — Configurar campos */}
+            <div className={`flex flex-col gap-3 rounded-2xl p-5 shadow-sm transition ${temCamposConfigurados ? "bg-emerald-50 border border-emerald-200" : temTemplates ? "bg-white border border-violet-200" : "bg-white/60 border border-slate-200 opacity-60"}`}>
+              <div className="flex items-center justify-between">
+                <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${temCamposConfigurados ? "bg-emerald-600" : "bg-violet-600"} text-white`}>
+                  {temCamposConfigurados ? <Check className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+                </span>
+                {temCamposConfigurados
+                  ? <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                  : <Circle className="h-5 w-5 text-slate-300" />}
+              </div>
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-violet-600">Passo 2</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  A Magis analisa e sugere conteúdo
-                </p>
+                <p className={`text-xs font-bold uppercase tracking-wider ${temCamposConfigurados ? "text-emerald-600" : "text-violet-600"}`}>Passo 2</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">Revise os campos detectados</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Nossa IA detecta os campos do seu template e preenche com sugestões alinhadas à BNCC.
+                  A Magis detecta os campos automaticamente — confirme ou ajuste os nomes.
                 </p>
               </div>
-              <p className="mt-auto text-xs italic text-slate-400">Automático após o passo 1</p>
+              {temTemplates && !temCamposConfigurados && templates[0] && (
+                <Link
+                  href={`/dashboard/templates/${templates[0].id}/editar`}
+                  className="mt-auto inline-flex items-center gap-1.5 self-start rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-violet-500"
+                >
+                  Revisar campos
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              )}
             </div>
 
-            {/* Step 3 */}
-            <div className="flex flex-col gap-3 rounded-2xl bg-white p-5 shadow-sm">
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-600 text-white">
-                <Download className="h-5 w-5" />
-              </span>
+            {/* Step 3 — Gerar plano */}
+            <div className={`flex flex-col gap-3 rounded-2xl p-5 shadow-sm transition ${temCamposConfigurados ? "bg-white border border-emerald-200 ring-1 ring-emerald-100" : "bg-white/60 border border-slate-200 opacity-60"}`}>
+              <div className="flex items-center justify-between">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white">
+                  <FileText className="h-4 w-4" />
+                </span>
+                <Circle className="h-5 w-5 text-slate-300" />
+              </div>
               <div>
                 <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">Passo 3</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  Edite e baixe o plano pronto
-                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">Gere seu primeiro plano</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Revise as sugestões no editor, ajuste o que quiser e baixe o Word preenchido.
+                  Preencha os dados da turma, deixe a Magis sugerir o conteúdo e baixe o plano pronto.
                 </p>
               </div>
-              <p className="mt-auto text-xs italic text-slate-400">Disponível após o passo 2</p>
+              {temCamposConfigurados && (
+                <Link
+                  href="/dashboard/gerar"
+                  className="mt-auto inline-flex items-center gap-1.5 self-start rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-500"
+                >
+                  Gerar agora
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              )}
             </div>
           </div>
         </section>

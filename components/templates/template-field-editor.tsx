@@ -505,12 +505,12 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
 
       const currentText = el.textContent ?? "";
       const matches = [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)];
+      if (matches.length === 0) continue;
 
+      // Register each key in scan order and detect new fields.
       for (const match of matches) {
         const key = match[1];
         if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
-
-        // New field discovered in the document (not in schema yet)
         if (!existingKeys.has(key)) {
           const label = originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " ");
           const role: "manual" | "ia_sugerida" =
@@ -518,14 +518,42 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
               ? "ia_sugerida" : "manual";
           edits.push({ text: originalText, ordinal: effectiveOrdinal, key, role, label, coord });
         }
+      }
 
-        // Record position for this key (new or repositioned existing key).
-        // contextBefore = text on the same visual line immediately before the token.
-        // el.textContent collapses <br> elements and concatenates chip spans without
-        // separators. Stripping previous {{key}} occurrences and taking only the text
-        // between the last chip and this one yields the label on the same visual line
-        // (e.g. "- Carga horária prevista:"), which appendToParagraph uses as its
-        // injection anchor for soft-return cells.
+      // Detect whether non-token cell text was modified (user deleted or typed text).
+      // If so, send the full new content as a single replace-mode cellEdit so the server
+      // overwrites the cell instead of appending. This handles cases like:
+      //   "PERÍODO / /2026" → "PERÍODO {{data}}" — "/ /2026" must be removed, not kept.
+      const currentNonTokenText = currentText.replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "").replace(/\s+/g, " ").trim();
+      const cellTextModified = currentNonTokenText !== originalText;
+
+      if (cellTextModified) {
+        // Full-replace path: one cellEdit with the complete new content.
+        // Skipped if an identical replace edit for this cell was already queued.
+        const alreadyQueued = cellEdits.some(
+          (ce) => ce.replaceContent && ce.coord === coord && ce.ordinal === effectiveOrdinal,
+        );
+        if (!alreadyQueued) {
+          cellEdits.push({
+            cellText: originalText,
+            ordinal: effectiveOrdinal,
+            newContent: currentText,
+            coord,
+            replaceContent: true,
+          });
+        }
+        continue;
+      }
+
+      // Normal path: per-token injection (non-token text unchanged, only chips added/moved).
+      // contextBefore = text on the same visual line immediately before the token.
+      // el.textContent collapses <br> elements and concatenates chip spans without
+      // separators. Stripping previous {{key}} occurrences and taking only the text
+      // between the last chip and this one yields the label on the same visual line
+      // (e.g. "- Carga horária prevista:"), which appendToParagraph uses as its
+      // injection anchor for soft-return cells.
+      for (const match of matches) {
+        const key = match[1];
         if (!cellEdits.some((ce) => ce.newContent === `{{${key}}}`)) {
           const matchStart = match.index ?? 0;
           const rawTextBefore = currentText.slice(0, matchStart);
@@ -536,7 +564,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             : rawTextBefore;
           const contextBefore = textAfterLastToken.replace(/\s+/g, " ").trim().slice(-80);
           // replaceContent=true when the cell contains ONLY this one token and no other text.
-          // Triggers server-side clearAndSetCellText so the old content is replaced, not appended.
           const cellHasOnlyThisToken = currentText.trim() === `{{${key}}}`;
           cellEdits.push({
             cellText: originalText,

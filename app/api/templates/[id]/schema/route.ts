@@ -140,11 +140,28 @@ export async function PATCH(
     // deleted keys, making ghost variables impossible even for pre-annotated files.
     let buffer = await downloadFile(arquivoUrl);
 
+    // ── cell_edits must be parsed BEFORE stripNonSchemaTokens ────────────────
+    // When the user moves a chip from cell A to cell B in the editor, the original
+    // DOCX may still have {{key}} at cell A (pre-annotated file). stripNonSchemaTokens
+    // would keep it (key is still in newKeys) — so the token would survive in A AND
+    // get re-injected in B, causing duplication. Fix: strip repositioned keys from
+    // the original as well, by passing (newKeys − repositionedKeys) to the strip pass.
+    // After stripping, cell_edits inject them at the correct new locations.
+    const cellEditsPayload: CellEdit[] = Array.isArray(body.cell_edits) ? body.cell_edits : [];
+    const repositionedKeys = new Set<string>(
+      cellEditsPayload.flatMap((edit) =>
+        [...(edit.newContent ?? "").matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]),
+      ),
+    );
+    const validBeforeCellEdits = new Set([...newKeys].filter((k) => !repositionedKeys.has(k)));
+
     // ── Strip tokens not in the new schema ───────────────────────────────────
     // The original DOCX may already contain {{placeholders}} typed by the user.
     // Remove any token whose key is not in newKeys so deleted fields are truly
     // gone even when they were pre-existing in the uploaded file.
-    buffer = stripNonSchemaTokens(buffer, newKeys);
+    // validBeforeCellEdits excludes repositioned keys so they are stripped from their
+    // old positions before cell_edits injects them at the new positions.
+    buffer = stripNonSchemaTokens(buffer, validBeforeCellEdits);
 
     // ── Merge field positions: Firestore (historical) + request (this save) ─
     // field_positions are persisted so manual cell-click placements survive
@@ -168,7 +185,6 @@ export async function PATCH(
     // Coord path (preferred): uses structural coordinates — immune to text-match
     // ambiguity and header/footer index offsets.
     // Text path (fallback): matches by normalised cell text + occurrence ordinal.
-    const cellEditsPayload: CellEdit[] = Array.isArray(body.cell_edits) ? body.cell_edits : [];
     const placedByCellEdits = new Set<string>();
     for (const edit of cellEditsPayload) {
       if (!edit.newContent?.trim()) continue;
