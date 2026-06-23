@@ -7,7 +7,7 @@ import mammoth from "mammoth";
 import pdf from "pdf-parse";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
-import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
+import { deleteFile, downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import { callAIWithFallbacks } from "../../../../../lib/ai/provider";
 import {
   injectPlaceholders,
@@ -67,6 +67,7 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
           defaultValue:      { type: SchemaType.STRING, nullable: true },
           aiInstructions:    { type: SchemaType.STRING, nullable: true },
           injection_pattern: { type: SchemaType.STRING, nullable: true, format: "enum", enum: ["adjacent_right", "adjacent_below", "inline_colon", "column_header", "period_column"] },
+          ai_confidence:     { type: SchemaType.NUMBER, nullable: true },
         },
       },
     },
@@ -121,6 +122,13 @@ Você é um analista de currículo escolar sênior especializado em documentos p
    • Outros campos ia_sugerida → "Seja específico ao contexto da turma, disciplina e período descritos no plano."
    Campos role "manual" → aiInstructions = "".
 13. PADRÃO DE INJEÇÃO (injection_pattern) — OBRIGATÓRIO quando <estrutura_detectada> estiver disponível: para cada campo, encontre o par correspondente em <estrutura_detectada> pelo label e copie seu "pattern" para o campo "injection_pattern" do JSON de saída. Se não houver par correspondente, use null. Mapeamento direto: "adjacent_right" | "adjacent_below" | "inline_colon" | "column_header" | "period_column". Este metadado é usado pelo sistema de injeção para posicionar os placeholders sem re-derivar a estrutura.
+14. ÍNDICE DE COLUNA (columnIdx em <estrutura_detectada>): Quando o par contém "columnIdx", esse é o índice físico do rótulo na tabela. Pares com columnIdx=0 têm alta confiança de serem rótulos. Pares com columnIdx>0 podem ser colunas de dados repetidos — avalie a Regra 8.
+15. CONFIANÇA POR CAMPO (ai_confidence): Forneça um valor 0.0 a 1.0 para cada campo:
+   • 1.0 — par em <estrutura_detectada> com padrão claro E rótulo com ":"
+   • 0.8 — par em <estrutura_detectada> com padrão claro OU rótulo ALL-CAPS inequívoco
+   • 0.6 — campo inferido por posição, negrito ou adjacência sem confirmação estrutural
+   • 0.4 — rótulo ambíguo ou ausente em <estrutura_detectada>
+   • 0.2 — estimativa sem embasamento estrutural
 </regras>
 <estrutura_pre_processada>
 Quando a mensagem contém <estrutura_detectada>, essa seção lista os pares rótulo→valor já extraídos automaticamente via análise XML do documento — use-a como FONTE PRIMÁRIA para labels e posições. Os padrões indicam onde o valor aparece:
@@ -477,12 +485,17 @@ export async function POST(
           );
         }
 
-        const fillablePath = `templates/${id}/fillable.docx`;
+        // Unique timestamped path so each re-introspection gets a fresh URL — no CDN staleness.
+        const oldFillableUrl = typeof tData.arquivo_fillable_url === "string" ? tData.arquivo_fillable_url : "";
+        const fillablePath = `templates/${id}/fillable_${Date.now()}.docx`;
         fillableUrl = await uploadFile({
           path: fillablePath,
           buffer: fillableBuffer,
           contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         });
+        if (oldFillableUrl && oldFillableUrl !== fillableUrl) {
+          void deleteFile(oldFillableUrl).catch(() => {});
+        }
 
         await db.collection("magis_templates").doc(id).update({
           schema_campos: schema,

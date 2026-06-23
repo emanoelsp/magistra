@@ -11,10 +11,40 @@ const sora = Sora({
   display: "swap",
 });
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://planomagistra.com.br";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "PlanoMagistra — Seu plano de aula pronto em minutos",
   description:
-    "Reduza 70% do tempo com burocracia escolar. Suba o template da sua escola, a IA extrai a estrutura e sugere conteúdos campo a campo — BNCC, SAEB e currículo específico de cada território nacional.",
+    "Reduza 70% do tempo com burocracia escolar. Suba o template da sua escola, a Magis extrai a estrutura e sugere conteúdos campo a campo — BNCC, SAEB e currículo específico de cada território nacional.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    locale: "pt_BR",
+    url: "/",
+    siteName: "PlanoMagistra",
+    title: "PlanoMagistra — Seu plano de aula pronto em minutos",
+    description:
+      "Reduza 70% do tempo com burocracia escolar. Suba o template da sua escola, a Magis extrai a estrutura e sugere conteúdos campo a campo.",
+    images: [
+      {
+        url: "/images/logo.png",
+        width: 512,
+        height: 512,
+        alt: "PlanoMagistra",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "PlanoMagistra — Seu plano de aula pronto em minutos",
+    description:
+      "Reduza 70% do tempo com burocracia escolar. BNCC, SAEB e currículo territorial com a Magis.",
+    images: ["/images/logo.png"],
+  },
 };
 
 interface RootLayoutProps {

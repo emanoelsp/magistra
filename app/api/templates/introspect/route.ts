@@ -13,21 +13,52 @@ import { callAIWithFallbacks } from "../../../../lib/ai/provider";
 import { scanDocxStructure, scanPlaceholders } from "../../../../lib/utils/docx-filler";
 import { structuralPairsToSchema, keyToField } from "../../../../lib/utils/docx-schema-mapper";
 
-const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
+// Use a dedicated model for introspection when configured (allows using a more
+// capable model for extraction while keeping a faster model for suggestions).
+const MODEL_NAME = process.env.GOOGLE_GEMINI_INTROSPECT_MODEL
+  ?? process.env.GOOGLE_GEMINI_MODEL
+  ?? "gemini-2.0-flash";
 
 function extractDocxText(buffer: Buffer): string {
   const zip = new PizZip(buffer);
   const xmlFile = zip.files["word/document.xml"];
   if (!xmlFile) return "";
   const xml = xmlFile.asText();
-  return xml
+
+  // Preserve table geometry so the AI understands which labels and values
+  // belong to different cells in the same row (avoids label agglutination).
+  // Strategy:
+  //   • </w:tc>  → [CELL] — marks cell boundary within a row
+  //   • </w:tr>  → [ROW]  — marks row boundary
+  //   • </w:p>   → \n     — paragraph break (handles soft-return cells)
+  //   • <w:br/>  → \n     — soft-return line break within a run
+  const structured = xml
+    .replace(/<\/w:tc>/g, " [CELL] ")
+    .replace(/<\/w:tr>/g, " [ROW]\n")
+    .replace(/<w:br(?:\s[^>]*)?\/?>/g, "\n")
     .replace(/<\/w:p>/g, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/[ \t]+/g, " ")
+    .replace(/[ \t]+/g, " ");
+
+  const lines = structured
     .split("\n")
     .map((l) => l.trim())
-    .filter(Boolean)
-    .join("\n");
+    .filter(Boolean);
+
+  // Add column indices to each cell within a row so the AI knows C0 is almost
+  // always a label in multi-column tables and C1+ are value/filler slots.
+  // Format: "[C0]cell text [CELL] [C1]next cell [CELL] ... [ROW]"
+  const numberedLines = lines.map((line) => {
+    if (!line.includes("[ROW]")) return line;
+    const withoutRow = line.replace(/\s*\[ROW\]\s*$/, "");
+    const cells = withoutRow.split(/\s*\[CELL\]\s*/);
+    return cells
+      .map((cell, ci) => (cell.trim() ? `[C${ci}]${cell.trim()}` : `[C${ci}]`))
+      .join(" [CELL] ")
+      + " [ROW]";
+  });
+
+  return numberedLines.join("\n");
 }
 
 async function extractFileText(file: File): Promise<string> {
@@ -61,6 +92,7 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
           defaultValue:      { type: SchemaType.STRING, nullable: true },
           aiInstructions:    { type: SchemaType.STRING, nullable: true },
           injection_pattern: { type: SchemaType.STRING, nullable: true, format: "enum", enum: ["adjacent_right", "adjacent_below", "inline_colon", "column_header", "period_column"] },
+          ai_confidence:     { type: SchemaType.NUMBER, nullable: true },
         },
       },
     },
@@ -115,6 +147,15 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
 17. VARIÁVEIS DE SISTEMA (auto-preenchidas): Chaves reservadas que o sistema preenche automaticamente sem input do usuário: {{data_atual}} (data de geração em pt-BR), {{ano_letivo}} (ano corrente). Quando o documento apresentar texto como "Blumenau, {{data_atual}}" ou "Ano letivo: {{ano_letivo}}", declare esses campos com role "manual", type "text" e aiInstructions = "" — o sistema injeta o valor automaticamente; não espere que o professor preencha.
 18. PADRÃO DE INJEÇÃO (injection_pattern) — OBRIGATÓRIO quando <estrutura_detectada> estiver disponível: para cada campo, encontre o par correspondente em <estrutura_detectada> pelo label e copie seu "pattern" para o campo "injection_pattern" do JSON de saída. Se não houver par correspondente, use null. Mapeamento direto de valores: "adjacent_right" | "adjacent_below" | "inline_colon" | "column_header" | "period_column". Este metadado é usado pelo sistema de injeção para localizar a célula correta no XML do Word sem re-derivar a estrutura.
    Exemplos: "Professor(a):" com par de padrão "inline_colon" → injection_pattern "inline_colon". "HABILIDADES:" com par "adjacent_below" → injection_pattern "adjacent_below". Se <estrutura_detectada> estiver vazio → injection_pattern null para todos os campos.
+19. MARCADORES DE GEOMETRIA DE TABELA: O texto do documento contém marcadores estruturais "[CELL]" (fim de célula) e "[ROW]" (fim de linha). "[Cn]" indica o índice da coluna (0-base) — [C0] é quase sempre rótulo em tabelas multi-coluna; [C1], [C2] etc. são quase sempre valores ou campos preenchíveis. Use-os para entender a geometria da tabela — não os inclua no label. Rótulos em células diferentes da mesma linha "[ROW]" são campos independentes.
+20. ÍNDICE DE COLUNA (columnIdx em <estrutura_detectada>): Quando o par em <estrutura_detectada> contém "columnIdx", esse é o índice físico do rótulo na tabela. Pares com columnIdx=0 têm alta confiança de serem rótulos. Pares com columnIdx>0 podem ser colunas de dados repetidos — avalie a Regra 8 (colunas repetidas).
+21. CONFIANÇA POR CAMPO (ai_confidence): Forneça um valor 0.0 a 1.0 para cada campo indicando certeza na extração:
+   • 1.0 — rótulo com ":" explícito OU par validado em <estrutura_detectada> com padrão claro
+   • 0.8 — rótulo em CAIXA ALTA inequívoco OU par em <estrutura_detectada> sem confirmação de valor
+   • 0.6 — rótulo inferido por posição ou negrito, sem ":" confirmado
+   • 0.4 — campo com rótulo ambíguo, múltiplos candidatos ou ausente em <estrutura_detectada>
+   • 0.2 — estimativa pura sem par estrutural e sem rótulo explícito
+   Campos role "manual" com rótulo ":" explícito → 0.9–1.0. Campos role "ia_sugerida" com base BNCC clara → 0.8.
 </regras>
 <raciocinio_obrigatorio>
 Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
@@ -130,22 +171,143 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
    • Misto + ":" → campo.
    • Misto + sem ":" → campo SOMENTE se houver vazio adjacente; senão título.
    • Vários parágrafos "rótulo:" na mesma célula → um campo por parágrafo.
+8. Para cada campo extraído, atribua ai_confidence (Regra 21) refletindo a certeza da extração. Pares com match em <estrutura_detectada> → ≥ 0.8. Sem match → ≤ 0.5.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
 </contrato_de_saida>`;
 
-async function generateSchema(promptStr: string): Promise<{ text: string; provider: import("../../../../lib/ai/provider").AiProvider }> {
+// ── TOON (Token Object Notation) ─────────────────────────────────────────────
+// Used as output format for fallback providers (OpenAI/Groq) that lack JSON
+// schema enforcement. One field per line — impossible to malform with missing
+// brackets or commas. The parser is whitelist-only: invalid enums fall back to
+// safe defaults, partial lines are silently dropped.
+//
+// Wire format:
+//   RACIOCINIO: <free text>
+//   CAMPO key=<key> | label=<exact label> | type=<text|textarea> | required=<true|false> | role=<manual|ia_sugerida> | group=<group> | injection_pattern=<pattern|null> | aiInstructions=<text>
+//
+// aiInstructions MUST be the last segment — it may contain " | " internally.
+
+const TOON_SYSTEM_SUFFIX = `
+FORMATO DE SAÍDA — SUBSTITUI TODA INSTRUÇÃO JSON ANTERIOR:
+Responda APENAS com linhas no formato TOON abaixo. ZERO JSON. ZERO markdown. ZERO texto fora das linhas RACIOCINIO e CAMPO.
+
+RACIOCINIO: <seu raciocínio condensado em uma linha>
+CAMPO key=<chave_snake_case> | label=<label exato do documento> | type=<text|textarea> | required=<true|false> | role=<manual|ia_sugerida> | group=<dados_turma|objetivos|competencias|habilidades|conteudos|avaliacao|outros> | injection_pattern=<adjacent_right|adjacent_below|inline_colon|column_header|period_column|null> | ai_confidence=<0.0-1.0> | aiInstructions=<instrução curta ou vazio>
+
+Regras do formato:
+- Uma linha CAMPO por campo, sem exceções.
+- O separador entre atributos é " | " (espaço-pipe-espaço).
+- aiInstructions é sempre o ÚLTIMO atributo da linha (pode conter espaços e vírgulas).
+- ai_confidence: número entre 0.0 e 1.0. Se não souber, use 0.6.
+- Nunca omita nenhum atributo. Se não souber o valor, use o default: required=true, injection_pattern=null, ai_confidence=0.6, aiInstructions=
+
+Exemplo:
+RACIOCINIO: 4 campos de identificação e 3 pedagógicos detectados.
+CAMPO key=professor | label=Professor(a) | type=text | required=true | role=manual | group=dados_turma | injection_pattern=inline_colon | ai_confidence=1.0 | aiInstructions=
+CAMPO key=habilidades | label=HABILIDADES | type=textarea | required=true | role=ia_sugerida | group=habilidades | injection_pattern=adjacent_below | ai_confidence=0.9 | aiInstructions=Selecione habilidades BNCC alinhadas ao componente curricular e ao período letivo.`;
+
+const VALID_ROLES = new Set<string>(["manual", "ia_sugerida"]);
+const VALID_GROUPS = new Set<string>(["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"]);
+const VALID_TYPES = new Set<string>(["text", "textarea"]);
+const VALID_PATTERNS = new Set<string>(["adjacent_right", "adjacent_below", "inline_colon", "column_header", "period_column"]);
+
+function parseToonSchema(raw: string): import("../../../../lib/types/firestore").TemplateFieldSchema[] {
+  const fields: import("../../../../lib/types/firestore").TemplateFieldSchema[] = [];
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("CAMPO ")) continue;
+
+    const content = trimmed.slice(6); // strip "CAMPO "
+
+    // Split on " | " only when followed by a known attribute name and "="
+    // This prevents splitting inside aiInstructions values that contain " | ".
+    const parts = content.split(/\s*\|\s*(?=[a-zA-Z_]+=)/);
+    const pairs: Record<string, string> = {};
+    for (const part of parts) {
+      const eqIdx = part.indexOf("=");
+      if (eqIdx === -1) continue;
+      pairs[part.slice(0, eqIdx).trim()] = part.slice(eqIdx + 1).trim();
+    }
+
+    const key = pairs.key?.trim();
+    const label = pairs.label?.trim();
+    if (!key || !label) continue; // drop malformed lines
+
+    const rawConfidence = parseFloat(pairs.ai_confidence ?? "");
+    fields.push({
+      key,
+      label,
+      type: VALID_TYPES.has(pairs.type) ? (pairs.type as "text" | "textarea") : "text",
+      required: pairs.required !== "false",
+      role: VALID_ROLES.has(pairs.role) ? (pairs.role as "manual" | "ia_sugerida") : "manual",
+      group: VALID_GROUPS.has(pairs.group)
+        ? (pairs.group as import("../../../../lib/types/firestore").TemplateFieldSchema["group"])
+        : "outros",
+      injection_pattern: VALID_PATTERNS.has(pairs.injection_pattern ?? "")
+        ? (pairs.injection_pattern as import("../../../../lib/types/firestore").InjectionPattern)
+        : undefined,
+      ai_confidence: !isNaN(rawConfidence) ? Math.min(1, Math.max(0, rawConfidence)) : undefined,
+      aiInstructions: pairs.aiInstructions ?? "",
+      defaultValue: pairs.defaultValue ?? "",
+    });
+  }
+
+  return fields;
+}
+
+// ── Structural validation (both formats) ────────────────────────────────────
+// Sanity-check parsed fields before writing to Firestore. Guards against
+// hallucinated schemas, empty responses, and provider-specific quirks.
+
+function validateParsedSchema(
+  fields: import("../../../../lib/types/firestore").TemplateFieldSchema[],
+): { valid: boolean; reason?: string } {
+  if (!Array.isArray(fields) || fields.length === 0)
+    return { valid: false, reason: "schema vazio" };
+
+  const keys = new Set<string>();
+  for (const f of fields) {
+    if (typeof f.key !== "string" || !/^[a-z][a-z0-9_]*$/.test(f.key))
+      return { valid: false, reason: `key inválido: "${f.key}"` };
+    if (typeof f.label !== "string" || f.label.trim().length === 0)
+      return { valid: false, reason: `label vazio para key "${f.key}"` };
+    if (typeof f.role !== "string" || !VALID_ROLES.has(f.role))
+      return { valid: false, reason: `role inválido "${f.role}" em "${f.key}"` };
+    if (typeof f.group !== "string" || !VALID_GROUPS.has(f.group))
+      return { valid: false, reason: `group inválido "${f.group}" em "${f.key}"` };
+    if (keys.has(f.key))
+      return { valid: false, reason: `key duplicado: "${f.key}"` };
+    keys.add(f.key);
+  }
+  return { valid: true };
+}
+
+async function generateSchema(promptStr: string): Promise<import("../../../../lib/ai/provider").AiResult> {
   return callAIWithFallbacks({
     systemInstruction: SYSTEM_INSTRUCTION,
     prompt: promptStr,
     temperature: 0.1,
     topP: 0.6,
     geminiSchema: INTROSPECT_RESPONSE_SCHEMA,
+    systemSuffixFallback: TOON_SYSTEM_SUFFIX,
   });
 }
 
-function parseSchema(raw: string): unknown {
+function parseSchema(
+  raw: string,
+  format: "json" | "toon",
+): import("../../../../lib/types/firestore").TemplateFieldSchema[] {
+  if (format === "toon") {
+    const fields = parseToonSchema(raw);
+    const check = validateParsedSchema(fields);
+    if (!check.valid) throw new Error(`invalid_toon_schema: ${check.reason}`);
+    return fields;
+  }
+
+  // JSON path (Gemini)
   let schema: unknown;
   try {
     schema = JSON.parse(raw);
@@ -160,7 +322,12 @@ function parseSchema(raw: string): unknown {
   if (typeof schema === "object" && schema !== null && !Array.isArray(schema) && "campos" in schema) {
     schema = (schema as { campos: unknown }).campos;
   }
-  return schema;
+  if (!Array.isArray(schema)) throw new Error("invalid_schema: not an array");
+
+  const fields = schema as import("../../../../lib/types/firestore").TemplateFieldSchema[];
+  const check = validateParsedSchema(fields);
+  if (!check.valid) throw new Error(`invalid_json_schema: ${check.reason}`);
+  return fields;
 }
 
 export async function POST(request: Request) {
@@ -350,34 +517,45 @@ export async function POST(request: Request) {
     promptParts.push(`<documento>`, pdfText, `</documento>`);
     const promptStr = promptParts.join("\n");
 
-    const { text: raw, provider: aiProvider } = await generateSchema(promptStr);
+    const { text: raw, provider: aiProvider, format: aiFormat } = await generateSchema(promptStr);
 
-    let schema: unknown;
+    let schema: import("../../../../lib/types/firestore").TemplateFieldSchema[];
     try {
-      schema = parseSchema(raw);
-    } catch {
+      schema = parseSchema(raw, aiFormat);
+    } catch (parseErr) {
+      console.error("[introspect] parseSchema falhou:", (parseErr as Error).message, { provider: aiProvider, format: aiFormat });
       return NextResponse.json({ error: "Resposta inválida do modelo ao gerar schema." }, { status: 502 });
     }
 
-    if (!Array.isArray(schema)) {
-      return NextResponse.json({ error: "Schema deve ser um array de campos." }, { status: 502 });
-    }
+    // Deterministic injection_pattern enrichment + confidence cross-validation.
+    // For each schema field: (a) fill missing injection_pattern from structural pairs,
+    // (b) flag fields with no structural backing as low-confidence.
+    const normLabel = (s: string) =>
+      s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 
-    // Deterministic injection_pattern enrichment: match structural pairs to schema fields
-    // by label and copy pattern where AI left injection_pattern null/undefined.
-    if (structuralPairs.length > 0 && Array.isArray(schema)) {
-      const normLabel = (s: string) =>
-        s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-      for (const field of schema as import("../../../../lib/types/firestore").TemplateFieldSchema[]) {
-        if (field.injection_pattern) continue;
+    const camposBaixaConfianca: string[] = [];
+    if (structuralPairs.length > 0) {
+      const pairNorms = structuralPairs.map((p) => normLabel(p.label));
+      for (const field of schema) {
         const fn = normLabel(field.label);
-        const match = structuralPairs.find((p) => {
+        const matchPair = structuralPairs.find((p) => {
           const pn = normLabel(p.label);
           return pn === fn || (fn.length >= 3 && pn.endsWith(fn)) || (fn.length >= 4 && fn.includes(pn)) || (pn.length >= 4 && pn.includes(fn));
         });
-        if (match) (field as unknown as Record<string, unknown>).injection_pattern = match.pattern;
+        // Enrich injection_pattern if AI left it empty
+        if (!field.injection_pattern && matchPair) {
+          field.injection_pattern = matchPair.pattern as import("../../../../lib/types/firestore").TemplateFieldSchema["injection_pattern"];
+        }
+        // Flag fields with no structural backing — AI may have inferred from context alone
+        const hasStructuralBacking = pairNorms.some((pn) => pn.includes(fn) || fn.includes(pn));
+        if (!hasStructuralBacking) camposBaixaConfianca.push(field.key);
+        // Downgrade confidence for fields with no structural pair
+        if (!hasStructuralBacking && field.ai_confidence !== undefined && field.ai_confidence > 0.5) {
+          field.ai_confidence = Math.min(field.ai_confidence, 0.5);
+        }
       }
     }
+    console.info(`[introspect] Campos baixa confiança: ${camposBaixaConfianca.length > 0 ? camposBaixaConfianca.join(", ") : "nenhum"}`);
 
     void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
       void logUsage({
@@ -394,9 +572,10 @@ export async function POST(request: Request) {
     await db.collection("magis_templates").doc(templateId).update({
       schema_campos: schema,
       fillable_status: "processando",
+      campos_baixa_confianca: camposBaixaConfianca,
     });
 
-    console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: (schema as unknown[]).length });
+    console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: schema.length, provider: aiProvider, format: aiFormat });
 
     // Generate fillable DOCX synchronously before responding so the editor
     // shows placeholders immediately when the user lands on the config page.
@@ -410,16 +589,19 @@ export async function POST(request: Request) {
 
       if (isDocx && originalUrl) {
         const rawBuffer = await downloadFile(originalUrl);
-        const fillableBuffer = injectPlaceholders(
-          rawBuffer,
-          schema as import("../../../../lib/types/firestore").TemplateFieldSchema[],
-        );
-        const fillablePath = `templates/${templateId}/fillable.docx`;
+        const fillableBuffer = injectPlaceholders(rawBuffer, schema);
+        // Unique timestamped path so each introspection gets a fresh URL — no CDN staleness.
+        const oldFillableUrl = typeof tData?.arquivo_fillable_url === "string" ? tData.arquivo_fillable_url : "";
+        const fillablePath = `templates/${templateId}/fillable_${Date.now()}.docx`;
         const fillableUrl = await uploadFile({
           path: fillablePath,
           buffer: fillableBuffer,
           contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         });
+        if (oldFillableUrl && oldFillableUrl !== fillableUrl) {
+          const { deleteFile } = await import("../../../../lib/storage/blob");
+          void deleteFile(oldFillableUrl).catch(() => {});
+        }
         await db.collection("magis_templates").doc(templateId).update({
           arquivo_fillable_url: fillableUrl,
           fillable_status: "pronto",
@@ -432,7 +614,7 @@ export async function POST(request: Request) {
       await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" }).catch(() => {});
     }
 
-    return NextResponse.json({ ok: true, schema });
+    return NextResponse.json({ ok: true, schema, campos_baixa_confianca: camposBaixaConfianca });
   } catch (error) {
     console.error("Erro na rota /api/templates/introspect:", error);
     const msg = (error as Error)?.message ?? "";

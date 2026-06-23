@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Sparkles, X } from "lucide-react";
+import { SIGNUP_URL } from "./constants";
 
 export function StickyCta() {
   const [visible, setVisible] = useState(false);
@@ -31,7 +32,7 @@ export function StickyCta() {
           </span>
         </div>
         <Link
-          href="/login"
+          href={SIGNUP_URL}
           className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-violet-500"
         >
           Começar grátis

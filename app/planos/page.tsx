@@ -81,7 +81,7 @@ export default async function PlanosPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl px-6 py-16">
+      <div className="mx-auto max-w-6xl px-6 py-10">
         {/* Header */}
         <div className="mb-4 text-center">
           <Link href="/" className="text-xs font-semibold uppercase tracking-widest text-violet-600 hover:underline">
