@@ -111,8 +111,8 @@ export default async function DashboardPage() {
     <div className="flex flex-col gap-8">
 
       {/* Hero */}
-      <section className="rounded-[2rem] bg-slate-950 px-8 py-10 text-white shadow-xl">
-        <h1 className="text-3xl font-semibold tracking-tight">
+      <section className="rounded-[2rem] bg-slate-950 px-5 py-8 text-white shadow-xl md:px-8 md:py-10">
+        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
           Olá, {primeiroNome}!
         </h1>
         <p className="mt-2 text-slate-300">
@@ -158,7 +158,7 @@ export default async function DashboardPage() {
 
       {/* Onboarding checklist — shown until the professor generates their first plan */}
       {showOnboarding && (
-        <section className="rounded-[2rem] border border-indigo-100 bg-gradient-to-br from-indigo-50 to-violet-50 px-8 py-8 shadow-sm">
+        <section className="rounded-[2rem] border border-indigo-100 bg-gradient-to-br from-indigo-50 to-violet-50 px-5 py-6 shadow-sm md:px-8 md:py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-indigo-500">Primeiros passos</p>
@@ -263,7 +263,7 @@ export default async function DashboardPage() {
       <section className="grid gap-6 xl:grid-cols-2">
 
         {/* Templates */}
-        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6">
           <div className="mb-5 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold tracking-tight text-slate-950">Seus templates</h2>
             <div className="flex items-center gap-2">
@@ -343,7 +343,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Planos */}
-        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6">
           <div className="mb-5 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold tracking-tight text-slate-950">Seus planos</h2>
             <div className="flex items-center gap-2">

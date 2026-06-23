@@ -239,7 +239,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                       </p>
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Link
                       href={`/dashboard/templates/${tpl.id}/visualizar`}
                       className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
