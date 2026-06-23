@@ -105,7 +105,6 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
   const templatesSnapshot = await adminDb.collection("magis_templates").where("user_id", "==", userId).get();
 
   return templatesSnapshot.docs
-    .filter((documentSnapshot) => !documentSnapshot.data().deleted_at) // exclude soft-deleted
     .map((documentSnapshot) => {
       const templateData = documentSnapshot.data();
       const rawSchema = templateData.schema_campos;
@@ -161,9 +160,14 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
           templateData.fillable_status === "erro"
             ? (templateData.fillable_status as import("../../types/firestore").TemplateFillableStatus)
             : undefined,
+        deletado: Boolean(templateData.deleted_at),
       };
     })
-    .sort((left, right) => right.criadoEm.localeCompare(left.criadoEm));
+    // Active templates first (sorted by date), deleted templates after
+    .sort((left, right) => {
+      if (left.deletado !== right.deletado) return left.deletado ? 1 : -1;
+      return right.criadoEm.localeCompare(left.criadoEm);
+    });
 }
 
 export async function getUserPlanos(userId: string): Promise<PlanoRecord[]> {
@@ -191,6 +195,7 @@ export async function getUserPlanos(userId: string): Promise<PlanoRecord[]> {
 export interface PlanoComNome extends PlanoRecord {
   template_nome: string;
   escola_nome: string | null;
+  template_deletado: boolean;
 }
 
 export async function getUserPlanosComNome(
@@ -225,7 +230,7 @@ export async function getUserPlanosComNome(
 
   // Fetch template names only for the current page (eliminates N+1 on full list)
   const templateIds = [...new Set(pagePlanos.map((p) => p.template_id))];
-  const templateNames: Record<string, { nome: string; escola_nome: string | null }> = {};
+  const templateNames: Record<string, { nome: string; escola_nome: string | null; deletado: boolean }> = {};
 
   await Promise.all(
     templateIds.map(async (tid) => {
@@ -236,20 +241,23 @@ export async function getUserPlanosComNome(
         templateNames[tid] = {
           nome: typeof td.nome === "string" ? td.nome : "Template sem nome",
           escola_nome: typeof td.escola_nome === "string" ? td.escola_nome : null,
+          deletado: Boolean(td.deleted_at),
         };
       }
     }),
   );
 
   const items = pagePlanos.map((p) => {
+    const tpl = templateNames[p.template_id];
     const savedNome =
       typeof p.conteudo_gerado?.template_nome === "string" && p.conteudo_gerado.template_nome.trim()
         ? p.conteudo_gerado.template_nome.trim()
         : null;
     return {
       ...p,
-      template_nome: templateNames[p.template_id]?.nome ?? savedNome ?? "Template removido",
-      escola_nome: templateNames[p.template_id]?.escola_nome ?? null,
+      template_nome: tpl?.nome ?? savedNome ?? "Template removido",
+      escola_nome: tpl?.escola_nome ?? null,
+      template_deletado: !tpl || tpl.deletado,
     };
   });
 
@@ -263,6 +271,7 @@ export interface RecentTemplate {
   tipo_plano: string | null;
   campo_count: number;
   data_criacao: string;
+  deletado: boolean;
 }
 
 export async function getRecentTemplates(
@@ -286,6 +295,7 @@ export async function getRecentTemplates(
         tipo_plano: typeof d.tipo_plano === "string" && d.tipo_plano ? d.tipo_plano : null,
         campo_count: schema.length,
         data_criacao: toIsoString(d.data_criacao),
+        deletado: Boolean(d.deleted_at),
       };
     })
     .sort((a, b) => b.data_criacao.localeCompare(a.data_criacao))
@@ -339,6 +349,7 @@ export async function getPlanoDetalhes(
     status: (typeof d.status === "string" ? d.status : "rascunho") as PlanoStatus,
     template_nome: typeof td?.nome === "string" ? td.nome : "Template removido",
     escola_nome: typeof td?.escola_nome === "string" ? td.escola_nome : null,
+    template_deletado: !tSnap?.exists || Boolean(td?.deleted_at),
     tipo_plano: typeof td?.tipo_plano === "string" ? td.tipo_plano : null,
     schema_campos,
   };

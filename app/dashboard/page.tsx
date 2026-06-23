@@ -251,24 +251,33 @@ export default async function DashboardPage() {
               {templates.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 py-3">
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="shrink-0 rounded-xl bg-amber-50 p-2 text-amber-600">
+                    <span className={`shrink-0 rounded-xl p-2 ${t.deletado ? "bg-slate-100 text-slate-400" : "bg-amber-50 text-amber-600"}`}>
                       <FolderKanban className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-900">{t.nome}</p>
+                      <p className={`truncate text-sm font-medium ${t.deletado ? "text-slate-400 line-through" : "text-slate-900"}`}>
+                        {t.nome}
+                      </p>
                       <p className="truncate text-xs text-slate-400">
                         {t.escola_nome ? `${t.escola_nome} · ` : ""}
                         {formatDate(t.data_criacao)}
+                        {t.deletado && <span className="ml-1.5 text-rose-400">· excluído</span>}
                       </p>
                     </div>
                   </div>
-                  <Link
-                    href={`/dashboard/templates/${t.id}/editar`}
-                    className="shrink-0 rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
-                    title="Editar template"
-                  >
-                    <Edit2 className="h-3.5 w-3.5" />
-                  </Link>
+                  {t.deletado ? (
+                    <span className="shrink-0 rounded-xl border border-slate-100 p-1.5 text-slate-300" title="Template excluído">
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </span>
+                  ) : (
+                    <Link
+                      href={`/dashboard/templates/${t.id}/editar`}
+                      className="shrink-0 rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+                      title="Editar template"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>
@@ -319,26 +328,34 @@ export default async function DashboardPage() {
                 const status =
                   STATUS_CONFIG[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
                 const temConteudo = Object.keys(plano.conteudo_gerado ?? {}).length > 0;
+                const titulo = typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
+                  ? plano.conteudo_gerado._plano_titulo
+                  : plano.template_nome;
                 return (
                   <li key={plano.id} className="flex items-center justify-between gap-3 py-3">
                     <div className="flex min-w-0 items-center gap-3">
-                      <span className="shrink-0 rounded-xl bg-violet-50 p-2 text-violet-600">
+                      <span className={`shrink-0 rounded-xl p-2 ${plano.template_deletado ? "bg-slate-100 text-slate-400" : "bg-violet-50 text-violet-600"}`}>
                         <FileText className="h-4 w-4" />
                       </span>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900">
-                          {typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
-                            ? plano.conteudo_gerado._plano_titulo
-                            : plano.template_nome}
+                        <p className={`truncate text-sm font-medium ${plano.template_deletado ? "text-slate-400 line-through" : "text-slate-900"}`}>
+                          {titulo}
                         </p>
                         <p className="truncate text-xs text-slate-400">
                           {formatDate(plano.data_geracao)}
                         </p>
-                        <span
-                          className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${status.cls}`}
-                        >
-                          {status.label}
-                        </span>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span
+                            className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${status.cls}`}
+                          >
+                            {status.label}
+                          </span>
+                          {plano.template_deletado && (
+                            <span className="inline-block rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-500">
+                              template excluído
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">

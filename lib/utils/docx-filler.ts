@@ -168,6 +168,151 @@ function normalizeDocxXml(xml: string): string {
   return mergeAdjacentRuns(stripChangeTracking(xml));
 }
 
+// ── Document structure snapshot ─────────────────────────────────────────────
+//
+// Built once before placeholder extraction so injection passes can make
+// structural decisions (golden rule, neighbor lookup) without re-parsing XML.
+
+/** One cell's position, merge state and size in the document grid. */
+export interface CellSnapshot {
+  /** Flat row index matching the parseRows() output (all tables flattened) */
+  rowIdx: number;
+  /** 0-based physical cell position within the row (= index into rows[r].cells) */
+  cellIdx: number;
+  /** Table this row belongs to (to prevent cross-table neighbor lookups) */
+  tableIdx: number;
+  /** First virtual (logical) column this cell occupies, accounting for leading gridSpans */
+  virtualColIdx: number;
+  /** Extracted text content */
+  text: string;
+  /** True when the cell has no meaningful text and no image */
+  isEmpty: boolean;
+  /** True when this is a vMerge continuation (visually empty, content in restart cell) */
+  isVMergeCont: boolean;
+  /** Number of grid columns this cell spans (1 = no horizontal merge) */
+  gridSpan: number;
+  /** Cell width in twips from <w:tcW w:w="…">, 0 when unset */
+  widthTwips: number;
+}
+
+/** Anchor image found in word/document.xml */
+export interface ImageSnapshot {
+  /** Horizontal position in EMUs relative to relFromH */
+  posX_emu: number;
+  /** Vertical position in EMUs relative to relFromV */
+  posY_emu: number;
+  widthEmu: number;
+  heightEmu: number;
+  relFromH: string;
+  relFromV: string;
+}
+
+/**
+ * Complete structural snapshot of a DOCX document built before placeholder
+ * injection.  Callers can use this to inspect layouts, resolve neighbors, and
+ * apply injection rules that depend on the 2-D table grid.
+ */
+export interface DocumentStructure {
+  /**
+   * All cells, indexed as cells[rowIdx][cellIdx].
+   * rowIdx is the flat index matching parseRows() — all tables concatenated.
+   * Use `rowToTable[rowIdx]` to know which table a row belongs to.
+   */
+  cells: CellSnapshot[][];
+  /** Anchor images from word/document.xml (header images excluded) */
+  images: ImageSnapshot[];
+  /** rowToTable[rowIdx] = tableIdx — prevents cross-table neighbor lookups */
+  rowToTable: number[];
+}
+
+/**
+ * Builds a DocumentStructure from an already-normalised word/document.xml string.
+ * Internal — callers outside this module use analyzeDocumentStructure(buffer).
+ */
+function buildStructureFromXml(xml: string): DocumentStructure {
+  const cells: CellSnapshot[][] = [];
+  const images: ImageSnapshot[] = [];
+  const rowToTable: number[] = [];
+  let globalRowIdx = 0;
+  let tableIdx = 0;
+
+  for (const tblMatch of xml.matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)) {
+    for (const trMatch of tblMatch[0].matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)) {
+      const rowCells: CellSnapshot[] = [];
+      let cellIdx = 0;
+      let vcol = 0;
+
+      for (const tcMatch of trMatch[0].matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)) {
+        const tcXml = tcMatch[0];
+        const gridSpan = parseInt(tcXml.match(/<w:gridSpan\s+w:val="(\d+)"/)?.[1] ?? "1");
+        const widthTwips = parseInt(tcXml.match(/<w:tcW\s+w:w="(\d+)"/)?.[1] ?? "0");
+
+        // vMerge: continuation cells carry <w:vMerge/> without val="restart"
+        const vMergeMatch = tcXml.match(/<w:vMerge(?:\s[^>]*)?\/?>/);
+        const isVMergeCont = vMergeMatch !== null && !tcXml.includes('w:val="restart"');
+
+        const text = extractText(tcXml);
+        const isEmpty = !text.trim() && !hasImageContent(tcXml);
+
+        rowCells.push({
+          rowIdx: globalRowIdx,
+          cellIdx,
+          tableIdx,
+          virtualColIdx: vcol,
+          text,
+          isEmpty,
+          isVMergeCont,
+          gridSpan,
+          widthTwips,
+        });
+
+        vcol += gridSpan;
+        cellIdx++;
+      }
+
+      cells.push(rowCells);
+      rowToTable.push(tableIdx);
+      globalRowIdx++;
+    }
+    tableIdx++;
+  }
+
+  // Anchor images in word/document.xml (floating / inline)
+  for (const m of xml.matchAll(/<wp:anchor[\s\S]*?<\/wp:anchor>/g)) {
+    const ax = m[0];
+    const pH = ax.match(/<wp:positionH\s+relativeFrom="([^"]*)"[^>]*>[\s\S]*?<wp:posOffset>([-\d]+)<\/wp:posOffset>/);
+    const pV = ax.match(/<wp:positionV\s+relativeFrom="([^"]*)"[^>]*>[\s\S]*?<wp:posOffset>([-\d]+)<\/wp:posOffset>/);
+    const ext = ax.match(/<wp:extent\s+cx="(\d+)"\s+cy="(\d+)"/);
+    if (!ext) continue;
+    images.push({
+      posX_emu: pH ? parseInt(pH[2]) : 0,
+      posY_emu: pV ? parseInt(pV[1]) : 0,
+      widthEmu: parseInt(ext[1]),
+      heightEmu: parseInt(ext[2]),
+      relFromH: pH?.[1] ?? "column",
+      relFromV: pV?.[1] ?? "paragraph",
+    });
+  }
+
+  return { cells, images, rowToTable };
+}
+
+/**
+ * Analyses a DOCX buffer and returns a complete structural snapshot of its
+ * document body: all table cells with position / merge / size info, and all
+ * anchor images with EMU coordinates.
+ *
+ * Useful for pre-extraction inspection, debugging template layouts, and
+ * providing the golden-rule injection pass with reliable neighbour data.
+ */
+export function analyzeDocumentStructure(docxBuffer: Buffer): DocumentStructure {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return { cells: [], images: [], rowToTable: [] };
+  const xml = normalizeDocxXml(zip.files[xmlPath].asText());
+  return buildStructureFromXml(xml);
+}
+
 // ── Row / cell parser ────────────────────────────────────────────────────────
 
 interface Row {
@@ -260,14 +405,20 @@ export function findNextEmptyCellAfterLabel(
     if (!extractText(row.cells[i] ?? "").trim()) return { rowIdx, colIdx: i };
   }
 
-  // ── 2. Adjacent below (next row, same virtual column) ─────────────────────
-  if (rowIdx + 1 < rows.length) {
-    const nextRow   = rows[rowIdx + 1];
+  // ── 2. Adjacent below (scan down, skipping vMerge continuation rows) ────────
+  // When the label cell is itself the start of a vertically merged group, the
+  // continuation rows (w:vMerge w:val="continue") are part of the same visual
+  // cell and must be skipped. The first non-continuation row at the same virtual
+  // column is the real value row.
+  for (let below = rowIdx + 1; below < rows.length; below++) {
+    const nextRow   = rows[below];
     const nextVCols = computeVirtualColIndices(nextRow.cells);
     for (let j = 0; j < nextRow.cells.length; j++) {
-      if (isVMergeContinuation(nextRow.cells[j] ?? "")) continue;
       if ((nextVCols[j] ?? j) !== labelVCol) continue;
-      if (!extractText(nextRow.cells[j] ?? "").trim()) return { rowIdx: rowIdx + 1, colIdx: j };
+      const cellXml = nextRow.cells[j] ?? "";
+      if (isVMergeContinuation(cellXml)) break; // same merge group — skip this row
+      if (!extractText(cellXml).trim()) return { rowIdx: below, colIdx: j };
+      return null; // non-empty real cell — no suitable target
     }
   }
 
@@ -607,10 +758,13 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
     const paraNorm = normText(extractText(paraXml));
 
     // Accept: exact | suffix (header prefix + label) | prefix (label + value)
+    // | reverse-suffix: contextBefore includes preceding cell header text so the
+    //   hint is longer than the segment — check if hint ends with segment text.
     const matches =
       paraNorm === labelNorm ||
       (labelNorm.length >= 3 && paraNorm.length >= labelNorm.length && paraNorm.endsWith(labelNorm)) ||
-      (labelNorm.length >= 4 && paraNorm.startsWith(labelNorm));
+      (labelNorm.length >= 4 && paraNorm.startsWith(labelNorm)) ||
+      (paraNorm.length >= 4 && labelNorm.length >= paraNorm.length && labelNorm.endsWith(paraNorm));
 
     if (!matches) continue;
     if (paraXml.includes(placeholder)) return cellXml; // idempotent
@@ -654,10 +808,13 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
       const segXml = paraXml.slice(seg.startInPara, seg.endInPara);
       const segNorm = normText(extractText(segXml));
 
+      // Same four-way match as the paragraph pass; reverse-suffix handles the
+      // case where contextBefore still contains a cell-header prefix.
       const matches =
         segNorm === labelNorm ||
         (labelNorm.length >= 3 && segNorm.length >= labelNorm.length && segNorm.endsWith(labelNorm)) ||
-        (labelNorm.length >= 4 && segNorm.startsWith(labelNorm));
+        (labelNorm.length >= 4 && segNorm.startsWith(labelNorm)) ||
+        (segNorm.length >= 4 && labelNorm.length >= segNorm.length && labelNorm.endsWith(segNorm));
 
       if (!matches) continue;
 
@@ -674,10 +831,59 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
         if (paraXml.includes(placeholder)) return cellXml; // idempotent
         const allBrs = [...paraXml.matchAll(/<w:br(?:\s[^>]*)?\/?>/g)];
         if (allBrs.length === 0) continue; // no breaks — fall through to normal path
-        const lastBr = allBrs[allBrs.length - 1];
-        const insertPos = lastBr.index! + lastBr[0].length;
-        const newRun = `<w:r><w:t xml:space="preserve">${placeholder}</w:t></w:r>`;
-        const newParaXml = paraXml.slice(0, insertPos) + newRun + paraXml.slice(insertPos);
+
+        // Always inject right after the header (first break after the matching
+        // ALL CAPS segment).  Putting the body field immediately below the header
+        // is the standard layout for Brazilian school plan templates: the open
+        // space for content comes first, then any sub-items or secondary fields.
+        const headerBrIdx = allBrs.findIndex((b) => b.index! >= seg.endInPara);
+        // Fall back to last break only when no break follows the header (shouldn't
+        // happen since isAllCapsHeader requires !seg.isLast, but be defensive).
+        const targetBr =
+          headerBrIdx >= 0 ? allBrs[headerBrIdx] : allBrs[allBrs.length - 1];
+
+        // Inject the token into the segment immediately after the header break
+        // (Seg 1).  We must stay within the existing <w:r> because:
+        //   • Single-run cells have ALL content (text + breaks) inside ONE <w:r>;
+        //     inserting a new <w:r> between breaks creates nested runs (invalid OOXML).
+        //   • OOXML allows <w:t> and <w:br> to be freely mixed inside a single <w:r>.
+        //
+        // Two cases for Seg 1:
+        //   A) Seg 1 has a <w:t> (possibly empty): overwrite its content.
+        //   B) Seg 1 has NO <w:t> (naked consecutive breaks): insert a new <w:t>
+        //      right after the header break — still valid OOXML inside the <w:r>.
+        //
+        // IMPORTANT: search for <w:t> only within Seg 1 (between targetBr and the
+        // NEXT break), not beyond it — otherwise we'd overwrite the next text-bearing
+        // segment (e.g. "Recuperação paralela:") in cells where Seg 1 is empty.
+        const afterBrPos = targetBr.index! + targetBr[0].length;
+        const nextBrAfterHeader = headerBrIdx + 1 < allBrs.length ? allBrs[headerBrIdx + 1] : null;
+        const seg1EndPos = nextBrAfterHeader ? nextBrAfterHeader.index! : paraXml.lastIndexOf("</w:p>");
+
+        const seg1Slice = paraXml.slice(afterBrPos, seg1EndPos >= 0 ? seg1EndPos : paraXml.length);
+        const seg1WtOpen = seg1Slice.match(/<w:t(?:\s[^>]*)?>/);
+
+        let newParaXml: string;
+        if (seg1WtOpen && seg1WtOpen.index !== undefined) {
+          // Case A: existing <w:t> in Seg 1 → overwrite its content
+          const absWtEnd = afterBrPos + seg1WtOpen.index + seg1WtOpen[0].length;
+          const absWtClose = paraXml.indexOf("</w:t>", absWtEnd);
+          if (absWtClose >= 0) {
+            newParaXml = paraXml.slice(0, absWtEnd) + placeholder + paraXml.slice(absWtClose);
+          } else {
+            // Degenerate: <w:t> without closing tag — insert before next break or </w:p>
+            const insertAt = nextBrAfterHeader ? nextBrAfterHeader.index! : (paraXml.lastIndexOf("</w:p>") >= 0 ? paraXml.lastIndexOf("</w:p>") : paraXml.length);
+            newParaXml = paraXml.slice(0, insertAt) + `<w:t xml:space="preserve">${placeholder}</w:t>` + paraXml.slice(insertAt);
+          }
+        } else {
+          // Case B: Seg 1 is a naked break with no <w:t> — insert a bare <w:t>
+          // right after the header break (inside the existing <w:r>).
+          newParaXml = paraXml.slice(0, afterBrPos)
+            + `<w:t xml:space="preserve">${placeholder}</w:t>`
+            + paraXml.slice(afterBrPos);
+        }
+
+        console.info(`[appendToParagraph ALL-CAPS] ${fieldKey} → first-break after "${segText.slice(0, 40)}"`);
         return cellXml.replace(paraXml, newParaXml);
       }
 
@@ -698,6 +904,9 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
     }
   }
 
+  // No paragraph or segment matched labelNorm — return cell unchanged.
+  // Callers that need a guaranteed injection (e.g. injectAtCoord) apply their own
+  // safeAppendToken fallback after this returns the original cell.
   return cellXml;
 }
 
@@ -1068,6 +1277,32 @@ export function injectAtCoord(
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
+/**
+ * Scans rows below `ri` to find the first empty, non-vMerge-continuation cell
+ * at virtual column `labelVCol`. Skips rows where the cell at that column is
+ * a vMerge continuation (part of a multi-row merged header group).
+ *
+ * Returns the row index, physical cell index, and cell XML, or null if no
+ * suitable target exists.
+ */
+function findBelowTargetSkippingVMerge(
+  rows: Row[],
+  ri: number,
+  labelVCol: number,
+): { rowIdx: number; colIdx: number; cellXml: string } | null {
+  for (let below = ri + 1; below < rows.length; below++) {
+    const bRow = rows[below];
+    const bVCols = computeVirtualColIndices(bRow.cells);
+    const bIdx = bVCols.findIndex((vc) => vc === labelVCol);
+    const bCell = bIdx >= 0 ? (bRow.cells[bIdx] ?? null) : null;
+    if (!bCell) break;
+    if (isVMergeContinuation(bCell)) continue; // still inside the merged group
+    if (!extractText(bCell).trim()) return { rowIdx: below, colIdx: bIdx, cellXml: bCell };
+    return null; // non-empty non-continuation cell — not an injection target
+  }
+  return null;
+}
+
 // ── Main: inject placeholders ────────────────────────────────────────────────
 
 /**
@@ -1154,6 +1389,98 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     }
   }
 
+  // ── Golden Rule pass ─────────────────────────────────────────────────────────
+  // Primary structural injection heuristic.
+  //
+  // Rule: for a label cell, check its immediate right and bottom neighbours.
+  // If EXACTLY ONE of them is empty (XOR), inject the matching field there:
+  //
+  //   • right empty  AND  bottom not → adjacent_right  (classic Label | Value column)
+  //   • bottom empty AND  right  not → adjacent_below  (classic Label / Value row)
+  //
+  // When BOTH are empty or NEITHER is, the layout is ambiguous — fall through to
+  // the pattern-specific passes below.
+  //
+  // Uses virtual-column indices (same as findNextEmptyCellAfterLabel) so gridSpan
+  // merges are handled correctly. Respects table boundaries via rowToTable so we
+  // never look for a bottom neighbour in a different table.
+  //
+  // Fields already placed by Pass -1 (explicit injection_pattern) are in `used`
+  // and are skipped here.
+  {
+    // Build a one-shot structural snapshot of the current XML (after Pass -1).
+    // Updated grRows is used for up-to-date cell content after each injection.
+    const structure = buildStructureFromXml(xml);
+    let grXml = xml;
+    let grRows = rows;
+
+    for (const rowCells of structure.cells) {
+      for (const cell of rowCells) {
+        if (cell.isEmpty || cell.isVMergeCont) continue;
+
+        const field = matchField(cell.text, schema, used);
+        if (!field) continue;
+
+        const ri = cell.rowIdx;
+
+        // ── Right neighbour (same row, virtual column = cell.virtualColIdx + cell.gridSpan) ─
+        const rightVcol = cell.virtualColIdx + cell.gridSpan;
+        const rightCell = rowCells.find(
+          (c) => c.virtualColIdx === rightVcol && !c.isVMergeCont,
+        ) ?? null;
+
+        // ── Bottom neighbour (next row, same virtual column, same table) ─────
+        const nextRowCells = structure.cells[ri + 1] ?? null;
+        const bottomCell =
+          nextRowCells && structure.rowToTable[ri + 1] === cell.tableIdx
+            ? (nextRowCells.find(
+                (c) => c.virtualColIdx === cell.virtualColIdx && !c.isVMergeCont,
+              ) ?? null)
+            : null;
+
+        // XOR: exactly one of the two neighbours must be empty
+        const rightEmpty = rightCell?.isEmpty === true;
+        const bottomEmpty = bottomCell?.isEmpty === true;
+
+        let targetRowIdx: number;
+        let targetCellIdx: number;
+
+        if (rightEmpty && !bottomEmpty) {
+          targetRowIdx = ri;
+          targetCellIdx = rightCell!.cellIdx;
+        } else if (bottomEmpty && !rightEmpty) {
+          targetRowIdx = ri + 1;
+          targetCellIdx = bottomCell!.cellIdx;
+        } else {
+          continue; // ambiguous (both or neither) → fall through to specific passes
+        }
+
+        // Re-read from grRows (updated after each injection) to detect stale snapshot hits
+        const origCell = grRows[targetRowIdx]?.cells[targetCellIdx] ?? "";
+        const currentText = extractText(origCell).trim();
+        if (currentText) continue; // already has content
+        if (isNeverInjectTargetCell(origCell, currentText)) continue;
+
+        const newCell = setCellContent(origCell, `{{${field.key}}}`);
+        grXml = replaceFirst(grXml, origCell, newCell);
+        grRows = parseRows(grXml);
+        used.add(field.key);
+
+        console.info(
+          `[inject golden-rule] ${field.key} → ${rightEmpty ? "right" : "below"}`,
+          { label: field.label, ri, labelCell: cell.cellIdx },
+        );
+      }
+    }
+
+    if (grXml !== xml) {
+      xml = grXml;
+      const updated = parseRows(xml);
+      for (let i = 0; i < updated.length; i++) rows[i] = updated[i];
+      rows.length = updated.length;
+    }
+  }
+
   // ── Pass 0: Paragraph-level inline injection ────────────────────────────────
   // For 1-cell rows: processes ANY cell with ≥1 label paragraph ending with ":"
   //   (handles "Professor(a):", "HABILIDADES:", "AVALIAÇÃO:" and sub-items)
@@ -1185,24 +1512,35 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       if (labelParas.length < threshold) continue;
 
       // ALL CAPS + single-label in 1-cell row → defer to Pass 2 (adjacent_below)
-      // when there is no body content in the same cell (classic next-row layout).
-      // Exception: soft-return cells with sub-items (rawLineTexts.length > 1) are
-      // processed here — appendToParagraph places the body after the last <w:br>.
+      // ONLY when there are NO soft-returns in the cell (classic next-row layout).
+      // Soft-return cells (hasSoftReturns=true) are processed HERE regardless of
+      // rawLineTexts count — appendToParagraph injects after the appropriate <w:br>
+      // (first-break for sibling-label cells like AVALIAÇÃO, last-break for
+      // sub-item cells like CONCEITOS/HABILIDADES/OBJETIVOS/ATIVIDADE PROPOSTA).
       if (is1CellRow && labelParas.length === 1) {
         const p = labelParas[0];
         const pStripped = p.normalize("NFD").replace(/[̀-ͯ]/g, "");
         const isAllCaps = !/[a-z]/.test(pStripped);
-        if (isAllCaps && (!hasSoftReturns || rawLineTexts.length <= 1)) continue; // → Pass 2
+        if (isAllCaps && !hasSoftReturns) {
+          console.info(`[inject pass0 defer-pass2] "${p.trimEnd()}" has no soft-returns → pass2`);
+          continue; // → Pass 2
+        }
       }
 
       let newCellXml = cellXml;
       for (const pt of labelParas) {
         const field = matchField(pt, schema, used);
-        if (!field) continue;
+        if (!field) {
+          console.info(`[inject pass0 no-match] label="${pt.trimEnd()}" row${ri}c${ci}`);
+          continue;
+        }
         const before = newCellXml;
         newCellXml = appendToParagraph(newCellXml, normText(pt), field.key);
         if (newCellXml !== before) {
           used.add(field.key);
+          console.info(`[inject pass0 OK] ${field.key} ← "${pt.trimEnd()}" row${ri}c${ci}`);
+        } else {
+          console.info(`[inject pass0 appendFailed] ${field.key} ← "${pt.trimEnd()}" row${ri}c${ci} — appendToParagraph returned unchanged`);
         }
         // If appendToParagraph didn't find the paragraph (split runs, unusual XML),
         // do NOT add to used — Pass 1/2 will still attempt injection as fallback.
@@ -1430,24 +1768,21 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       // Rule: prefer injecting into an empty cell directly below before falling
       // back to inline. This handles bold column headers correctly.
       if (!hasNextCell || looksLikeLabel(cellTexts[ci + 1])) {
-        const belowRow = ri + 1 < rows.length ? rows[ri + 1] : null;
-        // Use virtual columns to find the correct below cell — physical index ci is wrong
-        // when the label row has merged cells (gridSpan>1) above it.
         const labelVCol1 = rowVcols[ci] ?? ci;
-        const belowVCols1 = belowRow ? computeVirtualColIndices(belowRow.cells) : [];
-        const belowIdx1 = belowVCols1.findIndex((vc) => vc === labelVCol1);
-        const belowCellXml = belowIdx1 >= 0 ? (belowRow!.cells[belowIdx1] ?? null) : null;
-        const belowCellText = belowCellXml ? extractText(belowCellXml).trim() : "x";
-        if (belowCellXml && !belowCellText && !isVMergeContinuation(belowCellXml)) {
-          // Empty cell directly below → inject there (column-header pattern)
+        // Scan below, skipping vMerge continuation rows (multi-row merged headers).
+        const belowTarget1 = findBelowTargetSkippingVMerge(rows, ri, labelVCol1);
+        if (belowTarget1) {
+          // Empty cell found below the label (column-header pattern) → inject there
+          const { rowIdx: bri, colIdx: bci, cellXml: belowCellXml } = belowTarget1;
           const newBelow = setCellContent(belowCellXml, `{{${field.key}}}`);
-          const newBelowRowXml = replaceFirst(belowRow!.xml, belowCellXml, newBelow);
-          xml = replaceFirst(xml, belowRow!.xml, newBelowRowXml);
-          const bc = [...belowRow!.cells];
-          const bt = [...belowRow!.cellTexts];
-          bc[belowIdx1] = newBelow;
-          bt[belowIdx1] = `{{${field.key}}}`;
-          rows[ri + 1] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
+          const tRow = rows[bri];
+          const newBelowRowXml = replaceFirst(tRow.xml, belowCellXml, newBelow);
+          xml = replaceFirst(xml, tRow.xml, newBelowRowXml);
+          const bc = [...tRow.cells];
+          const bt = [...tRow.cellTexts];
+          bc[bci] = newBelow;
+          bt[bci] = `{{${field.key}}}`;
+          rows[bri] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
           used.add(field.key);
           continue;
         }
@@ -1473,22 +1808,19 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       if (nextAlsoLabel) {
         // Next cell also matches a schema field — check for empty cell below first
         // (column-header pattern: "Experiências" | "Recursos" with value row below)
-        const belowRow = ri + 1 < rows.length ? rows[ri + 1] : null;
-        // Virtual column lookup — physical ci is wrong when label row has merged cells
         const labelVCol2 = rowVcols[ci] ?? ci;
-        const belowVCols2 = belowRow ? computeVirtualColIndices(belowRow.cells) : [];
-        const belowIdx2 = belowVCols2.findIndex((vc) => vc === labelVCol2);
-        const belowCellXml = belowIdx2 >= 0 ? (belowRow!.cells[belowIdx2] ?? null) : null;
-        const belowCellText = belowCellXml ? extractText(belowCellXml).trim() : "x";
-        if (belowCellXml && !belowCellText && !isVMergeContinuation(belowCellXml)) {
+        const belowTarget2 = findBelowTargetSkippingVMerge(rows, ri, labelVCol2);
+        if (belowTarget2) {
+          const { rowIdx: bri, colIdx: bci, cellXml: belowCellXml } = belowTarget2;
           const newBelow = setCellContent(belowCellXml, `{{${field.key}}}`);
-          const newBelowRowXml = replaceFirst(belowRow!.xml, belowCellXml, newBelow);
-          xml = replaceFirst(xml, belowRow!.xml, newBelowRowXml);
-          const bc = [...belowRow!.cells];
-          const bt = [...belowRow!.cellTexts];
-          bc[belowIdx2] = newBelow;
-          bt[belowIdx2] = `{{${field.key}}}`;
-          rows[ri + 1] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
+          const tRow = rows[bri];
+          const newBelowRowXml = replaceFirst(tRow.xml, belowCellXml, newBelow);
+          xml = replaceFirst(xml, tRow.xml, newBelowRowXml);
+          const bc = [...tRow.cells];
+          const bt = [...tRow.cellTexts];
+          bc[bci] = newBelow;
+          bt[bci] = `{{${field.key}}}`;
+          rows[bri] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
           used.add(field.key);
           continue;
         }
@@ -1700,9 +2032,13 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     }
   }
 
-  // Diagnostic: log any fields that still have no placeholder after all passes
+  // Final diagnostic: log placement status for every field
   const finalProjected = extractText(xml);
+  const placed = schema.filter((f) => finalProjected.includes(`{{${f.key}}}`));
   const stillMissing = schema.filter((f) => !finalProjected.includes(`{{${f.key}}}`));
+  console.info(
+    `[injectPlaceholders] SUMMARY: ${placed.length}/${schema.length} placed — ${placed.map((f) => f.key).join(", ") || "(none)"}`,
+  );
   if (stillMissing.length > 0) {
     console.info(`[injectPlaceholders] STILL MISSING after last-resort: ${stillMissing.map((f) => f.key).join(", ")}`);
     for (const f of stillMissing) {
@@ -1863,6 +2199,8 @@ export interface StructuralPair {
   pattern: "adjacent_right" | "adjacent_below" | "column_header" | "inline_colon" | "period_column";
   /** For "period_column" pattern: the trimester/bimester suffix (e.g. "_tr1", "_tr2", "_tr3") */
   periodSuffix?: string;
+  /** 0-based column index of the label cell — C0 is almost always a label in multi-column tables */
+  columnIdx?: number;
 }
 
 /**
@@ -2011,6 +2349,7 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
           label: label.replace(/:+$/, "").trim(),
           valuePreview: nextText.slice(0, 60),
           pattern: "column_header",
+          columnIdx: ci,
         });
       }
       continue; // don't also run adjacent scan for this row
@@ -2100,6 +2439,7 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
             // Rule 3: capture multi-paragraph block preview for textarea fields
             valuePreview: cellBlockPreview(belowCellXml, 120),
             pattern: "adjacent_below",
+            columnIdx: ci,
           });
           ci++;
           continue;
@@ -2120,6 +2460,7 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
         label: t.replace(/:+$/, "").trim(),
         valuePreview: nextText.slice(0, 60),
         pattern: "adjacent_right",
+        columnIdx: ci,
       });
       ci += 2;
     }

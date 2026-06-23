@@ -116,12 +116,18 @@ export default async function TemplatesPage() {
             <FileText className="h-4 w-4 text-slate-500" />
             Templates cadastrados
           </h2>
-          {templates.length > 0 && (
-            <p className="text-xs text-slate-500">
-              {templates.length}{" "}
-              {templates.length === 1 ? "modelo disponível" : "modelos disponíveis"}
-            </p>
-          )}
+          {templates.length > 0 && (() => {
+            const ativos = templates.filter((t) => !t.deletado).length;
+            const excluidos = templates.length - ativos;
+            return (
+              <p className="text-xs text-slate-500">
+                {ativos} {ativos === 1 ? "disponível" : "disponíveis"}
+                {excluidos > 0 && (
+                  <span className="ml-1.5 text-rose-400">· {excluidos} excluído{excluidos > 1 ? "s" : ""}</span>
+                )}
+              </p>
+            );
+          })()}
         </div>
 
         {templates.length === 0 ? (

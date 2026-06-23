@@ -43,6 +43,8 @@ export interface TemplateFieldSchema {
   defaultValue?: string;
   /** Structural hint from the AI introspection step — how to locate this field's cell. */
   injection_pattern?: InjectionPattern;
+  /** AI's confidence in this field's identity and position (0–1). Set during introspection. */
+  ai_confidence?: number;
 }
 
 export interface UserProfile {
@@ -76,6 +78,8 @@ export interface TemplateRecord {
   fillable_status?: TemplateFillableStatus;
   /** Persisted cell-click positions (cellText + ordinal) keyed by field key. */
   field_positions?: Record<string, { cellText: string; ordinal: number }>;
+  /** Fields whose label has no structural backing in the deterministic scan — need manual review. */
+  campos_baixa_confianca?: string[];
   deleted_at?: string;
 }
 
@@ -156,6 +160,7 @@ export interface TemplateOption {
   metadata_padrao?: Record<string, string>;
   arquivo_url?: string;
   fillable_status?: TemplateFillableStatus;
+  deletado?: boolean;
 }
 
 export interface IaSugestao {

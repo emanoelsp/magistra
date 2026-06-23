@@ -130,11 +130,11 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                     className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="flex items-start gap-3">
-                      <span className="mt-0.5 shrink-0 rounded-xl bg-violet-50 p-2 text-violet-600">
+                      <span className={`mt-0.5 shrink-0 rounded-xl p-2 ${plano.template_deletado ? "bg-slate-100 text-slate-400" : "bg-violet-50 text-violet-600"}`}>
                         <FileText className="h-4 w-4" />
                       </span>
                       <div>
-                        <p className="font-semibold text-slate-950">
+                        <p className={`font-semibold ${plano.template_deletado ? "text-slate-400 line-through" : "text-slate-950"}`}>
                           {typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
                             ? plano.conteudo_gerado._plano_titulo
                             : plano.template_nome}
@@ -143,9 +143,16 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                           {plano.escola_nome ? `${plano.escola_nome} · ` : ""}
                           {formatDate(plano.data_geracao)}
                         </p>
-                        <span className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
-                          {status.label}
-                        </span>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
+                            {status.label}
+                          </span>
+                          {plano.template_deletado && (
+                            <span className="inline-block rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-500">
+                              template excluído
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">

@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { FieldValue } from "firebase-admin/firestore";
 
 import { getAdminDb } from "../../../../../lib/firebase/admin";
-import { downloadFile, uploadFile } from "../../../../../lib/storage/blob";
+import { deleteFile, downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
   appendOrphanField,
   extractFieldCoords,
@@ -31,6 +31,7 @@ interface CellEdit {
   ordinal: number;
   newContent: string;  // full edited cell text with all {{key}} tokens
   coord?: string;      // "T{ti}R{ri}C{ci}" — preferred injection path
+  contextBefore?: string; // text on the same visual line immediately before {{key}} — injection anchor
 }
 
 interface SchemaBody {
@@ -172,11 +173,13 @@ export async function PATCH(
       if (!edit.newContent?.trim()) continue;
       const keysInEdit = [...edit.newContent.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]);
       if (edit.coord) {
-        // For single-token edits, look up the field label so injectAtCoord can
-        // place the token at the correct visual line in soft-return cells.
-        const labelHint = keysInEdit.length === 1
-          ? (newSchema.find((f) => f.key === keysInEdit[0])?.label ?? "")
-          : "";
+        // contextBefore (text on the same line before {{key}} in the DOM) is a more
+        // precise anchor than the field label: it matches exactly the segment where
+        // the user typed. Fall back to field label for placement-mode clicks (no context).
+        const labelHint = edit.contextBefore ??
+          (keysInEdit.length === 1
+            ? (newSchema.find((f) => f.key === keysInEdit[0])?.label ?? "")
+            : "");
         buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint);
       } else {
         const cleanCellText = (edit.cellText ?? "")
@@ -214,8 +217,19 @@ export async function PATCH(
       }
     }
 
-    // 2. Label-based injection for any remaining fields without explicit positions.
-    buffer = injectPlaceholders(buffer, newSchema);
+    // 2. Label-based injection for fields with structural context.
+    // Manually-added fields (no injection_pattern, no ai_confidence, no stored position)
+    // are excluded here — they fall through to appendOrphanField so that fuzzy label
+    // matching doesn't corrupt existing content in templates with many positioned fields.
+    const autoPlaceKeys = new Set<string>([
+      ...placedByCellEdits,
+      ...Object.keys(allPositions),
+      ...newSchema
+        .filter((f) => f.injection_pattern !== undefined || f.ai_confidence !== undefined)
+        .map((f) => f.key),
+    ]);
+    const schemaForAutoPlace = newSchema.filter((f) => autoPlaceKeys.has(f.key));
+    buffer = injectPlaceholders(buffer, schemaForAutoPlace);
 
     // 3. Post-injection validation: report which fields got placed and which didn't
     const { missing: camposSemPlaceholder } = reportInjections(buffer, newSchema);
@@ -233,14 +247,22 @@ export async function PATCH(
       buffer = appendOrphanField(buffer, key, field.label);
     }
 
-    // 5. Upload as the new fillable DOCX
-    const fillablePath = `templates/${id}/fillable.docx`;
+    // 5. Upload as the new fillable DOCX.
+    // Use a timestamped path so each save produces a unique URL — this eliminates
+    // any CDN/storage propagation delay that could serve stale content when the
+    // preview re-fetches immediately after the overwrite.
+    const oldFillableUrl = typeof data.arquivo_fillable_url === "string" ? data.arquivo_fillable_url : "";
+    const fillablePath = `templates/${id}/fillable_${Date.now()}.docx`;
     const newFillableUrl = await uploadFile({
       path: fillablePath,
       buffer,
       contentType:
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
+    // Delete the previous fillable (best-effort — stale storage is non-critical)
+    if (oldFillableUrl && oldFillableUrl !== newFillableUrl) {
+      void deleteFile(oldFillableUrl).catch(() => {/* non-fatal */});
+    }
 
     // 5b. Extract structural coords from the final DOCX and merge into allPositions.
     // This ensures every {{key}} — including those placed by injectPlaceholders

@@ -99,6 +99,7 @@ interface CellEdit {
   ordinal: number;     // occurrence index
   newContent: string;  // full edited cell text including all {{key}} tokens
   coord?: string;      // "T{ti}R{ri}C{ci}" — preferred over text/ordinal when present
+  contextBefore?: string; // text on the same visual line immediately before {{key}} — injection anchor
 }
 
 interface DocxInteractiveProps {
@@ -251,8 +252,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     container.querySelectorAll("[data-field-chip]").forEach((el) => {
       const key = el.getAttribute("data-field-chip")!;
       if (!roleMap.has(key)) {
-        // Field was deleted — restore plain text so the user sees it was removed
-        el.parentNode?.replaceChild(document.createTextNode(`{{${key}}}`), el);
+        // Field was deleted — remove chip entirely so the {{key}} text does NOT remain
+        // in the DOM. If we restore it as plain text, handleSaveEdits would pick it up
+        // as a newly typed placeholder and add the field back to the schema (ghost re-add).
+        el.remove();
         return;
       }
       const isIa = roleMap.get(key) === "ia_sugerida";
@@ -394,14 +397,19 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         .trim();
       originalTextsRef.current.set(el, clean);
     }
-    // Snapshot keys visible in the doc (chips + raw {{}} text)
+    // Snapshot keys visible in the doc (chips + raw {{}} text).
+    // Deps include fieldPositions and fields so this re-captures AFTER the chip
+    // injection effect (line ~320) runs — that effect shares the same deps and is
+    // declared first, guaranteeing execution order. Without these deps, chips added
+    // via fieldPositions would be absent from initialDocKeysRef, causing the
+    // "ghost placeholder" bug (removed chips not detected as removedKeys).
     const docKeys = new Set<string>();
     for (const m of (container.textContent ?? "").matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)) {
       docKeys.add(m[1]);
     }
     initialDocKeysRef.current = docKeys;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, fieldPositions, fields]);
 
   // Contenteditable — cells are editable; chips inside are atomic (non-editable)
   useEffect(() => {
@@ -510,13 +518,27 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         }
 
         // Record position for this key (new or repositioned existing key).
-        // Send ONLY the token — safeAppendToken handles empty vs non-empty cells.
+        // contextBefore = text on the same visual line immediately before the token.
+        // el.textContent collapses <br> elements and concatenates chip spans without
+        // separators. Stripping previous {{key}} occurrences and taking only the text
+        // between the last chip and this one yields the label on the same visual line
+        // (e.g. "- Carga horária prevista:"), which appendToParagraph uses as its
+        // injection anchor for soft-return cells.
         if (!cellEdits.some((ce) => ce.newContent === `{{${key}}}`)) {
+          const matchStart = match.index ?? 0;
+          const rawTextBefore = currentText.slice(0, matchStart);
+          const prevTokenMatches = [...rawTextBefore.matchAll(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g)];
+          const lastPrev = prevTokenMatches[prevTokenMatches.length - 1];
+          const textAfterLastToken = lastPrev
+            ? rawTextBefore.slice(lastPrev.index! + lastPrev[0].length)
+            : rawTextBefore;
+          const contextBefore = textAfterLastToken.replace(/\s+/g, " ").trim().slice(-80);
           cellEdits.push({
             cellText: originalText,
             ordinal: effectiveOrdinal,
             newContent: `{{${key}}}`,
             coord,
+            ...(contextBefore ? { contextBefore } : {}),
           });
         }
       }
@@ -763,7 +785,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [isReExtracting, setIsReExtracting] = useState(false);
   const [reExtractMsg, setReExtractMsg] = useState<string | null>(null);
   const [camposSemPlaceholder, setCamposSemPlaceholder] = useState<string[]>([]);
-  const [camposBaixaConfianca, setCamposBaixaConfianca] = useState<string[]>([]);
+  const [camposBaixaConfianca, setCamposBaixaConfianca] = useState<string[]>(template.campos_baixa_confianca ?? []);
   const [showHelp, setShowHelp] = useState(false);
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [locateKey, setLocateKey] = useState<string | null>(null);
