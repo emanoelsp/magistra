@@ -157,7 +157,7 @@ export async function POST(request: Request) {
     const couponCode = (parts[2] ?? "").trim().toUpperCase() || null;
 
     if (sub.status === "authorized") {
-      await db.collection("magis_users").doc(uid).update({ plano });
+      await db.collection("magis_users").doc(uid).update({ plano, onboarding_concluido: true });
       await subDocRef.set({
         user_id: uid,
         mp_preapproval_id: body.data.id,

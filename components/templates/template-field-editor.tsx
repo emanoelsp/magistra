@@ -867,7 +867,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     try { return localStorage.getItem("magis_panel_collapsed") === "1"; } catch { return false; }
   });
   const [panelWidth, setPanelWidth] = useState<number>(() => {
-    try { return parseInt(localStorage.getItem("magis_panel_width") ?? "333") || 333; } catch { return 333; }
+    try { return parseInt(localStorage.getItem("magis_panel_width") ?? "326") || 326; } catch { return 326; }
   });
   const panelResizeRef = useRef<{ dragging: boolean; startX: number; startW: number }>({ dragging: false, startX: 0, startW: 0 });
 
@@ -1347,7 +1347,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       setReviewMode(true);
       setPanelCollapsed(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao salvar.");
+      const msg = err instanceof Error ? err.message : "Falha ao salvar.";
+      setError(msg);
+      showMagisToast("Ops! " + msg + " Tente novamente.", "error");
     } finally {
       setIsAdvancing(false);
     }
@@ -1986,12 +1988,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           </div>
         </div>
       )}
-      {saved && (
-        <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-          Template salvo com sucesso!
-        </p>
-      )}
-
       {reviewMode && (
         camposSemPlaceholder.length === 0 ? (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
@@ -2372,7 +2368,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           {/* Item 16: resizable right panel */}
           <div
             ref={panelScrollRef}
-            style={panelCollapsed ? { display: "none" } : { width: panelWidth + "px", maxWidth: "35%" }}
+            style={panelCollapsed ? { display: "none" } : { width: panelWidth + "px", maxWidth: "33%" }}
             className={`min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white [overflow-anchor:none] shrink-0 ${
               mobileTab === "campos" ? "flex flex-col flex-1" : "hidden xl:flex xl:flex-col"
             }`}

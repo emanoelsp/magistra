@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { getCurrentSession } from "../../../../lib/auth/session";
 import { getAdminDb } from "../../../../lib/firebase/admin";
 
-const ALLOWED_PLANS = ["free", "starter", "medio", "pro"] as const;
+const ALLOWED_PLANS = ["free"] as const;
 
 export async function POST(request: Request) {
   try {

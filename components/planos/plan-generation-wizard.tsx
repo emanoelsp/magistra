@@ -28,6 +28,7 @@ import {
   triggerDownload,
   type DownloadLimitInfo,
 } from "./download-plan-button";
+import { showMagisToast } from "../../lib/utils/magis-toast";
 
 interface RecentPlano {
   id: string;
@@ -282,7 +283,10 @@ export function PlanGenerationWizard({
         });
     void doSave
       .then((id) => { if (typeof id === "string") setSavedPlanoId(id); })
-      .catch(() => { setSaveError("Falha ao preparar pré-visualização. Tente novamente."); })
+      .catch(() => {
+        setSaveError("Falha ao preparar pré-visualização. Tente novamente.");
+        showMagisToast("Não consegui salvar o plano. Verifique sua conexão e tente novamente.", "error");
+      })
       .finally(() => setIsAutoSaving(false));
   }
 
@@ -310,7 +314,9 @@ export function PlanGenerationWizard({
           }).catch(() => {});
         })
         .catch((err) => {
-          setSaveError(err instanceof Error ? err.message : "Falha ao salvar.");
+          const msg = err instanceof Error ? err.message : "Falha ao salvar.";
+          setSaveError(msg);
+          showMagisToast("Ops! Não consegui finalizar o plano. Tente novamente.", "error");
         });
     });
   }
@@ -698,42 +704,52 @@ export function PlanGenerationWizard({
 
       {/* ── Modal de sucesso — salvo com a Magis ─────────────────────────── */}
       {showSaveSuccess && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center bg-black/60 px-4 pb-4 pt-8 backdrop-blur-sm">
+          <style>{`
+            @keyframes magis-pop {
+              from { opacity: 0; transform: scale(0.85) translateY(24px); }
+              to   { opacity: 1; transform: scale(1) translateY(0); }
+            }
+            @keyframes magis-progress-plan {
+              from { width: 100%; }
+              to   { width: 0%; }
+            }
+          `}</style>
           <div
-            className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-white p-8 shadow-2xl"
+            className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl"
             style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
           >
-            <style>{`
-              @keyframes magis-pop {
-                from { opacity: 0; transform: scale(0.7) translateY(24px); }
-                to   { opacity: 1; transform: scale(1) translateY(0); }
-              }
-              @keyframes magis-progress-plan {
-                from { width: 100%; }
-                to   { width: 0%; }
-              }
-            `}</style>
-            <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
-              <Sparkles className="h-7 w-7 text-white" />
-              <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
-                style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}>
-                <CheckCircle2 className="h-3.5 w-3.5 text-white" />
-              </span>
-            </div>
-            <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
-              <div className="mb-1.5 flex items-center justify-center gap-1.5">
-                <Sparkles className="h-3 w-3 text-violet-500" />
-                <span className="text-xs font-bold text-violet-700">Magis</span>
+            {/* Header WhatsApp */}
+            <div className="flex shrink-0 items-center gap-3 bg-violet-700 px-5 py-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20">
+                <Sparkles className="h-4 w-4 text-white" />
               </div>
-              <p className="text-sm font-medium leading-relaxed text-slate-800">
-                Plano salvo com sucesso! 🎉
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                Agora você pode baixar em PDF.
-              </p>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white leading-tight">Magis</p>
+                <p className="text-[11px] text-violet-300">assistente de planos</p>
+              </div>
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
-              <div className="h-full rounded-full bg-violet-500"
+
+            {/* Chat area */}
+            <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+              <div className="flex items-end gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
+                  <Sparkles className="h-3 w-3 text-white" />
+                </div>
+                <div className="flex max-w-[80%] flex-col gap-1">
+                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                    <p className="text-sm text-slate-800">Plano salvo com sucesso! 🎉</p>
+                  </div>
+                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                    <p className="text-sm text-slate-500">Agora você pode baixar em PDF. 📄</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Barra de progresso auto-dismiss */}
+            <div className="h-1 w-full overflow-hidden bg-violet-100">
+              <div className="h-full bg-violet-500"
                 style={{ animation: "magis-progress-plan 3s linear forwards" }} />
             </div>
           </div>

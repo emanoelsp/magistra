@@ -92,19 +92,31 @@ export default function OnboardingPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/onboarding/plano", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plano: planId }),
-      });
-
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error ?? "Falha ao ativar plano.");
+      // Plano gratuito: ativa diretamente
+      if (planId === "free") {
+        const res = await fetch("/api/onboarding/plano", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plano: planId }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(data?.error ?? "Falha ao ativar plano.");
+        }
+        router.push("/dashboard");
+        router.refresh();
+        return;
       }
 
-      router.push("/dashboard");
-      router.refresh();
+      // Planos pagos: redireciona para o checkout do Mercado Pago
+      const res = await fetch("/api/pagamentos/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plano: planId, periodo: "auto" }),
+      });
+      const data = (await res.json()) as { init_point?: string; error?: string };
+      if (!res.ok || !data.init_point) throw new Error(data.error ?? "Erro ao iniciar checkout.");
+      window.location.href = data.init_point;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao ativar plano.");
       setLoading(false);

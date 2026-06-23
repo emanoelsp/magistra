@@ -58,6 +58,7 @@ export async function POST(request: Request) {
       plano?: string;
       tipo?: string;
       periodo?: string;
+      qty?: number;
       cupom?: string;
     };
 
@@ -71,19 +72,21 @@ export async function POST(request: Request) {
     // Avulso checkout (template or plano slot add-on)
     if (body.tipo && (AVULSO_TIPOS as readonly string[]).includes(body.tipo)) {
       const tipo = body.tipo as AvulsoTipo;
-      const preco = AVULSO_PRECO[tipo];
+      const precoUnit = AVULSO_PRECO[tipo];
       const label = AVULSO_LABEL[tipo];
+      const qty = Math.max(1, Math.min(10, Math.round(Number(body.qty ?? 1))));
+      const precoTotal = precoUnit * qty;
 
       const sub = await preApproval.create({
         body: {
           payer_email: user.email,
-          reason: `PlanoMagistra - ${label}`,
-          external_reference: `${user.uid}|${tipo}|1`,
-          back_url: `${appUrl}/planos/sucesso?tipo=${tipo}`,
+          reason: `PlanoMagistra - ${qty}x ${label}`,
+          external_reference: `${user.uid}|${tipo}|${qty}`,
+          back_url: `${appUrl}/planos/sucesso?tipo=${tipo}&qty=${qty}`,
           auto_recurring: {
             frequency: 1,
             frequency_type: "months",
-            transaction_amount: preco,
+            transaction_amount: precoTotal,
             currency_id: "BRL",
             ...(repetitions ? { repetitions } : {}),
           },

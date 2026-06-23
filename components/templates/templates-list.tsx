@@ -7,6 +7,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Cl
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateOption } from "../../lib/types/firestore";
+import { showMagisToast } from "../../lib/utils/magis-toast";
 
 const PAGE_SIZE = 3;
 
@@ -35,8 +36,6 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   const [duplicateModal, setDuplicateModal] = useState<{ id: string; nome: string } | null>(null);
   const [duplicateNome, setDuplicateNome] = useState("");
   const duplicateInputRef = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [page, setPage] = useState(0);
 
   const totalPages = Math.ceil(templates.length / PAGE_SIZE);
@@ -59,7 +58,6 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
     if (!duplicateModal) return;
     const nome = duplicateNome.trim();
     if (!nome) return;
-    setError(null);
     setDuplicatingId(duplicateModal.id);
     setDuplicateModal(null);
     try {
@@ -70,11 +68,10 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
       });
       const data = (await res.json()) as { ok?: boolean; nome?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Erro ao duplicar.");
-      setSuccessMsg(`"${data.nome}" criado com sucesso.`);
-      setTimeout(() => setSuccessMsg(null), 4000);
+      showMagisToast(`"${data.nome}" criado com sucesso! 🎉`, "success");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Não foi possível duplicar o template.");
+      showMagisToast(err instanceof Error ? err.message : "Não foi possível duplicar o template.", "error");
     } finally {
       setDuplicatingId(null);
     }
@@ -83,15 +80,13 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   async function handleDelete(templateId: string) {
     const templateName = templates.find((t) => t.id === templateId)?.nome ?? "Template";
     setConfirmDeleteId(null);
-    setError(null);
     setDeletingId(templateId);
     try {
       await templatesService.deleteTemplate(templateId);
-      setSuccessMsg(`"${templateName}" excluído com sucesso.`);
-      setTimeout(() => setSuccessMsg(null), 4000);
+      showMagisToast(`"${templateName}" excluído com sucesso.`, "success");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Não foi possível excluir o template.");
+      showMagisToast(err instanceof Error ? err.message : "Não foi possível excluir o template.", "error");
     } finally {
       setDeletingId(null);
     }
@@ -101,45 +96,58 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
 
   const deleteConfirmModal = confirmDeleteId && confirmDeleteTemplate && (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center bg-black/60 px-4 pb-4 pt-8 backdrop-blur-sm"
       onClick={() => setConfirmDeleteId(null)}
     >
       <style>{`
         @keyframes magis-pop {
-          from { opacity: 0; transform: scale(0.7) translateY(24px); }
+          from { opacity: 0; transform: scale(0.85) translateY(24px); }
           to   { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
       <div
-        className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-white p-8 shadow-2xl"
+        className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl"
         style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-rose-100 shadow-lg shadow-rose-100">
-          <Trash2 className="h-7 w-7 text-rose-600" />
-          <span
-            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-400"
-            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}
-          >
-            <AlertTriangle className="h-3 w-3 text-white" />
-          </span>
-        </div>
-
-        <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
-          <div className="mb-1.5 flex items-center justify-center gap-1.5">
-            <Sparkles className="h-3 w-3 text-violet-500" />
-            <span className="text-xs font-bold text-violet-700">Magis</span>
+        {/* Header WhatsApp */}
+        <div className="flex shrink-0 items-center gap-3 bg-violet-700 px-5 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20">
+            <Sparkles className="h-4 w-4 text-white" />
           </div>
-          <p className="text-sm font-medium leading-relaxed text-slate-800">
-            Tem certeza que deseja excluir{" "}
-            <span className="font-semibold text-slate-900">{confirmDeleteTemplate.nome}</span>?
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Essa ação é permanente e não pode ser desfeita. Os planos criados com este template não serão afetados.
-          </p>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white leading-tight">Magis</p>
+            <p className="text-[11px] text-violet-300">assistente de planos</p>
+          </div>
         </div>
 
-        <div className="flex w-full gap-3">
+        {/* Chat area */}
+        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+          <div className="flex items-end gap-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
+              <Sparkles className="h-3 w-3 text-white" />
+            </div>
+            <div className="flex max-w-[80%] flex-col gap-1">
+              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                <p className="text-sm text-slate-800">Ei, espera! ⚠️</p>
+              </div>
+              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                <p className="text-sm text-slate-800">
+                  Você tem certeza que quer excluir{" "}
+                  <strong>"{confirmDeleteTemplate.nome}"</strong>?
+                </p>
+              </div>
+              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                <p className="text-sm text-slate-500">
+                  Essa ação é permanente. Os planos criados com este template não serão afetados. 🗑️
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Botões */}
+        <div className="flex shrink-0 gap-3 border-t border-slate-200 bg-white px-5 py-4">
           <button
             type="button"
             onClick={() => setConfirmDeleteId(null)}
@@ -153,7 +161,7 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
             className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-rose-500"
           >
             <Trash2 className="h-4 w-4" />
-            Excluir template
+            Excluir
           </button>
         </div>
       </div>
@@ -162,45 +170,50 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
 
   const duplicateModal_el = duplicateModal && (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center bg-black/60 px-4 pb-4 pt-8 backdrop-blur-sm"
       onClick={() => setDuplicateModal(null)}
     >
       <style>{`
         @keyframes magis-pop {
-          from { opacity: 0; transform: scale(0.7) translateY(24px); }
+          from { opacity: 0; transform: scale(0.85) translateY(24px); }
           to   { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
       <div
-        className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-white p-8 shadow-2xl"
+        className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl"
         style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Avatar Magis */}
-        <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
-          <Sparkles className="h-7 w-7 text-white" />
-          <span
-            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
-            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}
-          >
-            <Copy className="h-3 w-3 text-white" />
-          </span>
-        </div>
-
-        {/* Balão de diálogo — estilo WhatsApp */}
-        <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4">
-          <div className="mb-2 flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3 text-violet-500" />
-            <span className="text-xs font-bold text-violet-700">Magis</span>
+        {/* Header WhatsApp */}
+        <div className="flex shrink-0 items-center gap-3 bg-violet-700 px-5 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20">
+            <Sparkles className="h-4 w-4 text-white" />
           </div>
-          <p className="text-sm leading-relaxed text-slate-800">
-            Antes de duplicarmos{" "}
-            <span className="font-semibold">"{duplicateModal.nome}"</span>, qual será o nome do novo template?
-          </p>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white leading-tight">Magis</p>
+            <p className="text-[11px] text-violet-300">assistente de planos</p>
+          </div>
         </div>
 
-        {/* Input do nome */}
-        <div className="w-full">
+        {/* Chat area */}
+        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+          <div className="flex items-end gap-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
+              <Sparkles className="h-3 w-3 text-white" />
+            </div>
+            <div className="flex max-w-[80%] flex-col gap-1">
+              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                <p className="text-sm text-slate-800">
+                  Antes de duplicarmos{" "}
+                  <strong>"{duplicateModal.nome}"</strong>, como você quer chamar o novo template? 📋
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Input + botões */}
+        <div className="shrink-0 flex flex-col gap-3 border-t border-slate-200 bg-white px-5 py-4">
           <input
             ref={duplicateInputRef}
             type="text"
@@ -211,26 +224,24 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
             aria-label="Nome do novo template"
             className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
           />
-        </div>
-
-        {/* Botões */}
-        <div className="flex w-full gap-3">
-          <button
-            type="button"
-            onClick={() => setDuplicateModal(null)}
-            className="flex-1 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleDuplicate()}
-            disabled={!duplicateNome.trim()}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-50"
-          >
-            <Copy className="h-4 w-4" />
-            Duplicar
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setDuplicateModal(null)}
+              className="flex-1 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDuplicate()}
+              disabled={!duplicateNome.trim()}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-50"
+            >
+              <Copy className="h-4 w-4" />
+              Duplicar
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -241,17 +252,6 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
       {deleteConfirmModal}
       {duplicateModal_el}
 
-      {successMsg && (
-        <div className="mb-3 flex items-center gap-2.5 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-          {successMsg}
-        </div>
-      )}
-
-      {error && (
-        <p className="mb-3 rounded-xl bg-rose-50 px-4 py-2 text-xs text-rose-700">{error}</p>
-      )}
-
       <ul className="mt-4 space-y-3">
         {visibleTemplates.map((template) => {
           const isDeleted = Boolean(template.deletado);
@@ -260,59 +260,61 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
               key={template.id}
               className={`rounded-2xl border p-4 transition ${isDeleted ? "border-slate-100 bg-slate-50/50 opacity-70" : "border-slate-200 bg-slate-50 hover:border-slate-300"}`}
             >
-              {/* Info */}
-              <div className="flex items-start gap-3">
-                <span className={`mt-0.5 shrink-0 rounded-xl p-2 shadow-sm ${isDeleted ? "bg-slate-100 text-slate-400" : "bg-white text-slate-500"}`}>
-                  <FileText className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className={`font-semibold ${isDeleted ? "text-slate-400 line-through" : "text-slate-900"}`}>
-                      {template.nome}
-                    </p>
-                    {isDeleted && (
-                      <span className="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-500">
-                        excluído
-                      </span>
-                    )}
-                    {/* Status badges — inline with name on desktop */}
-                    {!isDeleted && template.fillable_status === "processando" && (
-                      <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-                        <Clock className="h-3 w-3 animate-pulse" /> Preparando…
-                      </span>
-                    )}
-                    {!isDeleted && template.fillable_status === "pronto" && (
-                      <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                        <CheckCircle2 className="h-3 w-3" /> DOCX pronto
-                      </span>
-                    )}
-                    {!isDeleted && template.fillable_status === "erro" && (
-                      <span className="flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700" title="Falha ao gerar o DOCX preenchível.">
-                        <AlertCircle className="h-3 w-3" /> Erro DOCX
-                      </span>
-                    )}
-                    {!isDeleted && template.campoCount === 0 && (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-                        Sem campos
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {template.escolaNome ?? "Escola não informada"}
-                    {template.tipoPlano && (
-                      <>{" · "}{TIPO_LABELS[template.tipoPlano] ?? template.tipoPlano.replace(/_/g, " ")}</>
-                    )}
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    {template.campoCount > 0 ? `${template.campoCount} campos` : "Sem campos extraídos"}
-                    {" · "}{new Date(template.criadoEm).toLocaleDateString("pt-BR")}
-                  </p>
-                </div>
-              </div>
+              {/* Desktop: info + actions on same row. Mobile: stacked. */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
 
-              {/* Actions — wrap on mobile */}
+                {/* Info */}
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className={`mt-0.5 shrink-0 rounded-xl p-2 shadow-sm ${isDeleted ? "bg-slate-100 text-slate-400" : "bg-white text-slate-500"}`}>
+                    <FileText className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className={`font-semibold ${isDeleted ? "text-slate-400 line-through" : "text-slate-900"}`}>
+                        {template.nome}
+                      </p>
+                      {isDeleted && (
+                        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-500">
+                          excluído
+                        </span>
+                      )}
+                      {!isDeleted && template.fillable_status === "processando" && (
+                        <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                          <Clock className="h-3 w-3 animate-pulse" /> Preparando…
+                        </span>
+                      )}
+                      {!isDeleted && template.fillable_status === "pronto" && (
+                        <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                          <CheckCircle2 className="h-3 w-3" /> DOCX pronto
+                        </span>
+                      )}
+                      {!isDeleted && template.fillable_status === "erro" && (
+                        <span className="flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700" title="Falha ao gerar o DOCX preenchível.">
+                          <AlertCircle className="h-3 w-3" /> Erro DOCX
+                        </span>
+                      )}
+                      {!isDeleted && template.campoCount === 0 && (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                          Sem campos
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {template.escolaNome ?? "Escola não informada"}
+                      {template.tipoPlano && (
+                        <>{" · "}{TIPO_LABELS[template.tipoPlano] ?? template.tipoPlano.replace(/_/g, " ")}</>
+                      )}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      {template.campoCount > 0 ? `${template.campoCount} campos` : "Sem campos extraídos"}
+                      {" · "}{new Date(template.criadoEm).toLocaleDateString("pt-BR")}
+                    </p>
+                  </div>
+                </div>
+
+              {/* Actions — on desktop, right-aligned in the same row; on mobile, new row below */}
               {!isDeleted && (
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {(() => {
                     const temMeta =
                       !!(template.escolaNome?.trim()) ||
@@ -377,6 +379,8 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
                   </button>
                 </div>
               )}
+
+              </div>{/* /row wrapper */}
             </li>
           );
         })}

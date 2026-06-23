@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Loader2, Sparkles, X, AlertTriangle } from "lucide-react";
+import { Download, Loader2, Sparkles, X } from "lucide-react";
 
 export interface DownloadLimitInfo {
   error: string;
@@ -112,67 +112,76 @@ export function DownloadLimitDialog({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.45)" }}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 pt-8 backdrop-blur-sm"
+      style={{ background: "rgba(0,0,0,0.55)" }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
+      <style>{`
+        @keyframes magis-pop {
+          from { opacity: 0; transform: scale(0.85) translateY(24px); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+      `}</style>
       <div
-        className="relative flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl border border-slate-200 bg-white p-8 shadow-xl"
-        style={{ animation: "dl-pop 0.3s cubic-bezier(0.34,1.56,0.64,1) both" }}
+        className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl"
+        style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
       >
-        <style>{`
-          @keyframes dl-pop {
-            from { opacity: 0; transform: scale(0.85) translateY(16px); }
-            to   { opacity: 1; transform: scale(1) translateY(0); }
-          }
-        `}</style>
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-        >
-          <X className="h-4 w-4" />
-        </button>
-
-        {/* Magis avatar */}
-        <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
-          <Sparkles className="h-7 w-7 text-white" />
-          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500">
-            <AlertTriangle className="h-3 w-3 text-white" />
-          </span>
-        </div>
-
-        {/* Magis bubble */}
-        <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
-          <div className="mb-1.5 flex items-center justify-center gap-1.5">
-            <Sparkles className="h-3 w-3 text-violet-500" />
-            <span className="text-xs font-bold text-violet-700">Magis</span>
+        {/* Header WhatsApp */}
+        <div className="flex shrink-0 items-center gap-3 bg-violet-700 px-5 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20">
+            <Sparkles className="h-4 w-4 text-white" />
           </div>
-          <p className="text-sm font-medium leading-relaxed text-slate-800">
-            Você atingiu o limite de downloads para este plano.
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Downloads utilizados:{" "}
-            <span className="font-semibold text-slate-700">
-              {info.downloads}/{info.maxDownloads}
-            </span>
-          </p>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white leading-tight">Magis</p>
+            <p className="text-[11px] text-violet-300">assistente de planos</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/60 transition hover:bg-white/20 hover:text-white"
+            aria-label="Fechar"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        <p className="text-center text-xs leading-relaxed text-slate-500">
-          Cada plano pode ser baixado até{" "}
-          <span className="font-semibold">{info.maxDownloads}×</span>. Para
-          baixar novamente, crie um novo plano a partir do mesmo template.
-        </p>
+        {/* Chat area */}
+        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+          <div className="flex items-end gap-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
+              <Sparkles className="h-3 w-3 text-white" />
+            </div>
+            <div className="flex max-w-[80%] flex-col gap-1">
+              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                <p className="text-sm text-slate-800">
+                  Você atingiu o limite de downloads para este plano. ⚠️
+                </p>
+              </div>
+              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                <p className="text-sm text-slate-700">
+                  Downloads usados:{" "}
+                  <strong>{info.downloads}/{info.maxDownloads}</strong>
+                </p>
+              </div>
+              <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+                <p className="text-sm text-slate-500">
+                  Para baixar novamente, crie um novo plano a partir do mesmo template. 📄
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="w-full rounded-2xl bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
-        >
-          Entendi
-        </button>
+        {/* Botão */}
+        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-2xl bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
+          >
+            Entendi
+          </button>
+        </div>
       </div>
     </div>
   );
