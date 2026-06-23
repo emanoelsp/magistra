@@ -34,6 +34,7 @@ import {
 import type { TemplateFieldSchema, TemplateRecord } from "../../lib/types/firestore";
 import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
 import { OfficeInlineViewer } from "../shared/office-inline-viewer";
+import { showMagisToast } from "../../lib/utils/magis-toast";
 
 interface TemplateFieldEditorProps {
   template: TemplateRecord;
@@ -858,8 +859,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [isSavingMagis, setIsSavingMagis] = useState(false);
 
   // Doc save result feedback
-  const [docSaveResult, setDocSaveResult] = useState<{ added: string[]; removed: string[] } | null>(null);
-  const docSaveResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fieldListRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
@@ -987,6 +986,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         error?: string;
       } | null;
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Falha ao re-extrair campos.");
+      showMagisToast("Extração concluída! Revise as mudanças antes de aplicar.", "info");
       // Item 5: show diff modal before applying
       const result: ReExtractResult = {
         schema: Array.isArray(data.schema) ? data.schema : [],
@@ -997,7 +997,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       };
       setPendingExtract(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao re-extrair campos.");
+      const msg = err instanceof Error ? err.message : "Falha ao re-extrair campos.";
+      setError(msg);
+      showMagisToast("Ops! Não consegui re-extrair os campos. Tente novamente.", "error");
     } finally {
       setIsReExtracting(false);
     }
@@ -1010,6 +1012,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setReExtractMsg(`${result.schema.length} campos extraídos.`);
     setPreviewVersion((v) => v + 1);
     setPendingExtract(null);
+    showMagisToast(`Pronto! ${result.schema.length} campos aplicados ao template.`, "success");
     router.refresh();
   }
 
@@ -1090,6 +1093,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         .catch(() => { /* silent */ });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      showMagisToast("Documento salvo! O preview foi atualizado.", "success");
       return;
     }
 
@@ -1126,11 +1130,10 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
     // Show result feedback toast
     if (newFields.length > 0 || removedKeys.length > 0) {
-      const added = newFields.map((f) => f.label || f.key);
-      const removed = removedKeys.map((k) => fields.find((f) => f.key === k)?.label ?? k);
-      if (docSaveResultTimerRef.current) clearTimeout(docSaveResultTimerRef.current);
-      setDocSaveResult({ added, removed });
-      docSaveResultTimerRef.current = setTimeout(() => setDocSaveResult(null), 6000);
+      const parts: string[] = [];
+      if (newFields.length > 0) parts.push(`${newFields.length} campo${newFields.length > 1 ? "s" : ""} novo${newFields.length > 1 ? "s" : ""} detectado${newFields.length > 1 ? "s" : ""}`);
+      if (removedKeys.length > 0) parts.push(`${removedKeys.length} removido${removedKeys.length > 1 ? "s" : ""}`);
+      showMagisToast(`Documento atualizado — ${parts.join(" e ")}. Configure os novos campos no painel.`, "info");
     }
 
     handleSave(mergedFields, mergedPositions, true, cellEdits);
@@ -1237,6 +1240,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             setPreviewVersion((v) => v + 1);
             setTimeout(() => setSaved(false), 2500);
             router.refresh();
+            showMagisToast("Campos salvos! O template está atualizado.", "success");
             // Item 7: show undo toast
             setShowUndoToast(true);
             if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
@@ -1244,7 +1248,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           }
         })
         .catch((err) => {
-          setError(err instanceof Error ? err.message : "Falha ao salvar.");
+          const msg = err instanceof Error ? err.message : "Falha ao salvar.";
+          setError(msg);
+          showMagisToast("Não consegui salvar os campos. Verifique sua conexão e tente novamente.", "error");
         });
     });
   }
@@ -2239,37 +2245,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         {confirmSuccessModal}
         {diffModal}
         {versionsModal}
-
-        {/* Doc save result toast */}
-        {docSaveResult && (
-          <div className="fixed bottom-6 left-1/2 z-[9998] flex -translate-x-1/2 items-start gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl max-w-sm w-full">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-            <div className="flex-1 min-w-0">
-              {docSaveResult.added.length > 0 && (
-                <p className="text-xs font-semibold text-emerald-400">
-                  {docSaveResult.added.length === 1
-                    ? `Campo adicionado: ${docSaveResult.added[0]}`
-                    : `${docSaveResult.added.length} campos adicionados`}
-                </p>
-              )}
-              {docSaveResult.removed.length > 0 && (
-                <p className="text-xs font-semibold text-rose-400">
-                  {docSaveResult.removed.length === 1
-                    ? `Campo removido: ${docSaveResult.removed[0]}`
-                    : `${docSaveResult.removed.length} campos removidos`}
-                </p>
-              )}
-              <p className="mt-0.5 text-[11px] text-white/60">Template atualizado com as alterações.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => { setDocSaveResult(null); if (docSaveResultTimerRef.current) clearTimeout(docSaveResultTimerRef.current); }}
-              className="shrink-0 text-white/40 hover:text-white"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
 
         {/* Item 7: undo toast */}
         {showUndoToast && (

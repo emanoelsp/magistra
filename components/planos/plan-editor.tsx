@@ -33,6 +33,7 @@ import {
   triggerDownload,
   type DownloadLimitInfo,
 } from "./download-plan-button";
+import { showMagisToast } from "../../lib/utils/magis-toast";
 
 export interface PlanEditorHandle {
   getCurrentValues: () => Record<string, string>;
@@ -596,8 +597,16 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     setSaveStatus("saving");
     startTransition(() => {
       void savePlano("rascunho")
-        .then(() => { setSaveStatus("saved"); setTimeout(() => setSaveStatus("idle"), 2500); })
-        .catch(() => { setSaveStatus("error"); setTimeout(() => setSaveStatus("idle"), 3000); });
+        .then(() => {
+          setSaveStatus("saved");
+          showMagisToast("Rascunho salvo! Pode continuar quando quiser.", "success");
+          setTimeout(() => setSaveStatus("idle"), 2500);
+        })
+        .catch(() => {
+          setSaveStatus("error");
+          showMagisToast("Não consegui salvar. Verifique sua conexão e tente novamente.", "error");
+          setTimeout(() => setSaveStatus("idle"), 3000);
+        });
     });
   }
 
@@ -609,6 +618,12 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
           setSaveStatus("saved");
           setIsFinalized(true);
           setPreviewMode(true);
+          showMagisToast(
+            format === "pdf"
+              ? "Plano finalizado! Seu PDF está sendo baixado."
+              : "Plano finalizado! Seu arquivo Word está sendo baixado.",
+            "success",
+          );
           // Update pedagogic memory in background (fire-and-forget)
           void fetch("/api/ia/memoria", {
             method: "POST",
@@ -625,7 +640,11 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             if (info) setDownloadLimitInfo(info);
           }).catch(() => { window.open(url, "_blank"); });
         })
-        .catch(() => { setSaveStatus("error"); setTimeout(() => setSaveStatus("idle"), 3000); });
+        .catch(() => {
+          setSaveStatus("error");
+          showMagisToast("Ops! Não consegui finalizar o plano. Tente novamente.", "error");
+          setTimeout(() => setSaveStatus("idle"), 3000);
+        });
     });
   }
 

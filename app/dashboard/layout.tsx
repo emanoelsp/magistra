@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { Sidebar } from "../../components/layout/Sidebar";
+import { MagisToastContainer } from "../../components/ui/MagisToastContainer";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -15,6 +16,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           {children}
         </main>
       </div>
+      <MagisToastContainer />
     </div>
   );
 }
