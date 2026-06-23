@@ -27,11 +27,12 @@ interface FieldPosition {
 }
 
 interface CellEdit {
-  cellText: string;    // original cell text (stripped of {{key}} chips by client)
+  cellText: string;       // original cell text (stripped of {{key}} chips by client)
   ordinal: number;
-  newContent: string;  // full edited cell text with all {{key}} tokens
-  coord?: string;      // "T{ti}R{ri}C{ci}" — preferred injection path
+  newContent: string;     // full edited cell text with all {{key}} tokens
+  coord?: string;         // "T{ti}R{ri}C{ci}" — preferred injection path
   contextBefore?: string; // text on the same visual line immediately before {{key}} — injection anchor
+  replaceContent?: boolean; // true → clear existing cell text before injecting (user deleted all text)
 }
 
 interface SchemaBody {
@@ -180,7 +181,16 @@ export async function PATCH(
           (keysInEdit.length === 1
             ? (newSchema.find((f) => f.key === keysInEdit[0])?.label ?? "")
             : "");
-        buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint);
+        const prevBuf = buffer;
+        buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint, edit.replaceContent);
+        // If coord lookup failed (returned same buffer), fall back to text-based injection
+        if (buffer === prevBuf && edit.cellText) {
+          const cleanCellText = (edit.cellText)
+            .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+          buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+        }
       } else {
         const cleanCellText = (edit.cellText ?? "")
           .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
@@ -196,23 +206,22 @@ export async function PATCH(
     // Text path: strip {{key}} chips from stored cellText so it matches the original DOCX.
     for (const [key, pos] of Object.entries(allPositions)) {
       if (newKeys.has(key) && !placedByCellEdits.has(key)) {
+        const phToken = `{{${key}}}`;
+        const hasInlineToken = pos.cellText.includes(phToken);
+        const cleanCellText = pos.cellText
+          .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
         if (pos.coord) {
           const fieldLabel = newSchema.find((f) => f.key === key)?.label ?? "";
+          const prevBuf = buffer;
           buffer = injectAtCoord(buffer, pos.coord, `{{${key}}}`, fieldLabel);
+          // Coord lookup failed — fall back to text-based injection
+          if (buffer === prevBuf) {
+            buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
+          }
         } else {
-          const phToken = `{{${key}}}`;
-          const hasInlineToken = pos.cellText.includes(phToken);
-          const cleanCellText = pos.cellText
-            .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-          buffer = injectAtCell(
-            buffer,
-            cleanCellText,
-            pos.ordinal,
-            key,
-            hasInlineToken && cleanCellText.length > 0,
-          );
+          buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
         }
       }
     }

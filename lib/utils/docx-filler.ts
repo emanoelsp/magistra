@@ -1219,6 +1219,7 @@ export function injectAtCoord(
   coord: string,
   content: string,
   labelHint = "",
+  replaceContent = false,
 ): Buffer {
   const m = coord.match(/^T(\d+)R(\d+)C(\d+)$/);
   if (!m) return docxBuffer;
@@ -1251,6 +1252,11 @@ export function injectAtCoord(
         ci++;
         injected = true;
         const isSimpleToken = /^\{\{[A-Za-z_][A-Za-z0-9_]*\}\}$/.test(content.trim());
+
+        // User cleared the cell and typed only the placeholder: replace existing content.
+        if (replaceContent && isSimpleToken) {
+          return clearAndSetCellText(tcXml, content.trim());
+        }
 
         // Soft-return cell with a label hint: inject at the specific <w:t> segment
         // that contains the label rather than appending to the last </w:p>.

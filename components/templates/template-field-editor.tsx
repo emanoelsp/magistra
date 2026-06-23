@@ -96,11 +96,12 @@ interface DocxEdit {
 }
 
 interface CellEdit {
-  cellText: string;    // original cell text (stripped of {{key}} chips)
-  ordinal: number;     // occurrence index
-  newContent: string;  // full edited cell text including all {{key}} tokens
-  coord?: string;      // "T{ti}R{ri}C{ci}" — preferred over text/ordinal when present
+  cellText: string;       // original cell text (stripped of {{key}} chips)
+  ordinal: number;        // occurrence index
+  newContent: string;     // full edited cell text including all {{key}} tokens
+  coord?: string;         // "T{ti}R{ri}C{ci}" — preferred over text/ordinal when present
   contextBefore?: string; // text on the same visual line immediately before {{key}} — injection anchor
+  replaceContent?: boolean; // true when cell has only this token (no other text) → replace instead of append
 }
 
 interface DocxInteractiveProps {
@@ -534,12 +535,16 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             ? rawTextBefore.slice(lastPrev.index! + lastPrev[0].length)
             : rawTextBefore;
           const contextBefore = textAfterLastToken.replace(/\s+/g, " ").trim().slice(-80);
+          // replaceContent=true when the cell contains ONLY this one token and no other text.
+          // Triggers server-side clearAndSetCellText so the old content is replaced, not appended.
+          const cellHasOnlyThisToken = currentText.trim() === `{{${key}}}`;
           cellEdits.push({
             cellText: originalText,
             ordinal: effectiveOrdinal,
             newContent: `{{${key}}}`,
             coord,
             ...(contextBefore ? { contextBefore } : {}),
+            ...(cellHasOnlyThisToken ? { replaceContent: true } : {}),
           });
         }
       }
@@ -835,7 +840,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     try { return localStorage.getItem("magis_panel_collapsed") === "1"; } catch { return false; }
   });
   const [panelWidth, setPanelWidth] = useState<number>(() => {
-    try { return parseInt(localStorage.getItem("magis_panel_width") ?? "340") || 340; } catch { return 340; }
+    try { return parseInt(localStorage.getItem("magis_panel_width") ?? "333") || 333; } catch { return 333; }
   });
   const panelResizeRef = useRef<{ dragging: boolean; startX: number; startW: number }>({ dragging: false, startX: 0, startW: 0 });
 
