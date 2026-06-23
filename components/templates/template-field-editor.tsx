@@ -612,6 +612,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         .docx-html-preview img { max-width: 100%; height: auto; }
         .docx-html-preview section { overflow: visible !important; }
         .docx-html-preview p { margin: 0.2em 0; }
+        .docx-html-preview td p { text-indent: 0 !important; margin-left: 0 !important; }
         .docx-html-preview td[contenteditable='true']:focus,
         .docx-html-preview td[contenteditable='true']:focus-within,
         .docx-html-preview p[contenteditable='true']:focus {

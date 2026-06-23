@@ -200,8 +200,10 @@ export async function fixDocxAnchorImages(
           wrapper.style.position = "static";
         }
         img.style.width = `${anchor.width_mm}mm`;
-        img.style.height = `${anchor.height_mm}mm`;
-        img.style.maxWidth = "none";
+        // height: auto lets the browser scale proportionally when maxWidth:100%
+        // kicks in — avoids distortion when the cell is narrower than the image.
+        img.style.height = "auto";
+        img.style.maxWidth = "100%";
         img.style.display = "block";
         img.style.position = "static";
 
@@ -224,7 +226,8 @@ export async function fixDocxAnchorImages(
             w: `${anchor.width_mm.toFixed(1)}mm`, posX: `${anchor.posX_mm.toFixed(1)}mm`,
           });
         } else if (anchor.posX_mm < LEFT_THRESHOLD_MM) {
-          img.style.margin = "0 auto 0 0"; // flush left in cell
+          img.style.margin = "0";
+          tdAncestor.style.paddingLeft = "0"; // flush to cell edge — remove default td padding
           console.info(LOG, `inline-fixed (td→left) ${anchor.imagePath}`, {
             w: `${anchor.width_mm.toFixed(1)}mm`, posX: `${anchor.posX_mm.toFixed(1)}mm`,
           });
