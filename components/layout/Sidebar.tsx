@@ -6,8 +6,8 @@ import { Building2, Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2,
 
 const links = [
   { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
-  { href: "/dashboard/templates", label: "Meus templates", icon: FileText },
   { href: "/dashboard/escolas", label: "Minhas escolas", icon: Building2 },
+  { href: "/dashboard/templates", label: "Meus templates", icon: FileText },
   { href: "/dashboard/gerar", label: "Gerar plano", icon: Sparkles },
   { href: "/dashboard/historico", label: "Histórico", icon: Clock },
   { href: "/dashboard/suporte", label: "Suporte", icon: LifeBuoy },
@@ -27,7 +27,7 @@ export function Sidebar({ profileIncomplete = false }: SidebarProps) {
   }
 
   return (
-    <aside className="hidden w-52 flex-shrink-0 flex-col overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:flex">
+    <aside className="hidden w-[204px] flex-shrink-0 flex-col overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:flex">
       <div className="mb-6 flex justify-center">
         <img src="/images/logo.png" alt="PlanoMagistra" className="max-h-16 max-w-full" />
       </div>

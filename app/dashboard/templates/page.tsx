@@ -3,8 +3,10 @@ import { ArrowLeft, FileText, Sparkles } from "lucide-react";
 
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
+import { getUserEscolas } from "../../../lib/services/firestore/escolas.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
 import { TemplatesUploader } from "../../../components/templates/templates-uploader";
+import { TemplatesWizard } from "../../../components/templates/templates-wizard";
 import { TemplatesList } from "../../../components/templates/templates-list";
 import { LimitActions } from "../../../components/dashboard/limit-actions";
 
@@ -22,9 +24,10 @@ const PLAN_LABELS: Record<string, string> = {
 
 export default async function TemplatesPage() {
   const user = await requireCurrentUserProfile();
-  const [templates, limitsStatus] = await Promise.all([
+  const [templates, limitsStatus, escolas] = await Promise.all([
     getUserTemplateOptions(user.uid),
     getLimitsStatus(user.uid, user.plano),
+    getUserEscolas(user.uid),
   ]);
 
   const templateLimitReached = !limitsStatus.canCreateTemplate;
@@ -105,7 +108,7 @@ export default async function TemplatesPage() {
             <LimitActions avulsoTipo="avulso_template" avulsoLabel="Contratar template avulso" />
           </div>
         ) : (
-          <TemplatesUploader userId={user.uid} />
+          <TemplatesWizard userId={user.uid} escolas={escolas} />
         )}
       </section>
 

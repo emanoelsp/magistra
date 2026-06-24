@@ -121,7 +121,7 @@ export default async function DashboardPage() {
   ]);
 
   const planos = planosResult.items;
-  const primeiroNome = (user.nome ?? user.email ?? "Professor").split(" ")[0];
+  const primeiroNome = (user.nome?.trim() || user.email?.split("@")[0] || "Professor").split(" ")[0];
   const temTemplates = stats.totalTemplates > 0;
   const temCamposConfigurados = templates.some((t) => t.campo_count > 0);
   const temPlanos = stats.totalPlanos > 0;
@@ -141,23 +141,25 @@ export default async function DashboardPage() {
           Crie planos de aula completos em minutos com o apoio da nossa assistente pedagógica Magis!
         </p>
 
-        <div className="mt-5 flex flex-wrap items-center gap-2.5 md:gap-3">
-          <Link
-            href="/dashboard/templates"
-            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 md:px-5 md:py-3"
-          >
-            <Plus className="h-4 w-4" />
-            <span className="hidden xs:inline">Adicionar</span> template
-          </Link>
+        {!showOnboarding && (
+          <div className="mt-5 flex flex-wrap items-center gap-2.5 md:gap-3">
+            <Link
+              href="/dashboard/templates"
+              className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 md:px-5 md:py-3"
+            >
+              <Plus className="h-4 w-4" />
+              <span className="hidden xs:inline">Adicionar</span> template
+            </Link>
 
-          <Link
-            href="/dashboard/gerar"
-            className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 md:px-5 md:py-3"
-          >
-            <Sparkles className="h-4 w-4" />
-            Gerar novo plano
-          </Link>
-        </div>
+            <Link
+              href="/dashboard/gerar"
+              className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 md:px-5 md:py-3"
+            >
+              <Sparkles className="h-4 w-4" />
+              Gerar novo plano
+            </Link>
+          </div>
+        )}
 
         <div className="mt-4 flex flex-wrap items-center gap-2 md:mt-5 md:gap-3">
           <UsagePill
@@ -275,7 +277,7 @@ export default async function DashboardPage() {
       )}
 
       {/* Escolas · Templates · Planos */}
-      <section className="grid gap-6 lg:grid-cols-3">
+      <section className={`grid gap-6 lg:grid-cols-3 transition-all duration-300${showOnboarding ? " opacity-40 blur-[1px] pointer-events-none select-none" : ""}`}>
 
       {/* Escolas e Turmas */}
       <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6">
@@ -283,22 +285,24 @@ export default async function DashboardPage() {
           <h2 className="text-base font-semibold tracking-tight text-slate-950 md:text-lg">
             Suas escolas
           </h2>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/dashboard/escolas"
-              className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-            >
-              Ver todas
-            </Link>
-            <Link
-              href="/dashboard/escolas"
-              className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Nova escola</span>
-              <span className="sm:hidden">Nova</span>
-            </Link>
-          </div>
+          {temEscolas && (
+            <div className="flex items-center gap-2">
+              <Link
+                href="/dashboard/escolas"
+                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                Ver todas
+              </Link>
+              <Link
+                href="/dashboard/escolas"
+                className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Nova escola</span>
+                <span className="sm:hidden">Nova</span>
+              </Link>
+            </div>
+          )}
         </div>
 
         {!temEscolas ? (
@@ -367,24 +371,26 @@ export default async function DashboardPage() {
             <h2 className="text-base font-semibold tracking-tight text-slate-950 md:text-lg">
               Seus templates
             </h2>
-            <div className="flex items-center gap-2">
-              <Link
-                href="/dashboard/templates"
-                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-              >
-                Ver todos
-              </Link>
-              {canAddTemplate && (
+            {templates.length > 0 && (
+              <div className="flex items-center gap-2">
                 <Link
                   href="/dashboard/templates"
-                  className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
+                  className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
                 >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Novo template</span>
-                  <span className="sm:hidden">Novo</span>
+                  Ver todos
                 </Link>
-              )}
-            </div>
+                {canAddTemplate && (
+                  <Link
+                    href="/dashboard/templates"
+                    className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Novo template</span>
+                    <span className="sm:hidden">Novo</span>
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
 
           {templates.length === 0 ? (
@@ -451,22 +457,24 @@ export default async function DashboardPage() {
             <h2 className="text-base font-semibold tracking-tight text-slate-950 md:text-lg">
               Seus planos
             </h2>
-            <div className="flex items-center gap-2">
-              <Link
-                href="/dashboard/historico"
-                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-              >
-                Ver todos
-              </Link>
-              <Link
-                href="/dashboard/gerar"
-                className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Novo plano</span>
-                <span className="sm:hidden">Novo</span>
-              </Link>
-            </div>
+            {planos.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/dashboard/historico"
+                  className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+                >
+                  Ver todos
+                </Link>
+                <Link
+                  href="/dashboard/gerar"
+                  className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Novo plano</span>
+                  <span className="sm:hidden">Novo</span>
+                </Link>
+              </div>
+            )}
           </div>
 
           {planos.length === 0 ? (

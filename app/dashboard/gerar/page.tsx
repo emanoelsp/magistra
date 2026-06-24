@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 
-import { PlanGenerationWizard, type ResumeData } from "../../../components/planos/plan-generation-wizard";
+import { type ResumeData } from "../../../components/planos/plan-generation-wizard";
+import { GerarPlanoFlow } from "../../../components/planos/gerar-intro-modal";
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getAdminDb } from "../../../lib/firebase/admin";
 import { getUserPlanosComNome, getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
-import { getUserTurmas } from "../../../lib/services/firestore/escolas.server";
+import { getUserEscolas, getUserTurmas } from "../../../lib/services/firestore/escolas.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
 import { LimitActions } from "../../../components/dashboard/limit-actions";
 
@@ -28,12 +29,13 @@ interface GerarPlanoPageProps {
 export default async function GerarPlanoPage({ searchParams }: GerarPlanoPageProps) {
   const user = await requireCurrentUserProfile();
 
-  const [templates, params, limits, recentPlanosResult, turmas] = await Promise.all([
+  const [templates, params, limits, recentPlanosResult, turmas, escolas] = await Promise.all([
     getUserTemplateOptions(user.uid),
     searchParams,
     getLimitsStatus(user.uid, user.plano),
     getUserPlanosComNome(user.uid, 3, 1),
     getUserTurmas(user.uid),
+    getUserEscolas(user.uid),
   ]);
 
   const { template: preSelectedId, resume: resumeId } = params;
@@ -160,26 +162,17 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
           <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-sm">
             <LimitActions avulsoTipo="avulso_plano" avulsoLabel="Contratar plano avulso" />
           </div>
-        ) : templates.length === 0 ? (
-          <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-sm">
-            <div className="flex justify-center">
-              <Link
-                href="/dashboard/templates"
-                className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-              >
-                Adicionar template
-              </Link>
-            </div>
-          </div>
         ) : (
-          <PlanGenerationWizard
+          <GerarPlanoFlow
             userId={user.uid}
             userName={user.nome || user.email}
-            availableTemplates={templates}
-            preSelectedTemplateId={resumeData ? undefined : preSelectedId}
+            templates={templates}
+            escolas={escolas}
+            turmas={turmas}
+            limitsStatus={limits}
             recentPlanos={recentPlanosResult.items}
             resumeData={resumeData}
-            turmas={turmas}
+            preSelectedTemplateId={resumeData ? undefined : preSelectedId}
           />
         )}
       </section>

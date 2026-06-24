@@ -30,7 +30,7 @@ import {
 } from "./download-plan-button";
 import { showMagisToast } from "../../lib/utils/magis-toast";
 
-interface RecentPlano {
+export interface RecentPlano {
   id: string;
   template_nome: string;
   escola_nome: string | null;

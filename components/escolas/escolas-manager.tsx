@@ -546,6 +546,123 @@ function DeleteEscolaModal({ escola, turmaCount, onClose, onDeleted }: DeleteEsc
 }
 
 // ---------------------------------------------------------------------------
+// Add Curso Modal (for "Novo curso" button on existing escola)
+// ---------------------------------------------------------------------------
+
+interface AddCursoModalProps {
+  escola: EscolaRecord;
+  onClose: () => void;
+  onCursoAdded: (updatedEscola: EscolaRecord, newCurso: CursoEntry) => void;
+}
+
+function AddCursoModal({ escola, onClose, onCursoAdded }: AddCursoModalProps) {
+  const existingTipos = (escola.cursos ?? []).map((c) => c.tipo);
+  const availableTipos = CURSO_TIPOS.filter((t) => !existingTipos.includes(t));
+
+  const [selectedTipo, setSelectedTipo] = useState<CursoTipo | null>(availableTipos[0] ?? null);
+  const [cursoNome, setCursoNome] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const needsNome = selectedTipo === "medio_tecnico" || selectedTipo === "superior";
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedTipo) return;
+    if (needsNome && !cursoNome.trim()) {
+      setError("Informe o nome do curso.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const newCurso: CursoEntry = { tipo: selectedTipo, ...(needsNome && cursoNome.trim() ? { nome: cursoNome.trim() } : {}) };
+      const updatedCursos = [...(escola.cursos ?? []), newCurso];
+      const res = await fetch(`/api/escolas/${escola.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: escola.nome, cursos: updatedCursos }),
+      });
+      if (!res.ok) {
+        const d = (await res.json()) as { error?: string };
+        throw new Error(d.error ?? "Falha ao atualizar escola.");
+      }
+      const updatedEscola: EscolaRecord = { ...escola, cursos: updatedCursos };
+      onCursoAdded(updatedEscola, newCurso);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro desconhecido.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (availableTipos.length === 0) {
+    return (
+      <MagisModal>
+        <MagisHeader onClose={onClose} />
+        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+          <MagisBubble text={`"${escola.nome}" já tem todas as modalidades cadastradas!`} />
+        </div>
+        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
+          <button type="button" onClick={onClose} className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            Fechar
+          </button>
+        </div>
+      </MagisModal>
+    );
+  }
+
+  return (
+    <MagisModal>
+      <MagisHeader onClose={onClose} />
+      <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <MagisBubble text={`Qual nova modalidade você vai adicionar em ${escola.nome}?`} />
+      </div>
+      <form onSubmit={handleSubmit} className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        <div className="space-y-2">
+          {availableTipos.map((tipo) => (
+            <label key={tipo} className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-2.5 cursor-pointer hover:bg-slate-50">
+              <input
+                type="radio"
+                name="tipo"
+                value={tipo}
+                checked={selectedTipo === tipo}
+                onChange={() => { setSelectedTipo(tipo); setCursoNome(""); setError(null); }}
+                className="h-4 w-4 accent-violet-600"
+              />
+              <span className="text-sm font-medium text-slate-800">{CURSO_LABELS[tipo]}</span>
+            </label>
+          ))}
+        </div>
+        {needsNome && (
+          <input
+            type="text"
+            value={cursoNome}
+            onChange={(e) => { setCursoNome(e.target.value); setError(null); }}
+            placeholder={selectedTipo === "medio_tecnico" ? "Ex: Informática, Enfermagem…" : "Ex: Pedagogia, Direito…"}
+            autoFocus
+            className="w-full rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm outline-none focus:border-violet-400"
+          />
+        )}
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700">
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={saving || !selectedTipo || (needsNome && !cursoNome.trim())}
+            className="flex-1 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {saving ? "Salvando…" : "Adicionar →"}
+          </button>
+        </div>
+      </form>
+    </MagisModal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Add Turma Modal (for "Nova turma" button on existing escola)
 // ---------------------------------------------------------------------------
 
@@ -870,6 +987,7 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
   // {escolaId, tipoCurso?: CursoEntry}
   const [addTurmaTarget, setAddTurmaTarget] = useState<{ escolaId: string; tipoCurso?: CursoEntry } | null>(null);
   const [deleteTurmaTarget, setDeleteTurmaTarget] = useState<TurmaRecord | null>(null);
+  const [addCursoTarget, setAddCursoTarget] = useState<EscolaRecord | null>(null);
 
   function turmasForEscola(escolaId: string) {
     return turmas.filter((t) => t.escola_id === escolaId);
@@ -902,6 +1020,12 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
       )
     );
     setAddTurmaTarget(null);
+  }
+
+  function handleCursoAdded(updatedEscola: EscolaRecord, newCurso: CursoEntry) {
+    setEscolas((prev) => prev.map((e) => e.id === updatedEscola.id ? updatedEscola : e));
+    setAddCursoTarget(null);
+    setAddTurmaTarget({ escolaId: updatedEscola.id, tipoCurso: newCurso });
   }
 
   function handleEscolaDeleted(escolaId: string) {
@@ -1039,6 +1163,14 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
                       />
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={() => setAddCursoTarget(escola)}
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-2xl border border-dashed border-indigo-300 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Novo curso
+                  </button>
                 </div>
               ) : (
                 /* Legacy flat display for schools without cursos */
@@ -1104,6 +1236,14 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
           turma={deleteTurmaTarget}
           onClose={() => setDeleteTurmaTarget(null)}
           onDeleted={() => handleTurmaDeleted(deleteTurmaTarget.id)}
+        />
+      )}
+
+      {addCursoTarget && (
+        <AddCursoModal
+          escola={addCursoTarget}
+          onClose={() => setAddCursoTarget(null)}
+          onCursoAdded={handleCursoAdded}
         />
       )}
     </>
