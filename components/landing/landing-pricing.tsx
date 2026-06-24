@@ -22,7 +22,7 @@ export function LandingPricing() {
           </p>
         </div>
 
-        <div className="grid items-center gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid items-center gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {LANDING_PLANS.map((plan) => (
             <div
               key={plan.id}

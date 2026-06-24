@@ -66,7 +66,7 @@ export default function OnboardingPage() {
       </div>
 
       {/* Plan cards */}
-      <div className="mt-10 grid w-full max-w-5xl items-center gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-10 grid w-full max-w-6xl items-center gap-6 sm:grid-cols-2 xl:grid-cols-4">
         {PLANS.map((plan) => (
           <div
             key={plan.id}
@@ -153,7 +153,7 @@ export default function OnboardingPage() {
       </div>
 
       {/* Escola — horizontal card */}
-      <div className="mt-8 w-full max-w-5xl overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-violet-950 shadow-2xl shadow-slate-900/40 ring-1 ring-violet-900/40">
+      <div className="mt-8 w-full max-w-6xl overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-violet-950 shadow-2xl shadow-slate-900/40 ring-1 ring-violet-900/40">
         <div className="flex flex-col gap-6 p-7 sm:flex-row sm:items-center sm:gap-10">
           <div className="flex flex-wrap items-center gap-3 shrink-0">
             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-white ring-1 ring-white/20">

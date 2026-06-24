@@ -330,6 +330,43 @@ export async function getRecentTemplates(
     .slice(0, limit);
 }
 
+export interface EscolaDashboard {
+  id: string;
+  nome: string;
+  turmaCount: number;
+}
+
+export async function getRecentEscolasComTurmas(
+  uid: string,
+  limit = 4,
+): Promise<{ escolas: EscolaDashboard[]; total: number }> {
+  const db = getAdminDb();
+  const [escolasSnap, turmasSnap] = await Promise.all([
+    db.collection("magis_escolas").where("user_id", "==", uid).get(),
+    db.collection("magis_turmas").where("user_id", "==", uid).get(),
+  ]);
+
+  const turmaCountByEscola: Record<string, number> = {};
+  for (const doc of turmasSnap.docs) {
+    const d = doc.data();
+    const eid = typeof d.escola_id === "string" ? d.escola_id : "";
+    if (eid) turmaCountByEscola[eid] = (turmaCountByEscola[eid] ?? 0) + 1;
+  }
+
+  const escolas = escolasSnap.docs
+    .map((doc) => {
+      const d = doc.data();
+      return {
+        id: doc.id,
+        nome: typeof d.nome === "string" ? d.nome : "",
+        turmaCount: turmaCountByEscola[doc.id] ?? 0,
+      };
+    })
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+  return { escolas: escolas.slice(0, limit), total: escolas.length };
+}
+
 export interface PlanoDetalhes extends PlanoComNome {
   schema_campos: TemplateFieldSchema[];
   tipo_plano: string | null;
