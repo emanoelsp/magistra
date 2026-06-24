@@ -144,6 +144,14 @@ export default async function DashboardPage() {
         {!showOnboarding && (
           <div className="mt-5 flex flex-wrap items-center gap-2.5 md:gap-3">
             <Link
+              href="/dashboard/escolas"
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-600 md:px-5 md:py-3"
+            >
+              <Plus className="h-4 w-4" />
+              Nova escola
+            </Link>
+
+            <Link
               href="/dashboard/templates"
               className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 md:px-5 md:py-3"
             >
@@ -286,22 +294,12 @@ export default async function DashboardPage() {
             Suas escolas
           </h2>
           {temEscolas && (
-            <div className="flex items-center gap-2">
-              <Link
-                href="/dashboard/escolas"
-                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-              >
-                Ver todas
-              </Link>
-              <Link
-                href="/dashboard/escolas"
-                className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Nova escola</span>
-                <span className="sm:hidden">Nova</span>
-              </Link>
-            </div>
+            <Link
+              href="/dashboard/escolas"
+              className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+            >
+              Ver todas
+            </Link>
           )}
         </div>
 
@@ -372,24 +370,12 @@ export default async function DashboardPage() {
               Seus templates
             </h2>
             {templates.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Link
-                  href="/dashboard/templates"
-                  className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-                >
-                  Ver todos
-                </Link>
-                {canAddTemplate && (
-                  <Link
-                    href="/dashboard/templates"
-                    className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Novo template</span>
-                    <span className="sm:hidden">Novo</span>
-                  </Link>
-                )}
-              </div>
+              <Link
+                href="/dashboard/templates"
+                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                Ver todos
+              </Link>
             )}
           </div>
 
@@ -458,22 +444,12 @@ export default async function DashboardPage() {
               Seus planos
             </h2>
             {planos.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Link
-                  href="/dashboard/historico"
-                  className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-                >
-                  Ver todos
-                </Link>
-                <Link
-                  href="/dashboard/gerar"
-                  className="flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Novo plano</span>
-                  <span className="sm:hidden">Novo</span>
-                </Link>
-              </div>
+              <Link
+                href="/dashboard/historico"
+                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                Ver todos
+              </Link>
             )}
           </div>
 
