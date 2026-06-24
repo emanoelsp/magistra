@@ -17,15 +17,17 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const user = await requireCurrentUserProfile();
-    const body = (await request.json()) as { nome?: string };
+    const body = (await request.json()) as { nome?: string; cursos?: unknown };
     const nome = body.nome?.trim() ?? "";
     if (!nome) return NextResponse.json({ error: "Nome obrigatório." }, { status: 400 });
 
     const db = getAdminDb();
     const ref = db.collection("magis_escolas").doc();
     const criado_em = new Date().toISOString();
-    await ref.set({ user_id: user.uid, nome, criado_em });
-    return NextResponse.json({ ok: true, id: ref.id, nome, criado_em });
+    const data: Record<string, unknown> = { user_id: user.uid, nome, criado_em };
+    if (Array.isArray(body.cursos) && body.cursos.length > 0) data.cursos = body.cursos;
+    await ref.set(data);
+    return NextResponse.json({ ok: true, id: ref.id, nome, cursos: data.cursos ?? [], criado_em });
   } catch {
     return NextResponse.json({ error: "Falha ao criar escola." }, { status: 500 });
   }

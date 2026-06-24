@@ -37,7 +37,7 @@ export default async function EscolasPage() {
           </div>
         </div>
       </div>
-      <EscolasManager initialEscolas={escolas} initialTurmas={turmas} />
+      <EscolasManager initialEscolas={escolas} initialTurmas={turmas} initialEscolaPadrao={user.escola_padrao} />
     </div>
   );
 }

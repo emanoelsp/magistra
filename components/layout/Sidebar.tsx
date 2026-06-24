@@ -14,7 +14,11 @@ const links = [
   { href: "/dashboard/perfil", label: "Perfil & assinatura", icon: User2 },
 ] as const;
 
-export function Sidebar() {
+interface SidebarProps {
+  profileIncomplete?: boolean;
+}
+
+export function Sidebar({ profileIncomplete = false }: SidebarProps) {
   const pathname = usePathname();
 
   async function handleLogout() {
@@ -34,6 +38,7 @@ export function Sidebar() {
           const active = item.href === "/dashboard"
             ? pathname === "/dashboard"
             : pathname.startsWith(item.href);
+          const showBadge = profileIncomplete && item.href === "/dashboard/perfil";
 
           return (
             <Link
@@ -46,7 +51,14 @@ export function Sidebar() {
                   : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
               ].join(" ")}
             >
-              <Icon className="h-4 w-4" />
+              <div className="relative shrink-0">
+                <Icon className="h-4 w-4" />
+                {showBadge && (
+                  <span className="absolute -right-1.5 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold leading-none text-white">
+                    1
+                  </span>
+                )}
+              </div>
               <span>{item.label}</span>
             </Link>
           );
@@ -64,4 +76,3 @@ export function Sidebar() {
     </aside>
   );
 }
-

@@ -1,6 +1,6 @@
 import "server-only";
 import { getAdminDb } from "../../firebase/admin";
-import type { EscolaRecord, TurmaRecord } from "../../types/firestore";
+import type { CursoEntry, CursoTipo, EscolaRecord, TurmaRecord } from "../../types/firestore";
 
 export async function getUserEscolas(uid: string): Promise<EscolaRecord[]> {
   const db = getAdminDb();
@@ -12,6 +12,7 @@ export async function getUserEscolas(uid: string): Promise<EscolaRecord[]> {
         id: doc.id,
         user_id: typeof d.user_id === "string" ? d.user_id : "",
         nome: typeof d.nome === "string" ? d.nome : "",
+        cursos: Array.isArray(d.cursos) ? (d.cursos as CursoEntry[]) : undefined,
         criado_em: typeof d.criado_em === "string" ? d.criado_em : new Date().toISOString(),
       };
     })
@@ -32,6 +33,10 @@ export async function getUserTurmas(uid: string): Promise<TurmaRecord[]> {
         nome: typeof d.nome === "string" ? d.nome : "",
         ano_letivo: typeof d.ano_letivo === "number" ? d.ano_letivo : new Date().getFullYear(),
         disciplina: typeof d.disciplina === "string" && d.disciplina ? d.disciplina : undefined,
+        tipo_curso: typeof d.tipo_curso === "string" ? (d.tipo_curso as CursoTipo) : undefined,
+        curso_nome: typeof d.curso_nome === "string" && d.curso_nome ? d.curso_nome : undefined,
+        grupo_id: typeof d.grupo_id === "string" && d.grupo_id ? d.grupo_id : null,
+        tem_aluno_especial: d.tem_aluno_especial === true,
         criado_em: typeof d.criado_em === "string" ? d.criado_em : new Date().toISOString(),
       };
     })

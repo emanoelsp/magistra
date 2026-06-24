@@ -19,11 +19,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const { db, doc } = await checkOwnership(user.uid, id);
     if (!doc) return NextResponse.json({ error: "Não encontrado." }, { status: 404 });
 
-    const body = (await request.json()) as { nome?: string };
+    const body = (await request.json()) as { nome?: string; cursos?: unknown };
     const nome = body.nome?.trim() ?? "";
     if (!nome) return NextResponse.json({ error: "Nome obrigatório." }, { status: 400 });
 
-    await db.collection("magis_escolas").doc(id).update({ nome });
+    const update: Record<string, unknown> = { nome };
+    if (Array.isArray(body.cursos)) update.cursos = body.cursos;
+    await db.collection("magis_escolas").doc(id).update(update);
 
     const turmasSnap = await db
       .collection("magis_turmas")

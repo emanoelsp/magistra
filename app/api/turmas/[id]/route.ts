@@ -17,11 +17,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       nome?: string;
       ano_letivo?: number;
       disciplina?: string;
+      grupo_id?: string | null;
+      tem_aluno_especial?: boolean;
     };
     const update: Record<string, unknown> = {};
     if (body.nome?.trim()) update.nome = body.nome.trim();
     if (typeof body.ano_letivo === "number") update.ano_letivo = body.ano_letivo;
     if ("disciplina" in body) update.disciplina = body.disciplina?.trim() || "";
+    if ("grupo_id" in body) update.grupo_id = body.grupo_id ?? null;
+    if ("tem_aluno_especial" in body) update.tem_aluno_especial = !!body.tem_aluno_especial;
 
     await db.collection("magis_turmas").doc(id).update(update);
     return NextResponse.json({ ok: true });

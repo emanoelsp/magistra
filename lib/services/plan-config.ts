@@ -7,8 +7,8 @@ export interface PlanLimits {
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
   free:     { maxTemplates: 1,   maxPlanosPerMonth: 1,   maxDownloadsPerPlano: 1   },
   starter:  { maxTemplates: 1,   maxPlanosPerMonth: 2,   maxDownloadsPerPlano: 1   },
-  medio:    { maxTemplates: 2,   maxPlanosPerMonth: 4,   maxDownloadsPerPlano: 2   },
-  pro:      { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4   },
+  medio:    { maxTemplates: 2,   maxPlanosPerMonth: 4,   maxDownloadsPerPlano: 3   },
+  pro:      { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 3   },
   avancado: { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4   },
   premium:  { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4   },
   escola:   { maxTemplates: 999, maxPlanosPerMonth: 999, maxDownloadsPerPlano: 999 },

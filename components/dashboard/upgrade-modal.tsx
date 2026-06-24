@@ -3,12 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import { X, TrendingUp, Tag, CheckCircle2, AlertCircle, Loader2, ChevronDown } from "lucide-react";
 import { PLAN_LABELS, PLAN_PRICES_BRL } from "../../lib/services/plan-config";
+import { PLANS } from "../../lib/services/plans";
 
-const PLANOS_PAGOS = [
-  { key: "starter", desc: "1 template · 2 planos/mês" },
-  { key: "medio",   desc: "2 templates · 4 planos/mês" },
-  { key: "pro",     desc: "5 templates · 10 planos/mês" },
-];
+const PLANOS_PAGOS = PLANS
+  .filter((p) => p.id !== "free")
+  .map((p) => ({
+    key: p.id,
+    desc: `${p.features[0]} · ${p.features[1]}`,
+  }));
 
 const PERIODOS = [
   { value: "auto", label: "Mensal — renova automaticamente" },

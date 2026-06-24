@@ -280,10 +280,18 @@ export interface GerarPlanoWizardValues {
   aprovacaoIA: boolean;
 }
 
+export type CursoTipo = "fundamental" | "medio" | "medio_tecnico" | "superior";
+
+export interface CursoEntry {
+  tipo: CursoTipo;
+  nome?: string; // nome do curso — obrigatório para medio_tecnico e superior
+}
+
 export interface EscolaRecord {
   id: string;
   user_id: string;
   nome: string;
+  cursos?: CursoEntry[];
   criado_em: string;
 }
 
@@ -295,5 +303,9 @@ export interface TurmaRecord {
   nome: string;
   ano_letivo: number;
   disciplina?: string;
+  tipo_curso?: CursoTipo;
+  curso_nome?: string;
+  grupo_id?: string | null;
+  tem_aluno_especial?: boolean;
   criado_em: string;
 }

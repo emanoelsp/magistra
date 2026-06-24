@@ -2,17 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Clock, FileText, LayoutDashboard, Sparkles, User2 } from "lucide-react";
+import { Clock, FileText, LayoutDashboard, Sparkles, User2 } from "lucide-react";
 
 const NAV_LINKS = [
-  { href: "/dashboard",           label: "Início",      icon: LayoutDashboard, exact: true },
-  { href: "/dashboard/templates", label: "Templates",   icon: FileText },
-  { href: "/dashboard/gerar",     label: "Gerar",       icon: Sparkles,        cta: true },
-  { href: "/dashboard/escolas",   label: "Escolas",     icon: Building2 },
-  { href: "/dashboard/historico", label: "Histórico",   icon: Clock },
+  { href: "/dashboard",           label: "Início",    icon: LayoutDashboard, exact: true },
+  { href: "/dashboard/templates", label: "Templates", icon: FileText },
+  { href: "/dashboard/gerar",     label: "Gerar",     icon: Sparkles,        cta: true },
+  { href: "/dashboard/historico", label: "Histórico", icon: Clock },
+  { href: "/dashboard/perfil",    label: "Perfil",    icon: User2 },
 ] as const;
 
-export function MobileNav() {
+interface MobileNavProps {
+  profileIncomplete?: boolean;
+}
+
+export function MobileNav({ profileIncomplete = false }: MobileNavProps) {
   const pathname = usePathname();
 
   return (
@@ -27,6 +31,7 @@ export function MobileNav() {
           const active = "exact" in item && item.exact
             ? pathname === item.href
             : pathname.startsWith(item.href);
+          const showBadge = profileIncomplete && item.href === "/dashboard/perfil";
 
           if ("cta" in item && item.cta) {
             return (
@@ -58,7 +63,14 @@ export function MobileNav() {
               {active && (
                 <span className="absolute top-0 left-1/2 h-0.5 w-8 -translate-x-1/2 rounded-full bg-slate-950" aria-hidden />
               )}
-              <Icon className={`h-5 w-5 transition ${active ? "text-slate-950" : "text-slate-400"}`} />
+              <div className="relative">
+                <Icon className={`h-5 w-5 transition ${active ? "text-slate-950" : "text-slate-400"}`} />
+                {showBadge && (
+                  <span className="absolute -right-2 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold leading-none text-white">
+                    1
+                  </span>
+                )}
+              </div>
               <span className={`text-[10px] font-medium transition ${active ? "text-slate-950" : "text-slate-400"}`}>
                 {item.label}
               </span>

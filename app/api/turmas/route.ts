@@ -12,6 +12,10 @@ export async function POST(request: Request) {
       nome?: string;
       ano_letivo?: number;
       disciplina?: string;
+      tipo_curso?: string;
+      curso_nome?: string;
+      grupo_id?: string;
+      tem_aluno_especial?: boolean;
     };
 
     const escola_id = body.escola_id?.trim() ?? "";
@@ -45,6 +49,10 @@ export async function POST(request: Request) {
       criado_em,
     };
     if (disciplina) data.disciplina = disciplina;
+    if (body.tipo_curso) data.tipo_curso = body.tipo_curso;
+    if (body.curso_nome) data.curso_nome = body.curso_nome;
+    if (body.grupo_id) data.grupo_id = body.grupo_id;
+    if (body.tem_aluno_especial) data.tem_aluno_especial = true;
     await ref.set(data);
 
     return NextResponse.json({ ok: true, id: ref.id, ...data });
