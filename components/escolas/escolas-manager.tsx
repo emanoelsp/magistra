@@ -875,6 +875,14 @@ function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }
         <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${CURSO_COLORS[curso.tipo]}`}>
           {cursoLabel(curso)}
         </span>
+        <button
+          type="button"
+          onClick={onAddTurma}
+          className="inline-flex items-center gap-1 rounded-2xl border border-dashed border-violet-300 px-2.5 py-0.5 text-xs font-medium text-violet-600 hover:border-violet-400 hover:bg-violet-50"
+        >
+          <Plus className="h-3 w-3" />
+          Nova turma
+        </button>
       </div>
 
       <div className="space-y-1.5 pl-1">
@@ -916,15 +924,6 @@ function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }
         {turmas.length === 0 && (
           <p className="text-xs text-slate-400 italic">Nenhuma turma ainda.</p>
         )}
-
-        <button
-          type="button"
-          onClick={onAddTurma}
-          className="inline-flex items-center gap-1.5 rounded-2xl border border-dashed border-violet-300 px-3 py-1.5 text-xs font-medium text-violet-600 hover:border-violet-400 hover:bg-violet-50"
-        >
-          <Plus className="h-3 w-3" />
-          Nova turma
-        </button>
       </div>
     </div>
   );
@@ -1077,7 +1076,7 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
 
       {/* ── Empty state ─────────────────────────────────────────────────── */}
       {escolas.length === 0 && (
-        <div className="mt-8 flex flex-col items-start gap-6 max-w-sm">
+        <div className="mt-8 flex flex-col gap-6 max-w-2xl">
           <div className="flex items-start gap-3 w-full">
             {/* avatar */}
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
@@ -1094,15 +1093,17 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setAddEscolaOpen(true)}
-            className="ml-15 inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
-          >
-            <Building2 className="h-4 w-4" />
-            Adicionar minha primeira escola
-            <span>→</span>
-          </button>
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => setAddEscolaOpen(true)}
+              className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
+            >
+              <Building2 className="h-4 w-4" />
+              Adicionar minha primeira escola
+              <span>→</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -1126,6 +1127,16 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
                   )}
                 </div>
                 <div className="flex items-center gap-1.5">
+                  {hasCursos && (
+                    <button
+                      type="button"
+                      onClick={() => setAddCursoTarget(escola)}
+                      className="inline-flex items-center gap-1 rounded-2xl border border-dashed border-indigo-300 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Novo curso
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setEditEscolaTarget(escola)}
@@ -1163,14 +1174,6 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
                       />
                     );
                   })}
-                  <button
-                    type="button"
-                    onClick={() => setAddCursoTarget(escola)}
-                    className="mt-2 inline-flex items-center gap-1.5 rounded-2xl border border-dashed border-indigo-300 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Novo curso
-                  </button>
                 </div>
               ) : (
                 /* Legacy flat display for schools without cursos */

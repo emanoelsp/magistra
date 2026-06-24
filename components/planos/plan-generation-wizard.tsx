@@ -56,6 +56,11 @@ interface PlanGenerationWizardProps {
   recentPlanos?: RecentPlano[];
   resumeData?: ResumeData;
   turmas?: TurmaRecord[];
+  fromIntroModal?: boolean;
+  initialPlanoTitulo?: string;
+  initialEstado?: string;
+  initialEscolaId?: string;
+  initialTurmaId?: string;
 }
 
 function formatDate(value: string) {
@@ -113,6 +118,11 @@ export function PlanGenerationWizard({
   recentPlanos = [],
   resumeData,
   turmas = [],
+  fromIntroModal = false,
+  initialPlanoTitulo,
+  initialEstado,
+  initialEscolaId,
+  initialTurmaId,
 }: PlanGenerationWizardProps) {
   const router = useRouter();
 
@@ -122,9 +132,9 @@ export function PlanGenerationWizard({
 
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialId);
-  const [planoTitulo, setPlanoTitulo] = useState(resumeData?.planoTitulo ?? "");
+  const [planoTitulo, setPlanoTitulo] = useState(resumeData?.planoTitulo ?? initialPlanoTitulo ?? "");
   const [selectedEstado, setSelectedEstado] = useState<string>(
-    availableTemplates.find((t) => t.id === initialId)?.estado ?? ""
+    initialEstado ?? availableTemplates.find((t) => t.id === initialId)?.estado ?? ""
   );
   const [selectedTipoPlano, setSelectedTipoPlano] = useState<string>(
     availableTemplates.find((t) => t.id === initialId)?.tipoPlano ?? ""
@@ -142,8 +152,8 @@ export function PlanGenerationWizard({
   const [isSavingMeta, startSavingMeta] = useTransition();
   const [isPending, startTransition] = useTransition();
   const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
-  const [selectedTurmaId, setSelectedTurmaId] = useState("");
-  const [selectedEscolaId, setSelectedEscolaId] = useState("");
+  const [selectedTurmaId, setSelectedTurmaId] = useState(initialTurmaId ?? "");
+  const [selectedEscolaId, setSelectedEscolaId] = useState(initialEscolaId ?? "");
   const [turmaFilterEscolaId, setTurmaFilterEscolaId] = useState("");
 
   const editorRef = useRef<PlanEditorHandle>(null);
@@ -372,6 +382,23 @@ export function PlanGenerationWizard({
     ...metadataValues,
   };
 
+  // ── Render helpers ─────────────────────────────────────────────────────────
+
+  function MagisChatBubble({ children }: { children: React.ReactNode }) {
+    return (
+      <div className="flex items-end gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
+          <Sparkles className="h-3 w-3 text-white" />
+        </div>
+        <div className="max-w-[75%]">
+          <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
+            <p className="text-sm leading-snug text-slate-800">{children}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -486,269 +513,196 @@ export function PlanGenerationWizard({
         </div>
       )}
 
-      {/* ── Passo 2: Metadados ─────────────────────────────────────────────── */}
-      {currentStep === 1 && selectedTemplate && (
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          {(() => {
-            const escolaField = manualFields.find(
-              (f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"),
-            );
-            const gridFields = manualFields.filter((f) => f !== escolaField);
-            return (
-              <>
-                <div className="mb-6 flex items-center gap-3">
-                  <div className="rounded-2xl bg-violet-50 p-3 text-violet-600">
-                    <FileText className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-slate-950">Dados do template</h3>
-                    <p className="text-sm text-slate-500">
-                      {allPreFilled
-                        ? "Campos pré-preenchidos com os dados salvos — confirme ou edite e avance."
-                        : temMetadados(selectedTemplate)
-                          ? "Dados salvos detectados — confirme ou edite antes de continuar."
-                          : "Preencha os dados fixos do template. Serão reutilizados nos próximos planos."}
-                    </p>
-                  </div>
-                </div>
+      {/* ── Passo 2: Metadados — chat WhatsApp ────────────────────────────── */}
+      {currentStep === 1 && selectedTemplate && (() => {
+        const chatFields = fromIntroModal
+          ? manualFields
+          : manualFields; // sem intro: ainda mostramos os manualFields; titulo/curriculo aparecem antes
 
-                {/* Turma rápida — atalho que pré-preenche os campos abaixo */}
-                {turmas.length > 0 && (
-                  <div className="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-4">
-                    <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-violet-600">
-                      ⚡ Atalho — selecionar turma salva
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {escolasComTurmas.length > 1 && (
-                        <div className="relative">
-                          <select
-                            value={turmaFilterEscolaId}
-                            onChange={(e) => setTurmaFilterEscolaId(e.target.value)}
-                            aria-label="Filtrar por escola"
-                            className="appearance-none rounded-xl border border-violet-300 bg-white py-2 pl-3 pr-8 text-sm text-slate-700 outline-none focus:border-violet-500"
-                          >
-                            <option value="">Todas as escolas</option>
-                            {escolasComTurmas.map((e) => (
-                              <option key={e.id} value={e.id}>{e.nome}</option>
-                            ))}
-                          </select>
-                          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
-                        </div>
-                      )}
-                      <div className="relative">
-                        <select
-                          value={selectedTurmaId}
-                          onChange={(e) => {
-                            const t = turmas.find((t) => t.id === e.target.value);
-                            if (t) applyTurma(t);
-                          }}
-                          aria-label="Selecionar turma"
-                          className="appearance-none rounded-xl border border-violet-300 bg-white py-2 pl-3 pr-8 text-sm text-slate-700 outline-none focus:border-violet-500"
-                        >
-                          <option value="">Selecione a turma…</option>
-                          {turmasFiltradas.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {escolasComTurmas.length > 1 ? `${t.escola_nome} — ` : ""}{t.nome}{t.disciplina ? ` · ${t.disciplina}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
-                      </div>
-                      {selectedTurmaId && (
-                        <button
-                          type="button"
-                          onClick={() => { setSelectedTurmaId(""); setSelectedEscolaId(""); }}
-                          className="text-xs text-violet-500 hover:text-violet-700"
-                        >
-                          Limpar
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
+        return (
+          <div className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
+            {/* Info bar: resumo do que foi escolhido no modal */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+              <span className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700">
+                {selectedTemplate.nome}
+              </span>
+              {planoTitulo && (
+                <span className="text-xs text-slate-500 truncate max-w-[200px]">{planoTitulo}</span>
+              )}
+              {selectedEstado && (
+                <span className="rounded-lg bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600">
+                  {selectedEstado}
+                </span>
+              )}
+            </div>
 
-                {/* Template + Escola — campos obrigatórios em destaque */}
-                <div className="mb-5 grid gap-4 md:grid-cols-2">
-                  <div className="flex flex-col gap-1 rounded-2xl border-2 border-violet-200 bg-violet-50 px-4 py-3">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-violet-500">
-                      Template <span className="text-rose-500">*</span>
-                    </span>
-                    <p className="truncate text-sm font-semibold text-slate-950">{selectedTemplate.nome}</p>
-                  </div>
-                  {escolaField ? (
-                    <label className="block">
-                      <span className="text-sm font-semibold text-slate-700">
-                        {escolaField.label} <span className="text-rose-500">*</span>
-                      </span>
-                      <input
-                        type="text"
-                        value={metadataValues[escolaField.key] ?? ""}
-                        onChange={(e) =>
-                          setMetadataValues((p) => ({ ...p, [escolaField.key]: e.target.value }))
-                        }
-                        placeholder={escolaField.placeholder ?? `Ex.: ${escolaField.label.toLowerCase()}`}
-                        className="mt-1.5 w-full rounded-2xl border-2 border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
-                      />
-                    </label>
-                  ) : (
-                    <div className="flex flex-col gap-1 rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 py-3">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                        Escola
-                      </span>
-                      <p className="truncate text-sm text-slate-700">{selectedTemplate.escolaNome ?? "—"}</p>
+            {/* Atalho turma salva — só quando não veio do intro modal (intro já selecionou) */}
+            {!fromIntroModal && turmas.length > 0 && (
+              <div className="border-b border-slate-100 bg-white px-4 py-3">
+                <p className="mb-2 text-xs font-semibold text-violet-600">⚡ Atalho — selecionar turma salva</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {escolasComTurmas.length > 1 && (
+                    <div className="relative">
+                      <select
+                        value={turmaFilterEscolaId}
+                        onChange={(e) => setTurmaFilterEscolaId(e.target.value)}
+                        aria-label="Filtrar por escola"
+                        className="appearance-none rounded-xl border border-violet-300 bg-white py-1.5 pl-3 pr-7 text-sm text-slate-700 outline-none focus:border-violet-500"
+                      >
+                        <option value="">Todas as escolas</option>
+                        {escolasComTurmas.map((e) => (
+                          <option key={e.id} value={e.id}>{e.nome}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
                     </div>
                   )}
-                </div>
-
-                {/* Pre-fill banner */}
-                {allPreFilled && (
-                  <div className="mb-5 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                    <p className="text-sm text-emerald-800">
-                      <strong>Tudo pré-preenchido!</strong> Os campos foram carregados a partir dos dados salvos no template. Edite se quiser ou clique em <strong>Preencher com a Magis</strong> para continuar.
-                    </p>
+                  <div className="relative">
+                    <select
+                      value={selectedTurmaId}
+                      onChange={(e) => {
+                        const t = turmas.find((t) => t.id === e.target.value);
+                        if (t) applyTurma(t);
+                      }}
+                      aria-label="Selecionar turma"
+                      className="appearance-none rounded-xl border border-violet-300 bg-white py-1.5 pl-3 pr-7 text-sm text-slate-700 outline-none focus:border-violet-500"
+                    >
+                      <option value="">Selecione a turma…</option>
+                      {turmasFiltradas.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {escolasComTurmas.length > 1 ? `${t.escola_nome} — ` : ""}{t.nome}{t.disciplina ? ` · ${t.disciplina}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
                   </div>
-                )}
+                  {selectedTurmaId && (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedTurmaId(""); setSelectedEscolaId(""); }}
+                      className="text-xs text-violet-500 hover:text-violet-700"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
-                {/* Título do plano */}
-                <div className="mb-5">
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">Título do plano</span>
-                    <span className="ml-1 text-xs text-rose-500">*</span>
-                    <p className="mt-0.5 text-xs text-slate-400">Será o nome do arquivo ao baixar o plano gerado.</p>
+            {/* Chat area — estilo WhatsApp */}
+            <div className="bg-[#ece5dd] px-4 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
+              <MagisChatBubble>
+                {chatFields.length > 0
+                  ? "Ótimo! Agora me conta alguns dados sobre a turma e a aula para personalizar as sugestões."
+                  : "Tudo certo! Este template não tem campos manuais. Pode avançar direto para o preenchimento com a Magis."}
+              </MagisChatBubble>
+
+              {/* Título e currículo quando não vem do intro modal */}
+              {!fromIntroModal && (
+                <>
+                  <MagisChatBubble>Qual o título do plano? (será o nome do arquivo PDF)</MagisChatBubble>
+                  <div className="flex justify-end">
                     <input
                       type="text"
                       value={planoTitulo}
                       onChange={(e) => setPlanoTitulo(e.target.value)}
-                      placeholder="Ex.: Plano de Aula — Banco de Dados — Turma 101 — Mai 2026"
-                      className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                      placeholder="Ex.: Plano — Banco de Dados — Jun 2026"
+                      className="w-[78%] rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-violet-400"
                     />
-                  </label>
-                </div>
+                  </div>
 
-                {/* Currículo regional (full-width) */}
-                <div className="mb-5">
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">Currículo regional</span>
-                    <p className="mt-0.5 text-xs text-slate-400">Personaliza sugestões com o currículo estadual.</p>
-                    <div className="relative mt-1.5">
+                  <MagisChatBubble>Qual currículo estadual devo usar nas sugestões?</MagisChatBubble>
+                  <div className="flex justify-end">
+                    <div className="relative w-[78%]">
                       <select
                         value={selectedEstado}
                         onChange={(e) => setSelectedEstado(e.target.value)}
-                        className="w-full appearance-none rounded-2xl border border-orange-300 bg-white px-4 py-3 pr-10 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                        className="w-full appearance-none rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 pr-9 text-sm shadow-sm outline-none focus:border-violet-400"
                       >
                         <option value="">Sem currículo estadual</option>
                         {ESTADOS_BRASIL.map((e) => (
                           <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
                         ))}
                       </select>
-                      <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     </div>
-                  </label>
-                </div>
-
-                {gridFields.length === 0 ? (
-                  !escolaField && (
-                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                      <p className="text-sm text-slate-500">
-                        Este template não possui campos manuais extraídos. Continue para o editor.
-                      </p>
-                    </div>
-                  )
-                ) : (
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {gridFields.flatMap((field, idx) => {
-                      const first2profIdx = gridFields.findIndex(is2profField);
-                      const items: React.ReactNode[] = [];
-                      items.push(
-                        <label key={field.key} className="block">
-                          <span className="text-sm font-medium text-slate-700">{field.label}</span>
-                          {field.required && <span className="ml-1 text-xs text-rose-500">*</span>}
-                          {has2prof && idx === first2profIdx && (
-                            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-violet-600">
-                              <Sparkles className="h-3 w-3 shrink-0" />
-                              A Magis vai incluir sugestões específicas de NEE, AEE e adaptações curriculares no próximo passo.
-                            </p>
-                          )}
-                          {field.type === "textarea" ? (
-                            <textarea
-                              rows={3}
-                              value={metadataValues[field.key] ?? ""}
-                              onChange={(e) =>
-                                setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
-                              }
-                              placeholder={field.placeholder ?? field.label}
-                              className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
-                            />
-                          ) : field.type === "number" ? (
-                            <input
-                              type="number"
-                              value={metadataValues[field.key] ?? ""}
-                              onChange={(e) =>
-                                setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
-                              }
-                              className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
-                            />
-                          ) : (
-                            <input
-                              type="text"
-                              value={metadataValues[field.key] ?? ""}
-                              onChange={(e) =>
-                                setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))
-                              }
-                              placeholder={field.placeholder ?? `Ex.: ${field.label.toLowerCase()}`}
-                              className="mt-1.5 w-full rounded-2xl border border-orange-300 px-4 py-3 text-sm text-slate-950 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
-                            />
-                          )}
-                        </label>
-                      );
-                      return items;
-                    })}
                   </div>
-                )}
+                </>
+              )}
 
-                <div className="mt-5 border-t border-slate-100 pt-5">
-                  <label className="flex cursor-pointer items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={saveToTemplate}
-                      onChange={(e) => setSaveToTemplate(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-600"
-                    />
-                    <span className="text-sm text-slate-600">
-                      Salvar esses dados no template para reutilizar nos próximos planos
-                    </span>
-                  </label>
-                </div>
+              {/* Campos manuais do template */}
+              {chatFields.map((field, idx) => {
+                const first2profIdx = chatFields.findIndex(is2profField);
+                return (
+                  <div key={field.key} className="space-y-2">
+                    <MagisChatBubble>
+                      {field.label}{field.required ? "" : " (opcional)"}
+                      {has2prof && idx === first2profIdx
+                        ? " — vou incluir sugestões de NEE e adaptações curriculares no próximo passo."
+                        : ""}
+                    </MagisChatBubble>
+                    <div className="flex justify-end">
+                      {field.type === "textarea" ? (
+                        <textarea
+                          rows={3}
+                          value={metadataValues[field.key] ?? ""}
+                          onChange={(e) => setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))}
+                          placeholder={field.placeholder ?? field.label}
+                          className="w-[78%] resize-none rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-violet-400"
+                        />
+                      ) : (
+                        <input
+                          type={field.type === "number" ? "number" : "text"}
+                          value={metadataValues[field.key] ?? ""}
+                          onChange={(e) => setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))}
+                          placeholder={field.placeholder ?? `Ex.: ${field.label.toLowerCase()}`}
+                          className="w-[78%] rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-violet-400"
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
 
-                <div className="mt-5 flex items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={goBack}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    Voltar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleContinueStep2}
-                    disabled={isSavingMeta}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-6 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-60"
-                  >
-                    {isSavingMeta ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4" />
-                    )}
-                    {saveToTemplate ? "Salvar e preencher com a Magis" : "Preencher com a Magis"}
-                  </button>
-                </div>
-              </>
-            );
-          })()}
-        </div>
-      )}
+            {/* Footer */}
+            <div className="border-t border-slate-100 bg-white px-4 py-4">
+              <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={saveToTemplate}
+                  onChange={(e) => setSaveToTemplate(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-600"
+                />
+                Salvar dados para reutilizar nos próximos planos
+              </label>
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={goBack}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleContinueStep2}
+                  disabled={isSavingMeta}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-6 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {isSavingMeta ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  Preencher com a Magis
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Passo 3: Editor com IA ─────────────────────────────────────────── */}
       {currentStep === 2 && templateRecord && (

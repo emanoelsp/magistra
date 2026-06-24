@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronDown, Eye, EyeOff, Loader2, Lock } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Eye, EyeOff, Loader2, Lock } from "lucide-react";
 
 interface PerfilFormProps {
   nome: string;
@@ -29,6 +29,10 @@ function DadosPessoaisSection({
   const dirty =
     values.nome.trim() !== (nome ?? "") ||
     values.escola_padrao.trim() !== (escolaPadrao ?? "");
+
+  const nomeEmpty = values.nome.trim() === "";
+  const escolaEmpty = values.escola_padrao.trim() === "";
+  const hasWarning = nomeEmpty || escolaEmpty;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,16 +66,26 @@ function DadosPessoaisSection({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {hasWarning && (
+        <div className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <p className="text-xs leading-relaxed text-amber-700">
+            Preencha os campos destacados para completar seu perfil e remover a notificação do menu.
+          </p>
+        </div>
+      )}
+
       <div>
-        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <label className={`mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider ${nomeEmpty ? "text-amber-600" : "text-slate-500"}`}>
           Nome
+          {nomeEmpty && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-amber-600">Pendente</span>}
         </label>
         <input
           type="text"
           value={values.nome}
           onChange={(e) => setValues((v) => ({ ...v, nome: e.target.value }))}
           placeholder="Seu nome completo"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
+          className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${nomeEmpty ? "border-amber-400 bg-amber-50/50 focus:border-amber-500" : "border-slate-300 focus:border-slate-950"}`}
         />
       </div>
 
@@ -89,15 +103,16 @@ function DadosPessoaisSection({
       </div>
 
       <div>
-        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <label className={`mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider ${escolaEmpty ? "text-amber-600" : "text-slate-500"}`}>
           Escola padrão
+          {escolaEmpty && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-amber-600">Pendente</span>}
         </label>
         <input
           type="text"
           value={values.escola_padrao}
           onChange={(e) => setValues((v) => ({ ...v, escola_padrao: e.target.value }))}
           placeholder="Nome da sua escola"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
+          className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${escolaEmpty ? "border-amber-400 bg-amber-50/50 focus:border-amber-500" : "border-slate-300 focus:border-slate-950"}`}
         />
         <p className="mt-1 text-xs text-slate-400">
           Preenchida automaticamente nos planos que você gerar.
