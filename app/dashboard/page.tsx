@@ -274,8 +274,11 @@ export default async function DashboardPage() {
         </section>
       )}
 
+      {/* Escolas · Templates · Planos */}
+      <section className="grid gap-6 lg:grid-cols-3">
+
       {/* Escolas e Turmas */}
-      <section className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6">
+      <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6">
         <div className="mb-4 flex items-center justify-between gap-3 md:mb-5">
           <h2 className="text-base font-semibold tracking-tight text-slate-950 md:text-lg">
             Suas escolas
@@ -356,10 +359,7 @@ export default async function DashboardPage() {
             )}
           </>
         )}
-      </section>
-
-      {/* Templates + Planos */}
-      <section className="grid gap-6 xl:grid-cols-2">
+      </div>
 
         {/* Templates */}
         <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6">
@@ -580,7 +580,7 @@ export default async function DashboardPage() {
           )}
         </div>
 
-      </section>
+      </section>{/* /grid 3 cols */}
     </div>
   );
 }
