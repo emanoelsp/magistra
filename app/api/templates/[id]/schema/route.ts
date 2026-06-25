@@ -189,6 +189,7 @@ export async function PATCH(
     for (const edit of cellEditsPayload) {
       if (!edit.newContent?.trim()) continue;
       const keysInEdit = [...edit.newContent.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]);
+      const prevBufBeforeEdit = buffer;
       if (edit.coord) {
         // contextBefore (text on the same line before {{key}} in the DOM) is a more
         // precise anchor than the field label: it matches exactly the segment where
@@ -199,22 +200,34 @@ export async function PATCH(
             : "");
         const prevBuf = buffer;
         buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint, edit.replaceContent);
+        const coordWorked = buffer !== prevBuf;
+        console.info(`[schema/cell_edit] coord=${edit.coord} newContent=${edit.newContent.slice(0, 60)} coordWorked=${coordWorked}`);
         // If coord lookup failed (returned same buffer), fall back to text-based injection
-        if (buffer === prevBuf && edit.cellText) {
+        if (!coordWorked && edit.cellText) {
           const cleanCellText = (edit.cellText)
             .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
             .replace(/\s+/g, " ")
             .trim();
+          const prevBuf2 = buffer;
           buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+          console.info(`[schema/cell_edit] rawCell cellText="${cleanCellText.slice(0, 60)}" ordinal=${edit.ordinal ?? 0} worked=${buffer !== prevBuf2}`);
         }
       } else {
         const cleanCellText = (edit.cellText ?? "")
           .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
           .replace(/\s+/g, " ")
           .trim();
+        const prevBuf2 = buffer;
         buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+        console.info(`[schema/cell_edit] no-coord rawCell cellText="${cleanCellText.slice(0, 60)}" ordinal=${edit.ordinal ?? 0} worked=${buffer !== prevBuf2}`);
       }
-      for (const k of keysInEdit) placedByCellEdits.add(k);
+      // Only mark keys as placed if at least one injection actually modified the buffer.
+      // If both injectAtCoord and injectRawCell returned the same buffer, the cell was
+      // not found (e.g. it lives in a header file or normText collision). Leaving those
+      // keys out of placedByCellEdits lets injectPlaceholders attempt them as a fallback.
+      if (buffer !== prevBufBeforeEdit) {
+        for (const k of keysInEdit) placedByCellEdits.add(k);
+      }
     }
 
     // 1b. Apply all known positions via injectAtCoord (coord) or injectAtCell (text fallback).
@@ -262,13 +275,16 @@ export async function PATCH(
       console.info(`[templates/schema] Campos sem placeholder automático: ${camposSemPlaceholder.join(", ")}`);
     }
 
-    // 4. Tier 2 orphan fallback: fields still missing AND not in allPositions
+    // 4. Tier 2 orphan fallback: fields still missing after all injection passes
     //    → append a labeled row so docxtemplater always has a valid target.
-    const positionedKeys = new Set(Object.keys(allPositions));
+    // NOTE: We do NOT guard with allPositions here — a stored coord from a previous
+    // save may point to an orphan row that no longer exists in the original DOCX
+    // (orphans are re-appended each save). Guarding on allPositions would cause
+    // the field to be permanently lost with no token in the buffer.
     for (const key of camposSemPlaceholder) {
-      if (positionedKeys.has(key)) continue;
       const field = newSchema.find((f) => f.key === key);
       if (!field) continue;
+      console.info(`[schema/orphan] appending orphan row for "${key}" (${field.label})`);
       buffer = appendOrphanField(buffer, key, field.label);
     }
 

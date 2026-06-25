@@ -378,10 +378,15 @@ export async function POST(request: Request) {
     // Includes non-table paragraphs (Rule 1) and implicitly excludes header/footer
     // XML files since scanDocxStructure only reads word/document.xml (Rule 5).
     const isDocxFile = /\.(docx|doc)(\?|$)/i.test(file.name);
-    const structuralPairs = isDocxFile ? (() => {
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    const allStructuralPairs = isDocxFile ? (() => {
       try { return scanDocxStructure(fileBuffer); } catch { return []; }
     })() : [];
-    console.info(`[introspect] Estrutura detectada: ${structuralPairs.length} pares`);
+    // Pares cujo valor já é um email completo são conteúdo estático — não criar campo.
+    const structuralPairs = allStructuralPairs.filter(
+      (p) => !EMAIL_RE.test(p.valuePreview.trim()),
+    );
+    console.info(`[introspect] Estrutura detectada: ${allStructuralPairs.length} pares (${allStructuralPairs.length - structuralPairs.length} email(s) estáticos excluídos)`);
 
     // Fast-path: template already has {{placeholders}} pre-typed by the user.
     // Derive schema deterministically from the keys found in the DOCX XML —
@@ -569,8 +574,10 @@ export async function POST(request: Request) {
       });
     });
 
+    // Strip undefined values — Firestore Admin rejeita undefined em campos opcionais do schema
+    const schemaSanitized = JSON.parse(JSON.stringify(schema)) as typeof schema;
     await db.collection("magis_templates").doc(templateId).update({
-      schema_campos: schema,
+      schema_campos: schemaSanitized,
       fillable_status: "processando",
       campos_baixa_confianca: camposBaixaConfianca,
     });

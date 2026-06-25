@@ -14,6 +14,7 @@ import type { EscolaRecord } from "../../lib/types/firestore";
 interface TemplatesWizardProps {
   userId: string;
   escolas: EscolaRecord[];
+  hasTemplates?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +80,7 @@ function MagisBubble({ text }: { text: string }) {
 
 type Step = "docx" | "escola" | "nome" | "arquivo";
 
-export function TemplatesWizard({ userId, escolas }: TemplatesWizardProps) {
+export function TemplatesWizard({ userId, escolas, hasTemplates = false }: TemplatesWizardProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -196,21 +197,37 @@ export function TemplatesWizard({ userId, escolas }: TemplatesWizardProps) {
 
   if (!open) {
     return (
-      <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 flex flex-col items-center gap-4 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-md">
-          <Sparkles className="h-6 w-6" />
+      <div className="flex flex-col gap-6">
+        <div className="flex items-start gap-3 max-w-2xl">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
+            <Sparkles className="h-5 w-5 text-white" />
+          </div>
+          <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-violet-600" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">Magis</span>
+            </div>
+            {hasTemplates ? (
+              <p className="text-sm leading-relaxed text-slate-800">
+                Legal! Vejo que você já tem templates cadastrados. Se quiser cadastrar mais, é só clicar no botão abaixo.
+              </p>
+            ) : (
+              <p className="text-sm leading-relaxed text-slate-800">
+                Para criar planos, preciso conhecer o modelo da sua escola. Suba o arquivo <strong>.docx</strong> e eu identifico os campos automaticamente!
+              </p>
+            )}
+          </div>
         </div>
-        <div>
-          <p className="text-sm font-semibold text-slate-900">Adicionar template com a Magis</p>
-          <p className="mt-1 text-xs text-slate-500">A Magis vai guiar você passo a passo no cadastro do template.</p>
+        <div className="flex w-full justify-center">
+          <button
+            onClick={() => setOpen(true)}
+            className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
+          >
+            <FileText className="h-4 w-4" />
+            {hasTemplates ? "Adicionar novo template" : "Criar meu primeiro template"}
+            <span>→</span>
+          </button>
         </div>
-        <button
-          onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white hover:bg-violet-500"
-        >
-          <Plus className="h-4 w-4" />
-          Novo template
-        </button>
       </div>
     );
   }

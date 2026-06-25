@@ -35,7 +35,7 @@ export default async function TemplatesPage() {
   const planoLabel = PLAN_LABELS[limitsStatus.plano] ?? limitsStatus.plano;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <header className="flex flex-col gap-4">
         <Link
           href="/dashboard"
@@ -108,51 +108,46 @@ export default async function TemplatesPage() {
             <LimitActions avulsoTipo="avulso_template" avulsoLabel="Contratar template avulso" />
           </div>
         ) : (
-          <TemplatesWizard userId={user.uid} escolas={escolas} />
+          <TemplatesWizard userId={user.uid} escolas={escolas} hasTemplates={templates.length > 0} />
         )}
       </section>
 
       {/* Templates list */}
-      <section className="rounded-3xl border border-slate-200 bg-white p-6">
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <FileText className="h-4 w-4 text-slate-500" />
-            Templates cadastrados
-          </h2>
-          {templates.length > 0 && (() => {
-            const ativos = templates.filter((t) => !t.deletado).length;
-            const excluidos = templates.length - ativos;
-            return (
-              <p className="text-xs text-slate-500">
-                {ativos} {ativos === 1 ? "disponível" : "disponíveis"}
-                {excluidos > 0 && (
-                  <span className="ml-1.5 text-rose-400">· {excluidos} excluído{excluidos > 1 ? "s" : ""}</span>
-                )}
-              </p>
-            );
-          })()}
-        </div>
-
-        {templates.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-600">
-            Nenhum template encontrado para{" "}
-            <span className="font-medium">{user.nome || user.email}</span>. Adicione ao menos um
-            modelo para gerar planos.
-          </p>
-        ) : (
+      {templates.length > 0 && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <FileText className="h-4 w-4 text-slate-500" />
+              Templates cadastrados
+            </h2>
+            {(() => {
+              const ativos = templates.filter((t) => !t.deletado).length;
+              const excluidos = templates.length - ativos;
+              return (
+                <p className="text-xs text-slate-500">
+                  {ativos} {ativos === 1 ? "disponível" : "disponíveis"}
+                  {excluidos > 0 && (
+                    <span className="ml-1.5 text-rose-400">· {excluidos} excluído{excluidos > 1 ? "s" : ""}</span>
+                  )}
+                </p>
+              );
+            })()}
+          </div>
           <TemplatesList templates={templates} canCreatePlano={canCreatePlano} />
-        )}
-      </section>
+        </section>
+      )}
 
       {/* Quick link to history */}
-      <div className="text-center">
-        <Link
-          href="/dashboard/historico"
-          className="text-sm text-slate-500 underline-offset-2 hover:text-slate-950 hover:underline"
-        >
-          Ver histórico de planos gerados →
-        </Link>
-      </div>
+      {templates.length > 0 && (
+        <div className="text-center">
+          <Link
+            href="/dashboard/historico"
+            className="text-sm text-slate-500 underline-offset-2 hover:text-slate-950 hover:underline"
+          >
+            Ver histórico de planos gerados →
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

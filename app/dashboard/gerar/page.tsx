@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 
 import { type ResumeData } from "../../../components/planos/plan-generation-wizard";
-import { GerarPlanoFlow } from "../../../components/planos/gerar-intro-modal";
+import { GerarPlanoTrigger } from "../../../components/planos/gerar-plano-trigger";
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getAdminDb } from "../../../lib/firebase/admin";
 import { getUserPlanosComNome, getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
@@ -22,6 +22,7 @@ const PLAN_LABELS: Record<string, string> = {
   premium:  "Regente",
 };
 
+
 interface GerarPlanoPageProps {
   searchParams: Promise<{ template?: string; resume?: string }>;
 }
@@ -29,18 +30,17 @@ interface GerarPlanoPageProps {
 export default async function GerarPlanoPage({ searchParams }: GerarPlanoPageProps) {
   const user = await requireCurrentUserProfile();
 
-  const [templates, params, limits, recentPlanosResult, turmas, escolas] = await Promise.all([
+  const [templates, params, limits, planosResult, turmas, escolas] = await Promise.all([
     getUserTemplateOptions(user.uid),
     searchParams,
     getLimitsStatus(user.uid, user.plano),
-    getUserPlanosComNome(user.uid, 3, 1),
+    getUserPlanosComNome(user.uid, 5, 1),
     getUserTurmas(user.uid),
     getUserEscolas(user.uid),
   ]);
 
   const { template: preSelectedId, resume: resumeId } = params;
 
-  // Load resume data when ?resume=<planoId> is present
   let resumeData: ResumeData | undefined;
   if (resumeId) {
     const snap = await getAdminDb().collection("magins_planos_aula").doc(resumeId).get();
@@ -67,9 +67,11 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
 
   const planoLabel = PLAN_LABELS[limits.plano] ?? limits.plano;
   const canCreatePlano = limits.canCreatePlano;
+  const planos = planosResult.items;
+  const userPlano = (user.plano ?? "free").trim().toLowerCase();
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <header className="flex flex-col gap-4">
         <Link
           href="/dashboard"
@@ -90,10 +92,11 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
               <p className="text-sm text-slate-500">Geração assistida com a Magis, passo a passo.</p>
             </div>
           </div>
-
-          {/* Usage badges */}
           <div className="flex flex-col items-start gap-1.5 sm:items-end">
             <div className="flex items-center gap-2">
+              <span className={["rounded-full px-3 py-1 text-xs font-semibold", !limits.canCreateTemplate ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"].join(" ")}>
+                {limits.currentTemplates}/{limits.limits.maxTemplates} templates
+              </span>
               <span className={["rounded-full px-3 py-1 text-xs font-semibold", !canCreatePlano ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"].join(" ")}>
                 {limits.currentPlanosThisMonth}/{limits.limits.maxPlanosPerMonth} planos/mês
               </span>
@@ -103,7 +106,7 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
         </div>
       </header>
 
-      {/* Magis bubble — plano limit */}
+      {/* Limit alert */}
       {!canCreatePlano && (
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm">
@@ -130,52 +133,27 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
         </div>
       )}
 
-      {/* Magis bubble — sem templates */}
-      {canCreatePlano && templates.length === 0 && (
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm">
-            <Sparkles className="h-4 w-4 text-white" />
-          </div>
-          <div className="relative max-w-2xl">
-            <div style={{ position: "absolute", left: -9, top: 10, width: 0, height: 0, borderTop: "8px solid transparent", borderBottom: "8px solid transparent", borderRight: "9px solid #fde68a" }} />
-            <div style={{ position: "absolute", left: -7, top: 11, width: 0, height: 0, borderTop: "7px solid transparent", borderBottom: "7px solid transparent", borderRight: "8px solid #fffbeb" }} />
-            <div className="rounded-2xl rounded-tl-none border border-amber-200 bg-amber-50 px-4 py-3.5">
-              <div className="mb-1.5 flex items-center gap-1.5">
-                <Sparkles className="h-3 w-3 text-violet-500" />
-                <span className="text-xs font-bold text-violet-700">Magis</span>
-              </div>
-              <p className="text-sm leading-relaxed text-amber-900">
-                Você ainda não tem nenhum template cadastrado.{" "}
-                <Link href="/dashboard/templates" className="font-semibold underline underline-offset-2 hover:text-amber-950">
-                  Adicione o modelo da sua escola
-                </Link>{" "}
-                para começar a gerar planos. 📄
-              </p>
-            </div>
-          </div>
+      {/* Magis bubble + trigger OR limit actions */}
+      {!canCreatePlano ? (
+        <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-sm">
+          <LimitActions avulsoTipo="avulso_plano" avulsoLabel="Contratar plano avulso" />
         </div>
+      ) : (
+        <GerarPlanoTrigger
+          userId={user.uid}
+          userName={user.nome || user.email}
+          templates={templates}
+          escolas={escolas}
+          turmas={turmas}
+          limitsStatus={limits}
+          recentPlanos={planos}
+          resumeData={resumeData}
+          preSelectedTemplateId={resumeData ? undefined : preSelectedId}
+          hasTemplates={templates.length > 0}
+          hasPlanos={planos.length > 0}
+        />
       )}
 
-      {/* Seção principal */}
-      <section>
-        {!canCreatePlano ? (
-          <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-sm">
-            <LimitActions avulsoTipo="avulso_plano" avulsoLabel="Contratar plano avulso" />
-          </div>
-        ) : (
-          <GerarPlanoFlow
-            userId={user.uid}
-            userName={user.nome || user.email}
-            templates={templates}
-            escolas={escolas}
-            turmas={turmas}
-            limitsStatus={limits}
-            recentPlanos={recentPlanosResult.items}
-            resumeData={resumeData}
-            preSelectedTemplateId={resumeData ? undefined : preSelectedId}
-          />
-        )}
-      </section>
     </div>
   );
 }

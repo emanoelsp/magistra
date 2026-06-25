@@ -326,7 +326,10 @@ export async function getRecentTemplates(
         deletado: Boolean(d.deleted_at),
       };
     })
-    .sort((a, b) => b.data_criacao.localeCompare(a.data_criacao))
+    .sort((a, b) => {
+      if (a.deletado !== b.deletado) return a.deletado ? 1 : -1;
+      return b.data_criacao.localeCompare(a.data_criacao);
+    })
     .slice(0, limit);
 }
 

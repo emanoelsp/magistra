@@ -18,7 +18,7 @@ export interface AiCallOptions {
   systemSuffixFallback?: string;
 }
 
-export type AiProvider = "claude" | "gemini" | "openai" | "groq";
+export type AiProvider = "claude" | "gemini" | "openai" | "groq" | "ollama";
 
 export interface AiResult {
   text: string;
@@ -33,6 +33,31 @@ const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
 const GEMINI_MODEL = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
 const OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 const GROQ_MODEL = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/v1";
+// Modelos tentados em ordem; pula automaticamente os que exigem assinatura (403) ou não existem (404)
+const OLLAMA_MODELS: string[] = [
+  process.env.OLLAMA_MODEL ?? "",
+  "gemma4",
+  "deepseek-v4-flash",
+  "glm-4.7",
+  "glm-5",
+  "minimax-m2.1",
+  "nemotron-3-super",
+  "qwen3.5",
+  "gpt-oss",
+  "deepseek-v4-pro",
+  "glm-5.1",
+  "minimax-m2.5",
+  "kimi-k2.5",
+  "nemotron-3-ultra",
+  "qwen3-coder",
+  "glm-5.2",
+  "minimax-m3",
+  "kimi-k2.6",
+  "minimax-m2.7",
+  "kimi-k2.7-code",
+  "gemini-3-flash-preview",
+].filter((m, i, arr) => m && arr.indexOf(m) === i); // dedup e remove vazio
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
@@ -198,17 +223,64 @@ async function callGroq(options: AiCallOptions): Promise<string> {
   return content;
 }
 
+async function callOllama(options: AiCallOptions): Promise<string> {
+  const apiKey = process.env.OLLAMA_API_KEY;
+  if (!apiKey) throw new Error("OLLAMA_API_KEY não configurada.");
+  const useToon = Boolean(options.systemSuffixFallback);
+  const systemContent = useToon
+    ? options.systemInstruction + "\n\n" + options.systemSuffixFallback
+    : options.systemInstruction;
+
+  let lastError = "";
+  for (const model of OLLAMA_MODELS) {
+    const body: Record<string, unknown> = {
+      model,
+      stream: false,
+      messages: [
+        { role: "system", content: systemContent },
+        { role: "user", content: options.prompt },
+      ],
+      options: { temperature: options.temperature ?? 0.1 },
+    };
+    if (!useToon) body.format = "json";
+
+    const res = await fetch(`${OLLAMA_BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 403 || res.status === 404) {
+      const msg = await res.text();
+      console.warn(`[PlanoMagistra/ai] Ollama modelo "${model}" indisponível (${res.status}), tentando próximo...`);
+      lastError = `${res.status}: ${msg}`;
+      continue;
+    }
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(`Ollama error ${res.status}: ${msg}`);
+    }
+
+    const data = (await res.json()) as { message?: { content?: string } };
+    const content = data.message?.content;
+    if (!content) throw new Error(`Ollama modelo "${model}" retornou resposta vazia.`);
+    console.info(`[PlanoMagistra/ai] Ollama usou modelo "${model}".`);
+    return content;
+  }
+
+  throw new Error(`Ollama: nenhum modelo disponível. Último erro: ${lastError}`);
+}
+
 // ── Orquestrador com fallback em cadeia ───────────────────────────────────────
 
 /**
- * Chama os provedores de IA em ordem: Claude → Gemini → OpenAI → Groq.
+ * Chama os provedores de IA em ordem: Claude → Gemini → OpenAI → Groq → Ollama.
  *
- * - Claude: primário. JSON nativo (instrução no system prompt). Retry em 429/529 transientes.
- *   Se créditos esgotarem, cai para Gemini.
- * - Gemini: segundo. JSON com schema enforcement. Retry automático.
- *   Se cota do plano gratuito esgotar, cai para OpenAI.
+ * - Claude: primário. JSON nativo. Retry em 429/529 transientes; cai se créditos esgotarem.
+ * - Gemini: segundo. JSON com schema enforcement. Cai se cota gratuita esgotar.
  * - OpenAI: terceiro. TOON quando systemSuffixFallback definido; JSON nativo caso contrário.
- * - Groq: último recurso. Mesmo comportamento do OpenAI.
+ * - Groq: quarto. Mesmo comportamento do OpenAI.
+ * - Ollama: quinto/último recurso. Endpoint OpenAI-compatible configurável via OLLAMA_BASE_URL.
  */
 export async function callAIWithFallbacks(options: AiCallOptions): Promise<AiResult> {
   const fallbackFormat: "json" | "toon" = options.systemSuffixFallback ? "toon" : "json";
@@ -242,8 +314,17 @@ export async function callAIWithFallbacks(options: AiCallOptions): Promise<AiRes
     console.warn("[PlanoMagistra/ai] OpenAI falhou, tentando Groq...", (err as Error)?.message);
   }
 
-  // 4. Groq — último recurso
-  const text = await callGroq(options);
-  console.warn(`[PlanoMagistra/ai] Groq usado como fallback 3 (format=${fallbackFormat}).`);
-  return { text, provider: "groq", format: fallbackFormat };
+  // 4. Groq
+  try {
+    const text = await callGroq(options);
+    console.warn(`[PlanoMagistra/ai] Groq usado como fallback 3 (format=${fallbackFormat}).`);
+    return { text, provider: "groq", format: fallbackFormat };
+  } catch (err) {
+    console.warn("[PlanoMagistra/ai] Groq falhou, tentando Ollama...", (err as Error)?.message);
+  }
+
+  // 5. Ollama — último recurso
+  const text = await callOllama(options);
+  console.warn(`[PlanoMagistra/ai] Ollama usado como fallback 4 (format=${fallbackFormat}).`);
+  return { text, provider: "ollama", format: fallbackFormat };
 }

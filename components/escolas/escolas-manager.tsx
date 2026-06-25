@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   Building2,
+  ChevronDown,
   Plus,
   Pencil,
   Trash2,
@@ -13,6 +14,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { CursoEntry, CursoTipo, EscolaRecord, TurmaRecord } from "../../lib/types/firestore";
+import { showMagisToast } from "../../lib/utils/magis-toast";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -135,6 +137,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
   const [cursos, setCursos] = useState<CursoEntry[]>(target?.cursos ?? []);
   const [cursoIdx, setCursoIdx] = useState(0);
   const [turmaInput, setTurmaInput] = useState("");
+  const [disciplinaInput, setDisciplinaInput] = useState("");
   const [turmasAdicionadas, setTurmasAdicionadas] = useState<Record<number, TurmaRecord[]>>({});
   const [createdEscola, setCreatedEscola] = useState<EscolaRecord | null>(null);
   const [saving, setSaving] = useState(false);
@@ -220,6 +223,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
   async function handleAddTurma(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = turmaInput.trim();
+    const disciplina = disciplinaInput.trim() || undefined;
     if (!trimmed || !createdEscola) return;
     setAddingTurma(true);
     setError(null);
@@ -233,6 +237,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
           escola_id: createdEscola.id,
           escola_nome: createdEscola.nome,
           nome: trimmed,
+          disciplina,
           tipo_curso: curso.tipo,
           curso_nome: curso.nome || undefined,
           grupo_id: grupoId,
@@ -250,6 +255,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
         escola_id: createdEscola.id,
         escola_nome: createdEscola.nome,
         nome: trimmed,
+        disciplina,
         ano_letivo: new Date().getFullYear(),
         tipo_curso: curso.tipo,
         curso_nome: curso.nome || undefined,
@@ -259,6 +265,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
       setTurmasAdicionadas((prev) => ({ ...prev, [cursoIdx]: [...(prev[cursoIdx] ?? []), turma] }));
       onTurmaAdded(turma);
       setTurmaInput("");
+      setDisciplinaInput("");
       turmaRef.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro desconhecido.");
@@ -271,6 +278,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
     if (cursoIdx < cursos.length - 1) {
       setCursoIdx((i) => i + 1);
       setTurmaInput("");
+      setDisciplinaInput("");
       setError(null);
     } else {
       // All cursos done
@@ -335,38 +343,46 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
       <MagisModal wide>
         <MagisHeader onClose={onClose} />
         <div className="bg-[#ece5dd] px-4 py-5 space-y-2 max-h-56 overflow-y-auto">
-          <MagisBubble text={`Ótimo! Agora me diga as turmas de ${cursoLabel(curso)}. Ex: 1º A, 2º B, 3º C…`} />
+          <MagisBubble text={`Ótimo! Agora adicione as turmas e disciplinas de ${cursoLabel(curso)}. Ex: turma "1º A" com disciplina "Matemática".`} />
           {jaAdicionadas.length > 0 && (
-            <MagisBubble text={`Turmas adicionadas: ${jaAdicionadas.map((t) => t.nome).join(", ")} 👍`} />
+            <MagisBubble text={`Adicionadas: ${jaAdicionadas.map((t) => t.disciplina ? `${t.nome} · ${t.disciplina}` : t.nome).join(", ")} 👍`} />
           )}
         </div>
         <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
           {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
-          {/* Quick-add chips */}
           {jaAdicionadas.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {jaAdicionadas.map((t) => (
                 <span key={t.id} className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700">
-                  {t.nome}
+                  {t.nome}{t.disciplina ? ` · ${t.disciplina}` : ""}
                 </span>
               ))}
             </div>
           )}
-          <form onSubmit={handleAddTurma} className="flex gap-2">
-            <input
-              ref={turmaRef}
-              type="text"
-              value={turmaInput}
-              onChange={(e) => setTurmaInput(e.target.value)}
-              placeholder="Ex: 1º A"
-              className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
-            />
+          <form onSubmit={handleAddTurma} className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                ref={turmaRef}
+                type="text"
+                value={turmaInput}
+                onChange={(e) => setTurmaInput(e.target.value)}
+                placeholder="Turma · Ex: 1º A"
+                className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+              />
+              <input
+                type="text"
+                value={disciplinaInput}
+                onChange={(e) => setDisciplinaInput(e.target.value)}
+                placeholder="Disciplina · Ex: Matemática"
+                className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+              />
+            </div>
             <button
               type="submit"
               disabled={addingTurma || !turmaInput.trim()}
-              className="rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+              className="w-full rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
             >
-              {addingTurma ? "…" : "Add"}
+              {addingTurma ? "Adicionando…" : "+ Adicionar turma"}
             </button>
           </form>
           <div className="flex gap-2 pt-1">
@@ -506,6 +522,7 @@ function DeleteEscolaModal({ escola, turmaCount, onClose, onDeleted }: DeleteEsc
         const d = (await res.json()) as { error?: string };
         throw new Error(d.error ?? "Falha ao excluir.");
       }
+      showMagisToast(`"${escola.nome}" excluída com sucesso.`, "success");
       onDeleted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro desconhecido.");
@@ -843,6 +860,215 @@ function DeleteTurmaModal({ turma, onClose, onDeleted }: DeleteTurmaModalProps) 
 }
 
 // ---------------------------------------------------------------------------
+// EditTurmaModal
+// ---------------------------------------------------------------------------
+
+interface EditTurmaModalProps {
+  turma: TurmaRecord;
+  onClose: () => void;
+  onUpdated: (updated: TurmaRecord) => void;
+}
+
+function EditTurmaModal({ turma, onClose, onUpdated }: EditTurmaModalProps) {
+  const [nome, setNome] = useState(turma.nome);
+  const [disciplina, setDisciplina] = useState(turma.disciplina ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!nome.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/turmas/${turma.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: nome.trim(), disciplina: disciplina.trim() || "" }),
+      });
+      if (!res.ok) {
+        const d = (await res.json()) as { error?: string };
+        throw new Error(d.error ?? "Falha ao atualizar.");
+      }
+      showMagisToast(`Turma "${nome.trim()}" atualizada.`, "success");
+      onUpdated({ ...turma, nome: nome.trim(), disciplina: disciplina.trim() || undefined });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro desconhecido.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <MagisModal>
+      <MagisHeader onClose={onClose} />
+      <div className="bg-[#ece5dd] px-4 py-5">
+        <MagisBubble text={`Editar turma "${turma.nome}"`} />
+      </div>
+      <form onSubmit={(e) => void handleSave(e)} className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        <input
+          type="text"
+          value={nome}
+          onChange={(e) => setNome(e.target.value)}
+          placeholder="Turma · Ex: 1º A"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+          autoFocus
+        />
+        <input
+          type="text"
+          value={disciplina}
+          onChange={(e) => setDisciplina(e.target.value)}
+          placeholder="Disciplina · Ex: Matemática"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+        />
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">
+            Cancelar
+          </button>
+          <button type="submit" disabled={saving || !nome.trim()} className="flex-1 rounded-2xl bg-slate-950 px-5 py-2 text-sm font-medium text-white disabled:opacity-50">
+            {saving ? "Salvando…" : "Salvar"}
+          </button>
+        </div>
+      </form>
+    </MagisModal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EditCursoModal
+// ---------------------------------------------------------------------------
+
+interface EditCursoModalProps {
+  escola: EscolaRecord;
+  curso: CursoEntry;
+  onClose: () => void;
+  onUpdated: (updatedCurso: CursoEntry) => void;
+}
+
+function EditCursoModal({ escola, curso, onClose, onUpdated }: EditCursoModalProps) {
+  const [nome, setNome] = useState(curso.nome ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    const updatedCurso: CursoEntry = { ...curso, nome: nome.trim() || undefined };
+    const updatedCursos = (escola.cursos ?? []).map((c) => c.tipo === curso.tipo ? updatedCurso : c);
+    try {
+      const res = await fetch(`/api/escolas/${escola.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: escola.nome, cursos: updatedCursos }),
+      });
+      if (!res.ok) {
+        const d = (await res.json()) as { error?: string };
+        throw new Error(d.error ?? "Falha ao atualizar.");
+      }
+      showMagisToast("Curso atualizado.", "success");
+      onUpdated(updatedCurso);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro desconhecido.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <MagisModal>
+      <MagisHeader onClose={onClose} />
+      <div className="bg-[#ece5dd] px-4 py-5">
+        <MagisBubble text="Editar nome do curso" />
+      </div>
+      <form onSubmit={(e) => void handleSave(e)} className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        <input
+          type="text"
+          value={nome}
+          onChange={(e) => setNome(e.target.value)}
+          placeholder="Nome do curso · Ex: Análise e Desenvolvimento de Sistemas"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+          autoFocus
+        />
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">
+            Cancelar
+          </button>
+          <button type="submit" disabled={saving} className="flex-1 rounded-2xl bg-slate-950 px-5 py-2 text-sm font-medium text-white disabled:opacity-50">
+            {saving ? "Salvando…" : "Salvar"}
+          </button>
+        </div>
+      </form>
+    </MagisModal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DeleteCursoModal
+// ---------------------------------------------------------------------------
+
+interface DeleteCursoModalProps {
+  escola: EscolaRecord;
+  curso: CursoEntry;
+  turmaCount: number;
+  onClose: () => void;
+  onDeleted: () => void;
+}
+
+function DeleteCursoModal({ escola, curso, turmaCount, onClose, onDeleted }: DeleteCursoModalProps) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleDelete() {
+    setSaving(true);
+    setError(null);
+    const updatedCursos = (escola.cursos ?? []).filter((c) => c.tipo !== curso.tipo);
+    try {
+      const res = await fetch(`/api/escolas/${escola.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: escola.nome, cursos: updatedCursos }),
+      });
+      if (!res.ok) {
+        const d = (await res.json()) as { error?: string };
+        throw new Error(d.error ?? "Falha ao excluir.");
+      }
+      showMagisToast(`Curso "${cursoLabel(curso)}" excluído.`, "success");
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro desconhecido.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <MagisModal>
+      <MagisHeader onClose={onClose} />
+      <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <MagisBubble text={`Tem certeza que deseja excluir o curso "${cursoLabel(curso)}"?`} />
+        {turmaCount > 0 && (
+          <MagisBubble
+            text={`Isso também removerá ${turmaCount === 1 ? "a 1 turma vinculada" : `as ${turmaCount} turmas vinculadas`}.`}
+            variant="warning"
+          />
+        )}
+      </div>
+      <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">
+            Cancelar
+          </button>
+          <button type="button" onClick={() => void handleDelete()} disabled={saving} className="flex-1 rounded-2xl bg-rose-600 px-5 py-2 text-sm font-medium text-white disabled:opacity-50">
+            {saving ? "Excluindo…" : "Excluir"}
+          </button>
+        </div>
+      </div>
+    </MagisModal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // TurmaSection — renders turmas for one curso inside an escola card
 // ---------------------------------------------------------------------------
 
@@ -850,12 +1076,14 @@ interface TurmaSectionProps {
   curso: CursoEntry;
   turmas: TurmaRecord[];
   onAddTurma: () => void;
+  onEditTurma: (t: TurmaRecord) => void;
   onDeleteTurma: (t: TurmaRecord) => void;
   onDesagrupar: (t: TurmaRecord) => void;
+  onEditCurso: () => void;
+  onDeleteCurso: () => void;
 }
 
-function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }: TurmaSectionProps) {
-  // group turmas by grupo_id; those with null/undefined go to solo list
+function TurmaSection({ curso, turmas, onAddTurma, onEditTurma, onDeleteTurma, onDesagrupar, onEditCurso, onDeleteCurso }: TurmaSectionProps) {
   const groups = new Map<string, TurmaRecord[]>();
   const solos: TurmaRecord[] = [];
 
@@ -871,7 +1099,7 @@ function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${CURSO_COLORS[curso.tipo]}`}>
           {cursoLabel(curso)}
         </span>
@@ -883,16 +1111,33 @@ function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }
           <Plus className="h-3 w-3" />
           Nova turma
         </button>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onEditCurso}
+            title="Editar curso"
+            className="flex h-6 w-6 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={onDeleteCurso}
+            title="Excluir curso"
+            className="flex h-6 w-6 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-1.5 pl-1">
         {/* Grouped turmas */}
         {Array.from(groups.entries()).map(([gid, gTurmas]) => {
           if (gTurmas.length === 1) {
-            // single turma in group — treat as solo
             const t = gTurmas[0];
             return (
-              <TurmaChip key={t.id} turma={t} onDelete={() => onDeleteTurma(t)} onDesagrupar={undefined} />
+              <TurmaChip key={t.id} turma={t} onEdit={() => onEditTurma(t)} onDelete={() => onDeleteTurma(t)} onDesagrupar={undefined} />
             );
           }
           return (
@@ -902,6 +1147,7 @@ function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }
                 <TurmaChip
                   key={t.id}
                   turma={t}
+                  onEdit={() => onEditTurma(t)}
                   onDelete={() => onDeleteTurma(t)}
                   onDesagrupar={() => onDesagrupar(t)}
                   compact
@@ -916,7 +1162,7 @@ function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }
         {solos.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {solos.map((t) => (
-              <TurmaChip key={t.id} turma={t} onDelete={() => onDeleteTurma(t)} onDesagrupar={undefined} />
+              <TurmaChip key={t.id} turma={t} onEdit={() => onEditTurma(t)} onDelete={() => onDeleteTurma(t)} onDesagrupar={undefined} />
             ))}
           </div>
         )}
@@ -932,13 +1178,14 @@ function TurmaSection({ curso, turmas, onAddTurma, onDeleteTurma, onDesagrupar }
 interface TurmaChipProps {
   turma: TurmaRecord;
   compact?: boolean;
+  onEdit: () => void;
   onDelete: () => void;
   onDesagrupar: (() => void) | undefined;
 }
 
-function TurmaChip({ turma, compact = false, onDelete, onDesagrupar }: TurmaChipProps) {
+function TurmaChip({ turma, compact = false, onEdit, onDelete, onDesagrupar }: TurmaChipProps) {
   return (
-    <div className="inline-flex items-center gap-1 rounded-2xl bg-white border border-slate-200 px-2.5 py-1 text-xs shadow-sm">
+    <div className="group inline-flex items-center gap-1 rounded-2xl bg-white border border-slate-200 px-2.5 py-1 text-xs shadow-sm">
       {turma.tem_aluno_especial && (
         <span title="Turma com aluno de necessidade especial">
           <AlertCircle className="h-3 w-3 text-amber-500 shrink-0" />
@@ -960,6 +1207,15 @@ function TurmaChip({ turma, compact = false, onDelete, onDesagrupar }: TurmaChip
       )}
       <button
         type="button"
+        onClick={onEdit}
+        title="Editar turma"
+        className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-700 transition-opacity"
+        aria-label={`Editar turma ${turma.nome}`}
+      >
+        <Pencil className="h-2.5 w-2.5" />
+      </button>
+      <button
+        type="button"
         onClick={onDelete}
         className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-slate-300 hover:bg-slate-100 hover:text-rose-600"
         aria-label={`Excluir turma ${turma.nome}`}
@@ -979,14 +1235,18 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
   const [turmas, setTurmas] = useState<TurmaRecord[]>(initialTurmas);
   const [escolaPadrao, setEscolaPadrao] = useState<string | null>(initialEscolaPadrao);
 
+  const [collapsedEscolas, setCollapsedEscolas] = useState<Set<string>>(new Set());
   const [addEscolaOpen, setAddEscolaOpen] = useState(false);
   const [editEscolaTarget, setEditEscolaTarget] = useState<EscolaRecord | null>(null);
   const [deleteEscolaTarget, setDeleteEscolaTarget] = useState<EscolaRecord | null>(null);
 
   // {escolaId, tipoCurso?: CursoEntry}
   const [addTurmaTarget, setAddTurmaTarget] = useState<{ escolaId: string; tipoCurso?: CursoEntry } | null>(null);
+  const [editTurmaTarget, setEditTurmaTarget] = useState<TurmaRecord | null>(null);
   const [deleteTurmaTarget, setDeleteTurmaTarget] = useState<TurmaRecord | null>(null);
   const [addCursoTarget, setAddCursoTarget] = useState<EscolaRecord | null>(null);
+  const [editCursoTarget, setEditCursoTarget] = useState<{ escola: EscolaRecord; curso: CursoEntry } | null>(null);
+  const [deleteCursoTarget, setDeleteCursoTarget] = useState<{ escola: EscolaRecord; curso: CursoEntry } | null>(null);
 
   function turmasForEscola(escolaId: string) {
     return turmas.filter((t) => t.escola_id === escolaId);
@@ -1033,9 +1293,31 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
     setDeleteEscolaTarget(null);
   }
 
+  function handleTurmaUpdated(updated: TurmaRecord) {
+    setTurmas((prev) => prev.map((t) => t.id === updated.id ? updated : t));
+    setEditTurmaTarget(null);
+  }
+
   function handleTurmaDeleted(turmaId: string) {
     setTurmas((prev) => prev.filter((t) => t.id !== turmaId));
     setDeleteTurmaTarget(null);
+  }
+
+  function handleCursoUpdated(escolaId: string, updatedCurso: CursoEntry) {
+    setEscolas((prev) => prev.map((e) => {
+      if (e.id !== escolaId) return e;
+      return { ...e, cursos: (e.cursos ?? []).map((c) => c.tipo === updatedCurso.tipo ? updatedCurso : c) };
+    }));
+    setEditCursoTarget(null);
+  }
+
+  function handleCursoDeleted(escolaId: string, cursoTipo: string) {
+    setEscolas((prev) => prev.map((e) => {
+      if (e.id !== escolaId) return e;
+      return { ...e, cursos: (e.cursos ?? []).filter((c) => c.tipo !== cursoTipo) };
+    }));
+    setTurmas((prev) => prev.filter((t) => !(t.escola_id === escolaId && t.tipo_curso === cursoTipo)));
+    setDeleteCursoTarget(null);
   }
 
   async function handleDesagrupar(turma: TurmaRecord) {
@@ -1059,59 +1341,56 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
 
   return (
     <>
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Escolas</h2>
-        {escolas.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setAddEscolaOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-medium text-white"
-          >
-            <Plus className="h-4 w-4" />
-            Nova escola
-          </button>
-        )}
-      </div>
-
       {/* ── Empty state ─────────────────────────────────────────────────── */}
-      {escolas.length === 0 && (
-        <div className="mt-8 flex flex-col gap-6 max-w-2xl">
-          <div className="flex items-start gap-3 w-full">
-            {/* avatar */}
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
-              <Sparkles className="h-5 w-5 text-white" />
+      <div className="mt-8 flex flex-col gap-6">
+        <div className="flex items-start gap-3 max-w-2xl">
+          {/* avatar */}
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
+            <Sparkles className="h-5 w-5 text-white" />
+          </div>
+          {/* bubble */}
+          <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-violet-600" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">Magis</span>
             </div>
-            {/* bubble */}
-            <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
-              <div className="mb-1.5 flex items-center gap-1.5">
-                <Sparkles className="h-3 w-3 text-violet-600" />
-                <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">Magis</span>
-              </div>
+            {escolas.length === 0 ? (
               <p className="text-sm leading-relaxed text-slate-800">
                 Vamos organizar suas escolas e turmas! Isso torna seus planos muito mais rápidos de preencher. Me conta: em qual escola você leciona?
               </p>
-            </div>
-          </div>
-          <div className="flex justify-center">
-            <button
-              type="button"
-              onClick={() => setAddEscolaOpen(true)}
-              className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
-            >
-              <Building2 className="h-4 w-4" />
-              Adicionar minha primeira escola
-              <span>→</span>
-            </button>
+            ) : (
+              <p className="text-sm leading-relaxed text-slate-800">
+                Ótimo! Com suas escolas cadastradas podemos organizar melhor os templates e planos de aula. Se desejar criar mais escolas, é só clicar no botão a seguir.
+              </p>
+            )}
           </div>
         </div>
-      )}
+        <div className="flex w-full justify-center">
+          <button
+            type="button"
+            onClick={() => setAddEscolaOpen(true)}
+            className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
+          >
+            <Building2 className="h-4 w-4" />
+            {escolas.length === 0 ? "Adicionar minha primeira escola" : "Adicionar nova escola"}
+            <span>→</span>
+          </button>
+        </div>
+      </div>
 
       {/* ── Escola cards ─────────────────────────────────────────────────── */}
       <div className="space-y-4">
         {escolas.map((escola) => {
           const escolaTurmas = turmasForEscola(escola.id);
           const hasCursos = escola.cursos && escola.cursos.length > 0;
+          const isCollapsed = collapsedEscolas.has(escola.id);
+          const toggleCollapse = () =>
+            setCollapsedEscolas((prev) => {
+              const next = new Set(prev);
+              if (next.has(escola.id)) next.delete(escola.id);
+              else next.add(escola.id);
+              return next;
+            });
 
           return (
             <div key={escola.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1120,11 +1399,21 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-600">
                   <Building2 className="h-5 w-5" />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-900 leading-tight">{escola.nome}</p>
-                  {escolaPadrao && escola.nome === escolaPadrao && (
-                    <span className="text-[10px] font-medium text-violet-600">Escola padrão</span>
-                  )}
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900 leading-tight">{escola.nome}</p>
+                    {escolaPadrao && escola.nome === escolaPadrao && (
+                      <span className="text-[10px] font-medium text-violet-600">Escola padrão</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleCollapse}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                    aria-label={isCollapsed ? "Expandir" : "Recolher"}
+                  >
+                    <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`} />
+                  </button>
                 </div>
                 <div className="flex items-center gap-1.5">
                   {hasCursos && (
@@ -1156,48 +1445,57 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
                 </div>
               </div>
 
-              <div className="my-4 border-t border-slate-100" />
+              {/* Collapsible body */}
+              {!isCollapsed && (
+                <>
+                  <div className="my-4 border-t border-slate-100" />
 
-              {/* Turmas — by curso or flat */}
-              {hasCursos ? (
-                <div className="space-y-4">
-                  {(escola.cursos ?? []).map((curso) => {
-                    const cursoTurmas = escolaTurmas.filter((t) => t.tipo_curso === curso.tipo);
-                    return (
-                      <TurmaSection
-                        key={curso.tipo}
-                        curso={curso}
-                        turmas={cursoTurmas}
-                        onAddTurma={() => setAddTurmaTarget({ escolaId: escola.id, tipoCurso: curso })}
-                        onDeleteTurma={(t) => setDeleteTurmaTarget(t)}
-                        onDesagrupar={(t) => void handleDesagrupar(t)}
-                      />
-                    );
-                  })}
-                </div>
-              ) : (
-                /* Legacy flat display for schools without cursos */
-                <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Turmas</p>
-                  <div className="flex flex-wrap gap-2">
-                    {escolaTurmas.map((turma) => (
-                      <TurmaChip
-                        key={turma.id}
-                        turma={turma}
-                        onDelete={() => setDeleteTurmaTarget(turma)}
-                        onDesagrupar={undefined}
-                      />
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setAddTurmaTarget({ escolaId: escola.id })}
-                      className="inline-flex items-center gap-1.5 rounded-2xl border border-dashed border-violet-300 px-3 py-1.5 text-sm font-medium text-violet-600 hover:border-violet-400 hover:bg-violet-50"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Nova turma
-                    </button>
-                  </div>
-                </div>
+                  {/* Turmas — by curso or flat */}
+                  {hasCursos ? (
+                    <div className="space-y-4">
+                      {(escola.cursos ?? []).map((curso) => {
+                        const cursoTurmas = escolaTurmas.filter((t) => t.tipo_curso === curso.tipo);
+                        return (
+                          <TurmaSection
+                            key={curso.tipo}
+                            curso={curso}
+                            turmas={cursoTurmas}
+                            onAddTurma={() => setAddTurmaTarget({ escolaId: escola.id, tipoCurso: curso })}
+                            onEditTurma={(t) => setEditTurmaTarget(t)}
+                            onDeleteTurma={(t) => setDeleteTurmaTarget(t)}
+                            onDesagrupar={(t) => void handleDesagrupar(t)}
+                            onEditCurso={() => setEditCursoTarget({ escola, curso })}
+                            onDeleteCurso={() => setDeleteCursoTarget({ escola, curso })}
+                          />
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    /* Legacy flat display for schools without cursos */
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Turmas</p>
+                      <div className="flex flex-wrap gap-2">
+                        {escolaTurmas.map((turma) => (
+                          <TurmaChip
+                            key={turma.id}
+                            turma={turma}
+                            onEdit={() => setEditTurmaTarget(turma)}
+                            onDelete={() => setDeleteTurmaTarget(turma)}
+                            onDesagrupar={undefined}
+                          />
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setAddTurmaTarget({ escolaId: escola.id })}
+                          className="inline-flex items-center gap-1.5 rounded-2xl border border-dashed border-violet-300 px-3 py-1.5 text-sm font-medium text-violet-600 hover:border-violet-400 hover:bg-violet-50"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Nova turma
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           );
@@ -1247,6 +1545,33 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
           escola={addCursoTarget}
           onClose={() => setAddCursoTarget(null)}
           onCursoAdded={handleCursoAdded}
+        />
+      )}
+
+      {editTurmaTarget && (
+        <EditTurmaModal
+          turma={editTurmaTarget}
+          onClose={() => setEditTurmaTarget(null)}
+          onUpdated={handleTurmaUpdated}
+        />
+      )}
+
+      {editCursoTarget && (
+        <EditCursoModal
+          escola={editCursoTarget.escola}
+          curso={editCursoTarget.curso}
+          onClose={() => setEditCursoTarget(null)}
+          onUpdated={(updated) => handleCursoUpdated(editCursoTarget.escola.id, updated)}
+        />
+      )}
+
+      {deleteCursoTarget && (
+        <DeleteCursoModal
+          escola={deleteCursoTarget.escola}
+          curso={deleteCursoTarget.curso}
+          turmaCount={turmas.filter((t) => t.escola_id === deleteCursoTarget.escola.id && t.tipo_curso === deleteCursoTarget.curso.tipo).length}
+          onClose={() => setDeleteCursoTarget(null)}
+          onDeleted={() => handleCursoDeleted(deleteCursoTarget.escola.id, deleteCursoTarget.curso.tipo)}
         />
       )}
     </>

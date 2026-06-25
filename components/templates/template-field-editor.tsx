@@ -24,7 +24,6 @@ import {
   PanelRightOpen,
   RefreshCw,
   RotateCcw,
-  Save,
   Sparkles,
   Trash2,
   X,
@@ -104,6 +103,13 @@ interface CellEdit {
   replaceContent?: boolean; // true when cell has only this token (no other text) → replace instead of append
 }
 
+interface DocxInteractiveScanData {
+  edits: DocxEdit[];
+  scanOrder: string[];
+  removedKeys: string[];
+  cellEdits: CellEdit[];
+}
+
 interface DocxInteractiveProps {
   templateId: string;
   fields: TemplateFieldSchema[];
@@ -118,9 +124,12 @@ interface DocxInteractiveProps {
   onCancelPlacement?: () => void;
   onPlace?: (key: string, coord: string | undefined, cellText: string, ordinal: number) => void;
   onChipClick?: (key: string) => void;
+  onDocKeysUpdate?: (keys: Set<string>) => void;
+  onLiveScan?: (edits: DocxEdit[], removedKeys: string[]) => void;
+  scanRef?: { current: ((() => DocxInteractiveScanData) | null) };
 }
 
-function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick, onDocKeysUpdate, onLiveScan, scanRef }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
@@ -130,6 +139,11 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   const initialDocKeysRef = useRef<Set<string>>(new Set());
   const onChipClickRef = useRef(onChipClick);
   useEffect(() => { onChipClickRef.current = onChipClick; }, [onChipClick]);
+  // Refs to avoid stale closures in MutationObserver and scanRef callbacks
+  const fieldsRef = useRef(fields);
+  useEffect(() => { fieldsRef.current = fields; }, [fields]);
+  const onLiveScanRef = useRef(onLiveScan);
+  useEffect(() => { onLiveScanRef.current = onLiveScan; }, [onLiveScan]);
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
 
   useEffect(() => {
@@ -410,6 +424,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       docKeys.add(m[1]);
     }
     initialDocKeysRef.current = docKeys;
+    onDocKeysUpdate?.(new Set(docKeys));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, fieldPositions, fields]);
 
@@ -474,11 +489,70 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  // handleSaveEdits: scans for {{key}} patterns in edited cells and sends them
-  // as TOKEN-ONLY cellEdits (never full cell content) so the server uses
-  // safeAppendToken — the only injection path that cannot corrupt cell structure.
-  function handleSaveEdits() {
-    if (!containerRef.current) return;
+  // Expose extractDocEdits via scanRef so the parent can call it synchronously
+  // (e.g. from "Verificar template") without needing an async round-trip.
+  useEffect(() => {
+    if (phase !== "done" || !scanRef) return;
+    scanRef.current = extractDocEdits;
+    return () => { if (scanRef.current === extractDocEdits) scanRef.current = null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, scanRef]);
+
+  // MutationObserver: live-scan the contenteditable doc for new/removed {{key}} patterns.
+  // Fires onLiveScan so the sidebar can update immediately without a server save.
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current) return;
+    const container = containerRef.current;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new MutationObserver((mutations) => {
+      const relevant = mutations.some((m) => {
+        const el = m.target instanceof Element ? m.target : (m.target as Node).parentElement;
+        return !el?.closest("[data-field-chip]");
+      });
+      if (!relevant) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const tds = [...container.querySelectorAll<HTMLElement>("td")]
+          .filter((td) => !td.closest("header") && !td.closest("footer"));
+        const standalones = [...container.querySelectorAll<HTMLElement>("p")]
+          .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
+        const existingKeys = new Set(fieldsRef.current.map((f) => f.key));
+        const seenKeys = new Set<string>();
+        const newEdits: DocxEdit[] = [];
+        for (const el of [...tds, ...standalones]) {
+          const currentText = el.textContent ?? "";
+          for (const match of [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)]) {
+            const key = match[1];
+            seenKeys.add(key);
+            if (!existingKeys.has(key) && !newEdits.find((e) => e.key === key)) {
+              const originalText = originalTextsRef.current.get(el) ?? "";
+              const label = originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " ");
+              const role: "manual" | "ia_sugerida" =
+                /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade/.test(key)
+                  ? "ia_sugerida" : "manual";
+              const coord = el.tagName === "TD" ? (el.getAttribute("data-xml-coord") ?? undefined) : undefined;
+              newEdits.push({ text: originalText, ordinal: 0, key, role, label, coord });
+            }
+          }
+        }
+        const removedKeys = [...existingKeys].filter(
+          (k) => !seenKeys.has(k) && initialDocKeysRef.current.has(k),
+        );
+        if (newEdits.length > 0 || removedKeys.length > 0) {
+          onLiveScanRef.current?.(newEdits, removedKeys);
+        }
+      }, 400);
+    });
+    observer.observe(container, { characterData: true, childList: true, subtree: true });
+    return () => { observer.disconnect(); if (debounceTimer) clearTimeout(debounceTimer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // extractDocEdits: pure scan — reads DOM state, returns structured data.
+  // Uses fieldsRef/originalTextsRef/initialDocKeysRef (always current) so it
+  // can be called asynchronously from the parent via scanRef without stale-closure issues.
+  function extractDocEdits(): DocxInteractiveScanData {
+    if (!containerRef.current) return { edits: [], scanOrder: [], removedKeys: [], cellEdits: [] };
     const container = containerRef.current;
     const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
       .filter((td) => !td.closest("header") && !td.closest("footer"));
@@ -486,7 +560,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
     const els = [...tds, ...standaloneParagraphs];
 
-    const existingKeys = new Set(fields.map((f) => f.key));
+    const existingKeys = new Set(fieldsRef.current.map((f) => f.key));
     const textOrdinalsMap = new Map<string, number>();
     const edits: DocxEdit[] = [];
     // One cellEdit per key: newContent is ONLY "{{key}}", never full cell text.
@@ -547,11 +621,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
 
       // Normal path: per-token injection (non-token text unchanged, only chips added/moved).
       // contextBefore = text on the same visual line immediately before the token.
-      // el.textContent collapses <br> elements and concatenates chip spans without
-      // separators. Stripping previous {{key}} occurrences and taking only the text
-      // between the last chip and this one yields the label on the same visual line
-      // (e.g. "- Carga horária prevista:"), which appendToParagraph uses as its
-      // injection anchor for soft-return cells.
       for (const match of matches) {
         const key = match[1];
         if (!cellEdits.some((ce) => ce.newContent === `{{${key}}}`)) {
@@ -582,6 +651,11 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       (k) => !seenInScan.has(k) && initialDocKeysRef.current.has(k),
     );
 
+    return { edits, scanOrder, removedKeys, cellEdits };
+  }
+
+  function handleSaveEdits() {
+    const { edits, scanOrder, removedKeys, cellEdits } = extractDocEdits();
     onSaveEdits(edits, scanOrder, removedKeys, cellEdits);
   }
 
@@ -694,14 +768,6 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
                 className="h-1 w-20 accent-violet-600"
               />
               <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>
-              <button
-                type="button"
-                onClick={handleSaveEdits}
-                className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-violet-500"
-              >
-                <Save className="h-3 w-3" />
-                Salvar edições
-              </button>
             </div>
           </div>
           {/* Row 2: formatting toolbar */}
@@ -811,9 +877,23 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   const [nome, setNome] = useState(template.nome);
   const [estado, setEstado] = useState(template.estado ?? "");
-  const [fields, setFields] = useState<TemplateFieldSchema[]>(
-    template.schema_campos.length > 0 ? [...template.schema_campos] : [],
-  );
+  const [fields, setFields] = useState<TemplateFieldSchema[]>(() => {
+    if (template.schema_campos.length === 0) return [];
+    const escolaNome = template.escola_nome;
+    if (!escolaNome) return [...template.schema_campos];
+    return template.schema_campos.map((f) => {
+      if (
+        f.role !== "ia_sugerida" &&
+        !f.defaultValue &&
+        (f.key === "escola" ||
+          f.key.toLowerCase().includes("escola") ||
+          f.label.toLowerCase().includes("escola"))
+      ) {
+        return { ...f, defaultValue: escolaNome };
+      }
+      return f;
+    });
+  });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isReExtracting, setIsReExtracting] = useState(false);
@@ -859,6 +939,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   // Item 15: zoom
   const [zoom, setZoom] = useState(100);
 
+  // Anchor picker
+  const [anchorList, setAnchorList] = useState<{ label: string; valuePreview: string; pattern: string }[]>([]);
+  const [anchorSearch, setAnchorSearch] = useState<Record<string, string>>({});
+  const latestDocKeysRef = useRef<Set<string>>(new Set());
+  // Ref to DocxInteractive's extractDocEdits — used by handleAdvanceToReview to
+  // collect pending doc edits without needing an extra server round-trip.
+  const scanRef = useRef<(() => DocxInteractiveScanData) | null>(null);
+
   // Placement mode
   const [placementKey, setPlacementKey] = useState<string | null>(null);
 
@@ -901,8 +989,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     fn();
     requestAnimationFrame(() => { if (el) el.scrollTop = top; });
   }
-
-  // Auto-save disabled — save happens explicitly via "Salvar edições" button
 
   // Item 13: load schema versions
   async function loadVersions() {
@@ -968,6 +1054,16 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   }, []);
 
   const isDocx = (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
+
+  useEffect(() => {
+    if (!isDocx || !template.arquivo_url) return;
+    fetch(`/api/templates/${template.id}/anchors`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d: { anchors?: { label: string; valuePreview: string; pattern: string }[] } | null) => {
+        if (d?.anchors) setAnchorList(d.anchors);
+      })
+      .catch(() => {/* silent */});
+  }, [isDocx, template.arquivo_url, template.id]);
 
   // Item 6: drag-and-drop reordering
   function handleDragStart(e: React.DragEvent, key: string) {
@@ -1171,6 +1267,38 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     handleSave(mergedFields, mergedPositions, true, cellEdits);
   }
 
+  // Live sidebar reconciliation — called by MutationObserver in DocxInteractive.
+  // Updates React state immediately (no server save) so new/removed fields appear
+  // in the sidebar as the user types {{key}} in the document.
+  function handleLiveScan(edits: DocxEdit[], removedKeys: string[]) {
+    const newFields: TemplateFieldSchema[] = [];
+    const newPositions: Record<string, { cellText: string; ordinal: number; coord?: string }> = {};
+    for (const edit of edits) {
+      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label);
+      if (!fields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
+        newFields.push(f);
+        newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal, ...(edit.coord ? { coord: edit.coord } : {}) };
+      }
+    }
+    const removedSet = new Set(removedKeys);
+    setFields((prev) => {
+      const base = prev.filter((f) => !removedSet.has(f.key));
+      const toAdd = newFields.filter((nf) => !base.find((b) => b.key === nf.key));
+      return [...base, ...toAdd];
+    });
+    setFieldPositions((prev) => {
+      const next = { ...prev };
+      for (const k of removedKeys) delete next[k];
+      return { ...next, ...newPositions };
+    });
+    if (newFields.length > 0) {
+      setPanelCollapsed(false);
+      setExpandedField(newFields[0].key);
+      setActiveFieldKey(newFields[0].key);
+      setPendingConfigKeys((prev) => new Set([...prev, ...newFields.map((f) => f.key)]));
+    }
+  }
+
   function removeField(index: number) {
     const key = fields[index]?.key;
     setFields((prev) => prev.filter((_, i) => i !== index));
@@ -1180,6 +1308,26 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   }
 
   function updateField(index: number, patch: Partial<TemplateFieldSchema>) {
+    // Key rename: transfer stored position and pending state from old key to new key
+    if (patch.key !== undefined) {
+      const oldKey = fields[index]?.key;
+      if (oldKey && patch.key !== oldKey) {
+        setFieldPositions((pos) => {
+          if (!pos[oldKey]) return pos;
+          const next = { ...pos, [patch.key!]: pos[oldKey] };
+          delete next[oldKey];
+          return next;
+        });
+        setPendingConfigKeys((pck) => {
+          if (!pck.has(oldKey)) return pck;
+          const next = new Set(pck);
+          next.delete(oldKey);
+          next.add(patch.key!);
+          return next;
+        });
+      }
+    }
+
     setFields((prev) =>
       prev.map((f, i) => {
         if (i !== index) return f;
@@ -1221,8 +1369,27 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     switchToPreview = false,
     overrideCellEdits?: CellEdit[],
   ) {
-    const fieldsToSave = overrideFields ?? fields;
-    const positionsToSave = overridePositions ?? fieldPositions;
+    let fieldsToSave = overrideFields ?? fields;
+    let positionsToSave = overridePositions ?? fieldPositions;
+
+    // Ghost filter (sessão atual): remove campos cujo chip existia no doc mas foi deletado
+    // pelo usuário antes de clicar Salvar (sem passar por "Salvar edições")
+    if (!overrideFields && !overrideCellEdits) {
+      const currentDocKeys = latestDocKeysRef.current;
+      if (currentDocKeys.size > 0) {
+        const sessionGhosts = new Set(
+          Object.keys(positionsToSave).filter((k) => !currentDocKeys.has(k)),
+        );
+        if (sessionGhosts.size > 0) {
+          fieldsToSave = fieldsToSave.filter((f) => !sessionGhosts.has(f.key));
+          const cleanPos = { ...positionsToSave };
+          for (const k of sessionGhosts) delete cleanPos[k];
+          positionsToSave = cleanPos;
+          setFields(fieldsToSave);
+          setFieldPositions(positionsToSave);
+        }
+      }
+    }
 
     setError(null);
     setSaved(false);
@@ -1326,14 +1493,46 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     }
     setIsAdvancing(true);
     try {
+      // Collect any pending doc edits ({{keys}} typed in the doc but not yet committed via sidebar).
+      // This makes "Verificar template" a unified save — no separate "Salvar edições" needed.
+      const scan = scanRef.current?.();
+      let finalFields = fields;
+      let finalPositions = fieldPositions;
+      const finalCellEdits: CellEdit[] = scan?.cellEdits ?? [];
+
+      if (scan && (scan.edits.length > 0 || scan.removedKeys.length > 0)) {
+        const { edits, scanOrder, removedKeys } = scan;
+        const newFields: TemplateFieldSchema[] = [];
+        const newPositions: Record<string, { cellText: string; ordinal: number; coord?: string }> = {};
+        for (const edit of edits) {
+          const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label);
+          if (!finalFields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
+            newFields.push(f);
+            newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal, ...(edit.coord ? { coord: edit.coord } : {}) };
+          }
+        }
+        const removedSet = new Set(removedKeys);
+        const baseFields = finalFields.filter((f) => !removedSet.has(f.key));
+        const basePositions: Record<string, { cellText: string; ordinal: number }> = {};
+        for (const [k, v] of Object.entries(finalPositions)) {
+          if (!removedSet.has(k)) basePositions[k] = v;
+        }
+        const mergedPositions = { ...basePositions, ...newPositions };
+        const allFields = [...baseFields, ...newFields];
+        const scanIndexOf = (key: string) => { const i = scanOrder.indexOf(key); return i === -1 ? Infinity : i; };
+        finalFields = [...allFields].sort((a, b) => scanIndexOf(a.key) - scanIndexOf(b.key));
+        finalPositions = mergedPositions;
+      }
+
       const res = await fetch(`/api/templates/${template.id}/schema`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nome: nome.trim() || template.nome,
           estado: estado || null,
-          schema_campos: fields,
-          field_positions: fieldPositions,
+          schema_campos: finalFields,
+          field_positions: finalPositions,
+          ...(finalCellEdits.length > 0 ? { cell_edits: finalCellEdits } : {}),
         }),
       });
       if (!res.ok) {
@@ -1844,7 +2043,29 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                           autoFocus={isNew}
                           className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-200"
                         />
-                        <span className="mt-0.5 block font-mono text-[10px] text-slate-400">{`{{${field.key}}}`}</span>
+                      </label>
+
+                      {/* Key (placeholder) — editable */}
+                      <label className="block">
+                        <span className="text-[11px] font-semibold text-slate-600">Chave do placeholder</span>
+                        <div className="mt-1 flex items-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 focus-within:border-violet-400 focus-within:bg-white focus-within:ring-1 focus-within:ring-violet-200">
+                          <span className="shrink-0 font-mono text-xs text-slate-400">{"{{"}</span>
+                          <input
+                            type="text"
+                            value={field.key}
+                            onChange={(e) => {
+                              const raw = e.target.value
+                                .toLowerCase()
+                                .normalize("NFD")
+                                .replace(/[̀-ͯ]/g, "")
+                                .replace(/[^a-z0-9_]/g, "_");
+                              if (raw) updateField(index, { key: raw });
+                            }}
+                            className="min-w-0 flex-1 bg-transparent font-mono text-xs text-slate-700 outline-none"
+                          />
+                          <span className="shrink-0 font-mono text-xs text-slate-400">{"}}"}</span>
+                        </div>
+                        <span className="mt-0.5 block text-[10px] text-slate-400">Usado no documento como <code className="font-mono">{`{{${field.key}}}`}</code></span>
                       </label>
 
                       {/* Group — always editable */}
@@ -1863,18 +2084,68 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
                       {/* Posicionar no documento (only for missing fields) */}
                       {isPlaceholderMissing && (
-                        <button
-                          type="button"
-                          onClick={() => { setPlacementKey(field.key); setViewMode("interactive"); setPanelCollapsed(false); }}
-                          className={`flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
-                            placementKey === field.key
-                              ? "border-indigo-400 bg-indigo-600 text-white"
-                              : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                          }`}
-                        >
-                          <MousePointer2 className="h-3.5 w-3.5" />
-                          {placementKey === field.key ? "Aguardando clique no documento…" : "Posicionar no documento"}
-                        </button>
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => { setPlacementKey(field.key); setViewMode("interactive"); setPanelCollapsed(false); }}
+                            className={`flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                              placementKey === field.key
+                                ? "border-indigo-400 bg-indigo-600 text-white"
+                                : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                            }`}
+                          >
+                            <MousePointer2 className="h-3.5 w-3.5" />
+                            {placementKey === field.key ? "Aguardando clique no documento…" : "Clicar no documento"}
+                          </button>
+
+                          {anchorList.length > 0 && (
+                            <div>
+                              <p className="mb-1 text-[10px] font-semibold text-slate-500">Ou ancorar próximo de:</p>
+                              <input
+                                type="text"
+                                value={anchorSearch[field.key] ?? ""}
+                                onChange={(e) => setAnchorSearch((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                                placeholder="Buscar texto do documento…"
+                                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-700 outline-none focus:border-violet-400 focus:ring-1 focus:ring-violet-200"
+                              />
+                              <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                                {anchorList
+                                  .filter((a) => {
+                                    const q = (anchorSearch[field.key] ?? "").toLowerCase();
+                                    return !q || a.label.toLowerCase().includes(q);
+                                  })
+                                  .slice(0, 12)
+                                  .map((anchor) => (
+                                    <button
+                                      key={anchor.label}
+                                      type="button"
+                                      onClick={() => {
+                                        const newPos = {
+                                          ...fieldPositions,
+                                          [field.key]: { cellText: anchor.label, ordinal: 0 },
+                                        };
+                                        setFieldPositions(newPos);
+                                        setAnchorSearch((prev) => ({ ...prev, [field.key]: "" }));
+                                        handleSave(fields, newPos, true);
+                                      }}
+                                      className="flex w-full items-start gap-2 px-2.5 py-1.5 text-left hover:bg-violet-50"
+                                    >
+                                      <span className="mt-0.5 shrink-0 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-bold uppercase text-violet-600">
+                                        {anchor.pattern === "adjacent_right" ? "→" : anchor.pattern === "adjacent_below" ? "↓" : "="}
+                                      </span>
+                                      <span className="text-[11px] text-slate-700 line-clamp-2">{anchor.label}</span>
+                                    </button>
+                                  ))}
+                                {anchorList.filter((a) => {
+                                  const q = (anchorSearch[field.key] ?? "").toLowerCase();
+                                  return !q || a.label.toLowerCase().includes(q);
+                                }).length === 0 && (
+                                  <p className="px-3 py-2 text-[11px] text-slate-400">Nenhuma âncora encontrada</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       {/* Role toggle */}
@@ -2344,6 +2615,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
                     });
                   }}
+                  onDocKeysUpdate={(keys) => { latestDocKeysRef.current = keys; }}
+                  onLiveScan={handleLiveScan}
+                  scanRef={scanRef}
                 />
               )}
             </div>

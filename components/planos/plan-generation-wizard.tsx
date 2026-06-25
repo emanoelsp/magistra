@@ -61,6 +61,7 @@ interface PlanGenerationWizardProps {
   initialEstado?: string;
   initialEscolaId?: string;
   initialTurmaId?: string;
+  initialDisciplina?: string;
 }
 
 function formatDate(value: string) {
@@ -123,6 +124,7 @@ export function PlanGenerationWizard({
   initialEstado,
   initialEscolaId,
   initialTurmaId,
+  initialDisciplina,
 }: PlanGenerationWizardProps) {
   const router = useRouter();
 
@@ -156,8 +158,15 @@ export function PlanGenerationWizard({
   const [selectedEscolaId, setSelectedEscolaId] = useState(initialEscolaId ?? "");
   const [turmaFilterEscolaId, setTurmaFilterEscolaId] = useState("");
 
+  const [editingField, setEditingField] = useState<{ key: string; label: string; type: string } | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [committedValues, setCommittedValues] = useState<Record<string, string>>({});
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const editorRef = useRef<PlanEditorHandle>(null);
   const hasAppliedResumeRef = useRef(false);
+  const hasAppliedInitialTurmaRef = useRef(false);
 
 
   const selectedTemplate = availableTemplates.find((t) => t.id === selectedTemplateId) ?? null;
@@ -199,6 +208,7 @@ export function PlanGenerationWizard({
         initial[f.key] = resumeData.values[f.key] ?? "";
       }
       setMetadataValues(initial);
+      setCommittedValues(initial);
       return;
     }
 
@@ -215,7 +225,26 @@ export function PlanGenerationWizard({
         initial[escolaField.key] = selectedTemplate.escolaNome;
       }
     }
+    if (initialTurmaId && !hasAppliedInitialTurmaRef.current) {
+      const t = turmas?.find((tt) => tt.id === initialTurmaId);
+      if (t) {
+        hasAppliedInitialTurmaRef.current = true;
+        const ef = manualFields.find((f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"));
+        if (ef) initial[ef.key] = t.escola_nome;
+        const tf = manualFields.find((f) => f.key.includes("turma") || f.key.includes("class") || f.label.toLowerCase().includes("turma"));
+        if (tf) initial[tf.key] = t.nome;
+        if (t.disciplina) {
+          const df = manualFields.find((f) => f.key.includes("disciplina") || f.key.includes("componente") || f.label.toLowerCase().includes("disciplina") || f.label.toLowerCase().includes("componente"));
+          if (df) initial[df.key] = t.disciplina;
+        }
+      }
+    }
+    if (initialDisciplina) {
+      const df = manualFields.find((f) => f.key.includes("disciplina") || f.key.includes("componente") || f.label.toLowerCase().includes("disciplina") || f.label.toLowerCase().includes("componente"));
+      if (df && !initial[df.key]) initial[df.key] = initialDisciplina;
+    }
     setMetadataValues(initial);
+    setCommittedValues(initial);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId]);
 
@@ -249,6 +278,15 @@ export function PlanGenerationWizard({
       }
       return next;
     });
+  }
+
+  function commitField(key: string, value: string) {
+    if (!value.trim()) return;
+    setCommittedValues((p) => ({ ...p, [key]: value }));
+    setMetadataValues((p) => ({ ...p, [key]: value }));
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightedKey(key);
+    highlightTimerRef.current = setTimeout(() => setHighlightedKey(null), 4000);
   }
 
   // ── Navegação ───────────────────────────────────────────────────────────────
@@ -386,14 +424,16 @@ export function PlanGenerationWizard({
 
   function MagisChatBubble({ children }: { children: React.ReactNode }) {
     return (
-      <div className="flex items-end gap-2">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
-          <Sparkles className="h-3 w-3 text-white" />
+      <div className="flex items-start gap-4">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
+          <Sparkles className="h-5 w-5 text-white" />
         </div>
-        <div className="max-w-[75%]">
-          <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
-            <p className="text-sm leading-snug text-slate-800">{children}</p>
+        <div className="flex-1 rounded-3xl bg-white px-5 py-4 shadow-sm ring-1 ring-slate-100">
+          <div className="mb-2 flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-violet-600" />
+            <span className="text-xs font-bold uppercase tracking-widest text-violet-600">Magis</span>
           </div>
+          <div className="text-sm leading-relaxed text-slate-800">{children}</div>
         </div>
       </div>
     );
@@ -403,6 +443,53 @@ export function PlanGenerationWizard({
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Modal edição de campo preenchido */}
+      {editingField && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={() => setEditingField(null)}>
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <p className="mb-3 text-sm font-semibold text-slate-900">{editingField.label}</p>
+            {editingField.type === "textarea" ? (
+              <textarea
+                rows={3}
+                value={editingValue}
+                onChange={(e) => setEditingValue(e.target.value)}
+                autoFocus
+                className="w-full resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-violet-500 placeholder:text-slate-400"
+              />
+            ) : (
+              <input
+                type={editingField.type === "number" ? "number" : "text"}
+                value={editingValue}
+                onChange={(e) => setEditingValue(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    commitField(editingField.key, editingValue);
+                    setEditingField(null);
+                  }
+                }}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-violet-500"
+              />
+            )}
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingField(null)}
+                className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => { commitField(editingField.key, editingValue); setEditingField(null); }}
+                className="flex-1 rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Barra de progresso ─────────────────────────────────────────────── */}
       <div className="flex gap-2">
@@ -589,81 +676,81 @@ export function PlanGenerationWizard({
               </div>
             )}
 
-            {/* Chat area — estilo WhatsApp */}
-            <div className="bg-[#ece5dd] px-4 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
-              <MagisChatBubble>
-                {chatFields.length > 0
-                  ? "Ótimo! Agora me conta alguns dados sobre a turma e a aula para personalizar as sugestões."
-                  : "Tudo certo! Este template não tem campos manuais. Pode avançar direto para o preenchimento com a Magis."}
-              </MagisChatBubble>
-
-              {/* Título e currículo quando não vem do intro modal */}
-              {!fromIntroModal && (
+            {/* Chat area — campos preenchidos em um único balão */}
+            {(() => {
+              const filledFields = chatFields.filter((f) => (committedValues[f.key] ?? "").trim());
+              const emptyFields = chatFields.filter((f) => !(committedValues[f.key] ?? "").trim());
+              return (
                 <>
-                  <MagisChatBubble>Qual o título do plano? (será o nome do arquivo PDF)</MagisChatBubble>
-                  <div className="flex justify-end">
-                    <input
-                      type="text"
-                      value={planoTitulo}
-                      onChange={(e) => setPlanoTitulo(e.target.value)}
-                      placeholder="Ex.: Plano — Banco de Dados — Jun 2026"
-                      className="w-[78%] rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-violet-400"
-                    />
-                  </div>
-
-                  <MagisChatBubble>Qual currículo estadual devo usar nas sugestões?</MagisChatBubble>
-                  <div className="flex justify-end">
-                    <div className="relative w-[78%]">
-                      <select
-                        value={selectedEstado}
-                        onChange={(e) => setSelectedEstado(e.target.value)}
-                        className="w-full appearance-none rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 pr-9 text-sm shadow-sm outline-none focus:border-violet-400"
-                      >
-                        <option value="">Sem currículo estadual</option>
-                        {ESTADOS_BRASIL.map((e) => (
-                          <option key={e.uf} value={e.uf}>{e.uf} — {e.nome}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Campos manuais do template */}
-              {chatFields.map((field, idx) => {
-                const first2profIdx = chatFields.findIndex(is2profField);
-                return (
-                  <div key={field.key} className="space-y-2">
+                  <div className="bg-slate-50 px-4 py-5 space-y-4">
                     <MagisChatBubble>
-                      {field.label}{field.required ? "" : " (opcional)"}
-                      {has2prof && idx === first2profIdx
-                        ? " — vou incluir sugestões de NEE e adaptações curriculares no próximo passo."
-                        : ""}
+                      {chatFields.length > 0
+                        ? "Ótimo! Confira os dados abaixo e preencha o que falta para personalizar as sugestões."
+                        : "Tudo certo! Este template não tem campos manuais. Pode avançar direto para o preenchimento com a Magis."}
                     </MagisChatBubble>
-                    <div className="flex justify-end">
-                      {field.type === "textarea" ? (
-                        <textarea
-                          rows={3}
-                          value={metadataValues[field.key] ?? ""}
-                          onChange={(e) => setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))}
-                          placeholder={field.placeholder ?? field.label}
-                          className="w-[78%] resize-none rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-violet-400"
-                        />
-                      ) : (
-                        <input
-                          type={field.type === "number" ? "number" : "text"}
-                          value={metadataValues[field.key] ?? ""}
-                          onChange={(e) => setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))}
-                          placeholder={field.placeholder ?? `Ex.: ${field.label.toLowerCase()}`}
-                          className="w-[78%] rounded-2xl rounded-br-sm border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-violet-400"
-                        />
-                      )}
-                    </div>
+
+                    {filledFields.length > 0 && (
+                      <MagisChatBubble>
+                        <div className="space-y-2.5">
+                          {filledFields.map((f) => (
+                            <div
+                              key={f.key}
+                              className={`flex items-start justify-between gap-3 rounded-lg px-2 py-1 -mx-2 transition-colors duration-700 ${highlightedKey === f.key ? "bg-emerald-100" : ""}`}
+                            >
+                              <div className="min-w-0">
+                                <span className="font-bold text-slate-900">{f.label}:</span>
+                                <span className="ml-1.5 text-slate-700 break-words">{committedValues[f.key]}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingField({ key: f.key, label: f.label, type: f.type }); setEditingValue(committedValues[f.key] ?? ""); }}
+                                className="shrink-0 rounded-lg p-1 text-violet-400 transition hover:bg-violet-50 hover:text-violet-700"
+                                title="Editar"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </MagisChatBubble>
+                    )}
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* Campos vazios — inputs com borda laranja */}
+                  {emptyFields.length > 0 && (
+                    <div className="bg-white px-4 py-4 space-y-3 border-t border-slate-100">
+                      <p className="text-xs font-semibold text-orange-600">Preencha os campos abaixo:</p>
+                      {emptyFields.map((field) => (
+                        <div key={field.key}>
+                          <label className="mb-1 block text-xs font-medium text-slate-700">
+                            {field.label}{!field.required ? <span className="ml-1 text-slate-400">(opcional)</span> : ""}
+                          </label>
+                          {field.type === "textarea" ? (
+                            <textarea
+                              rows={3}
+                              value={metadataValues[field.key] ?? ""}
+                              onChange={(e) => setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))}
+                              onBlur={(e) => commitField(field.key, e.target.value)}
+                              placeholder={field.placeholder ?? field.label}
+                              className="w-full resize-none rounded-2xl border border-orange-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-orange-500 placeholder:text-slate-400"
+                            />
+                          ) : (
+                            <input
+                              type={field.type === "number" ? "number" : "text"}
+                              value={metadataValues[field.key] ?? ""}
+                              onChange={(e) => setMetadataValues((p) => ({ ...p, [field.key]: e.target.value }))}
+                              onBlur={(e) => commitField(field.key, e.target.value)}
+                              placeholder={field.placeholder ?? `Ex.: ${field.label.toLowerCase()}`}
+                              className="w-full rounded-2xl border border-orange-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-orange-500 placeholder:text-slate-400"
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Footer */}
             <div className="border-t border-slate-100 bg-white px-4 py-4">

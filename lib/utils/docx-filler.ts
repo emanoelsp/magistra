@@ -832,18 +832,35 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
         const allBrs = [...paraXml.matchAll(/<w:br(?:\s[^>]*)?\/?>/g)];
         if (allBrs.length === 0) continue; // no breaks — fall through to normal path
 
-        // Always inject right after the header (first break after the matching
-        // ALL CAPS segment).  Putting the body field immediately below the header
-        // is the standard layout for Brazilian school plan templates: the open
-        // space for content comes first, then any sub-items or secondary fields.
         const headerBrIdx = allBrs.findIndex((b) => b.index! >= seg.endInPara);
-        // Fall back to last break only when no break follows the header (shouldn't
-        // happen since isAllCapsHeader requires !seg.isLast, but be defensive).
-        const targetBr =
-          headerBrIdx >= 0 ? allBrs[headerBrIdx] : allBrs[allBrs.length - 1];
+        if (headerBrIdx < 0) continue; // no break follows header (defensive)
 
-        // Inject the token into the segment immediately after the header break
-        // (Seg 1).  We must stay within the existing <w:r> because:
+        // Detect sub-items between header break and last break.
+        // If any intermediate segment has non-empty text (e.g. "- Carga horária:"),
+        // the field value belongs AFTER all sub-items (end of para), not right after header.
+        let hasSubItems = false;
+        for (let bIdx = headerBrIdx; bIdx < allBrs.length - 1; bIdx++) {
+          const sStart = allBrs[bIdx]!.index! + allBrs[bIdx]![0].length;
+          const sEnd = allBrs[bIdx + 1]!.index!;
+          if (extractText(paraXml.slice(sStart, sEnd)).trim().length > 0) {
+            hasSubItems = true;
+            break;
+          }
+        }
+
+        if (hasSubItems) {
+          // Sub-items present → inject as new run at end of paragraph so the field
+          // value slot appears after all sub-item labels (e.g. "- Carga horária:", "- Período:").
+          const pCloseIdx = paraXml.lastIndexOf("</w:p>");
+          if (pCloseIdx < 0) continue;
+          const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
+          const newParaXml = paraXml.slice(0, pCloseIdx) + newRun + paraXml.slice(pCloseIdx);
+          console.info(`[appendToParagraph ALL-CAPS+sub-items] ${fieldKey} → end-of-para after "${segText.slice(0, 40)}"`);
+          return cellXml.replace(paraXml, newParaXml);
+        }
+
+        // No sub-items: inject right after the header break (Seg 1).
+        // We must stay within the existing <w:r> because:
         //   • Single-run cells have ALL content (text + breaks) inside ONE <w:r>;
         //     inserting a new <w:r> between breaks creates nested runs (invalid OOXML).
         //   • OOXML allows <w:t> and <w:br> to be freely mixed inside a single <w:r>.
@@ -856,7 +873,8 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
         // IMPORTANT: search for <w:t> only within Seg 1 (between targetBr and the
         // NEXT break), not beyond it — otherwise we'd overwrite the next text-bearing
         // segment (e.g. "Recuperação paralela:") in cells where Seg 1 is empty.
-        const afterBrPos = targetBr.index! + targetBr[0].length;
+        const targetBr = allBrs[headerBrIdx];
+        const afterBrPos = targetBr!.index! + targetBr![0].length;
         const nextBrAfterHeader = headerBrIdx + 1 < allBrs.length ? allBrs[headerBrIdx + 1] : null;
         const seg1EndPos = nextBrAfterHeader ? nextBrAfterHeader.index! : paraXml.lastIndexOf("</w:p>");
 
@@ -1189,7 +1207,26 @@ export function injectRawCell(
     return docxBuffer;
   }
 
+  // Pass 1: exact text match (avoids false positives from normText collisions,
+  // e.g. "__/__/ 2026" and "2026" both normalise to "2026").
   let hits = 0;
+  while ((match = tcRegex.exec(xml)) !== null) {
+    const text = extractText(match[0]).trim();
+    if (text === cellText) {
+      if (hits === ordinal) {
+        const newTc = clearAndSetCellText(match[0], newContent);
+        xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + match[0].length);
+        zip.file(xmlPath, xml);
+        return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+      }
+      hits++;
+    }
+  }
+
+  // Pass 2: normalised text match (handles minor whitespace/accent differences).
+  // Re-initialise the regex so it rescans from the beginning of the XML.
+  tcRegex.lastIndex = 0;
+  hits = 0;
   while ((match = tcRegex.exec(xml)) !== null) {
     const text = extractText(match[0]).trim();
     if (normText(text) === normText(cellText)) {
@@ -1452,6 +1489,16 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
         let targetCellIdx: number;
 
         if (rightEmpty && !bottomEmpty) {
+          // Guard: if there is a non-empty cell further to the right of the empty slot,
+          // it is likely a visual spacer between two label columns, not a value slot
+          // (e.g. [INSTRUMENTOS | empty | DATAS PREVISTAS]).
+          const afterRightVcol = rightVcol + rightCell!.gridSpan;
+          const afterRightCell = rowCells.find(
+            (c) => c.virtualColIdx === afterRightVcol && !c.isVMergeCont,
+          ) ?? null;
+          if (afterRightCell && !afterRightCell.isEmpty) {
+            continue; // spacer detected — skip golden rule injection
+          }
           targetRowIdx = ri;
           targetCellIdx = rightCell!.cellIdx;
         } else if (bottomEmpty && !rightEmpty) {
@@ -1657,6 +1704,33 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       // Compute next-row text early — needed for both ALL-CAPS and mixed-case checks.
       const nextRowText = ri + 1 < rows.length ? (rows[ri + 1].cellTexts[0] ?? "").trim() : "x";
       const hasEmptyBelow = nextRowText === "";
+
+      // "PLANEJAMENTO MENSAL PERÍODO __/__/YYYY" — heading with date blank → inject {{data_atual}}
+      // Must run BEFORE the ALL-CAPS skip below, as this cell is ALL CAPS with no colon.
+      {
+        const DATE_BLANK_RE = /_{1,6}\s*\/\s*_{1,6}(?:\s*\/\s*\d{2,4})?/;
+        if (DATE_BLANK_RE.test(singleCellText)) {
+          const dateField = schema.find((f) => !used.has(f.key) && f.key === "data_atual");
+          if (dateField) {
+            const cellXml = row.cells[0] ?? "";
+            const newCellXml = cellXml.replace(
+              /(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,
+              (m, open, text, close) => {
+                if (!DATE_BLANK_RE.test(text)) return m;
+                return open + text.replace(DATE_BLANK_RE, `{{${dateField.key}}}`) + close;
+              },
+            );
+            if (newCellXml !== cellXml) {
+              const newRowXml = replaceFirst(row.xml, cellXml, newCellXml);
+              xml = replaceFirst(xml, row.xml, newRowXml);
+              rows[ri] = { xml: newRowXml, cells: [newCellXml], cellTexts: [extractText(newCellXml)] };
+              used.add(dateField.key);
+              console.info(`[inject pass2-periodo_blank] ${dateField.key} in "${singleCellText}"`);
+            }
+          }
+          continue;
+        }
+      }
 
       // ALL CAPS + no colon: title by default, BUT if the next row is empty it is a
       // section field anchor (Rule 3 — e.g. "PROJETOS INTEGRADORES").
@@ -2284,7 +2358,13 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       }
 
       const colonIdx = t.indexOf(":");
-      if (colonIdx <= 1 || colonIdx >= t.length - 1) continue;
+      if (colonIdx <= 1) continue;
+      if (colonIdx >= t.length - 1) {
+        // Colon at end — label-only cell with no inline value (e.g. "DATAS PREVISTAS:")
+        const labelOnly = t.slice(0, colonIdx).trim();
+        if (labelOnly.length >= 2) addPair({ label: labelOnly, valuePreview: "", pattern: "inline_colon" });
+        continue;
+      }
       const label = t.slice(0, colonIdx).trim();
       const value = t.slice(colonIdx + 1).trim();
       if (label.length < 2 || !value || value.length > 300) continue;
@@ -2393,6 +2473,12 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
         continue;
       }
 
+      // "PLANEJAMENTO MENSAL PERÍODO __/__/YYYY" — date blank in heading → data_atual
+      if (/_{1,6}\s*\/\s*_{1,6}/.test(t)) {
+        addPair({ label: "data_atual", valuePreview: t, pattern: "inline_colon" });
+        continue;
+      }
+
       // ALL CAPS + no colon: title unless followed by empty row.
       // Empty below signals a section field anchor (Rule 3 — e.g. "PROJETOS INTEGRADORES").
       if (!hasMixedCase && !hasColon) {
@@ -2457,7 +2543,10 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
       // Require non-empty text for bold check: DOCX table cells can inherit bold
       // from style even when empty (e.g. "Escola:" + empty right cell). Treating
       // an empty bold cell as a label would silently skip the adjacent_right pair.
-      if (looksLikeLabel(nextText) || (nextText.length > 1 && hasBoldText(row.cells[ci + 1] ?? ""))) { ci++; continue; }
+      // Also: cells filled with underscores/dashes are blank value slots, not labels
+      // (common in Brazilian school templates: "________________________").
+      const nextIsBlankSlot = nextText.length > 0 && /^[_\-\s]+$/.test(nextText);
+      if (!nextIsBlankSlot && (looksLikeLabel(nextText) || (nextText.length > 1 && hasBoldText(row.cells[ci + 1] ?? "")))) { ci++; continue; }
       // Period markers are column identifiers, not field values — skip
       if (looksLikePeriodMarker(nextText)) { ci++; continue; }
       // Image cells are not fillable value slots — skip (prevents header logo detection)

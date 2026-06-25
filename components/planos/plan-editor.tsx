@@ -1083,6 +1083,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 }}
                 setFieldValue={setFieldValue}
                 fetchSuggestions={(field) => void fetchSuggestionsForField(field, metadata)}
+                hideManualFields={wizardMode}
               />
             </div>
           )}
@@ -1318,12 +1319,14 @@ interface FormViewProps {
   setActiveFieldKey: (key: string) => void;
   setFieldValue: (key: string, value: string) => void;
   fetchSuggestions: (field: TemplateFieldSchema) => void;
+  hideManualFields?: boolean;
 }
 
 function FormView({
   schema, manualFields, groupedIA, values, activeFieldKey,
   loadingField, metadataComplete, suggestions,
   setActiveFieldKey, setFieldValue, fetchSuggestions,
+  hideManualFields = false,
 }: FormViewProps) {
   if (schema.length === 0) {
     return (
@@ -1335,7 +1338,7 @@ function FormView({
 
   return (
     <div className="space-y-8">
-      {manualFields.length > 0 && (
+      {manualFields.length > 0 && !hideManualFields && (
         <section>
           <div className="mb-4 flex items-center gap-2">
             <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
@@ -1506,7 +1509,7 @@ function AIChatPanel({
         <ChatBubble>
           <p className="text-sm text-slate-700">
             Olá! Sou a <span className="font-semibold text-violet-700">Magis</span>, sua assistente pedagógica.
-            Clique nos campos com borda em <span className="font-bold text-violet-600">roxo</span> que sugiro o conteúdo para você!
+            Complemente os campos ou clique no botão abaixo para preencher todo o plano de aula.
           </p>
           {onGenerateAll && metadataComplete && (
             <button
@@ -1515,7 +1518,7 @@ function AIChatPanel({
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 active:scale-[.98]"
             >
               <Sparkles className="h-4 w-4" />
-              Gerar todos os campos com Magis
+              Gerar todos os campos
             </button>
           )}
         </ChatBubble>
