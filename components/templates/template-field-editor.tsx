@@ -288,17 +288,17 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     while ((node = walker.nextNode())) {
       const parent = (node as Text).parentElement;
       if (parent?.hasAttribute("data-field-chip")) continue; // already a chip — skip
-      if (/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test((node as Text).textContent ?? "")) {
+      if (/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/.test((node as Text).textContent ?? "")) {
         hits.push(node as Text);
       }
     }
     for (const textNode of hits) {
       const text = textNode.textContent ?? "";
-      const parts = text.split(/(\{\{[A-Za-z_][A-Za-z0-9_]*\}\})/);
+      const parts = text.split(/(\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\})/);
       if (parts.length <= 1) continue;
       const frag = document.createDocumentFragment();
       for (const part of parts) {
-        const m = part.match(/^\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}$/);
+        const m = part.match(/^\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}$/);
         if (m) {
           const key = m[1];
           if (roleMap.has(key)) {
@@ -408,7 +408,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     originalTextsRef.current = new Map();
     for (const el of [...tds, ...standaloneParagraphs]) {
       const clean = (el.textContent ?? "")
-        .replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "")
+        .replace(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g, "")
         .replace(/\s+/g, " ")
         .trim();
       originalTextsRef.current.set(el, clean);
@@ -420,7 +420,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     // via fieldPositions would be absent from initialDocKeysRef, causing the
     // "ghost placeholder" bug (removed chips not detected as removedKeys).
     const docKeys = new Set<string>();
-    for (const m of (container.textContent ?? "").matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)) {
+    for (const m of (container.textContent ?? "").matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)) {
       docKeys.add(m[1]);
     }
     initialDocKeysRef.current = docKeys;
@@ -521,7 +521,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const newEdits: DocxEdit[] = [];
         for (const el of [...tds, ...standalones]) {
           const currentText = el.textContent ?? "";
-          for (const match of [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)]) {
+          for (const match of [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)]) {
             const key = match[1];
             seenKeys.add(key);
             if (!existingKeys.has(key) && !newEdits.find((e) => e.key === key)) {
@@ -578,7 +578,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       const effectiveOrdinal = !originalText.trim() && tdIndex >= 0 ? tdIndex : ordinal;
 
       const currentText = el.textContent ?? "";
-      const matches = [...currentText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)];
+      const matches = [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)];
       if (matches.length === 0) continue;
 
       // Register each key in scan order and detect new fields.
@@ -598,7 +598,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       // If so, send the full new content as a single replace-mode cellEdit so the server
       // overwrites the cell instead of appending. This handles cases like:
       //   "PERÍODO / /2026" → "PERÍODO {{data}}" — "/ /2026" must be removed, not kept.
-      const currentNonTokenText = currentText.replace(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g, "").replace(/\s+/g, " ").trim();
+      const currentNonTokenText = currentText.replace(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g, "").replace(/\s+/g, " ").trim();
       const cellTextModified = currentNonTokenText !== originalText;
 
       if (cellTextModified) {
@@ -626,7 +626,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         if (!cellEdits.some((ce) => ce.newContent === `{{${key}}}`)) {
           const matchStart = match.index ?? 0;
           const rawTextBefore = currentText.slice(0, matchStart);
-          const prevTokenMatches = [...rawTextBefore.matchAll(/\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/g)];
+          const prevTokenMatches = [...rawTextBefore.matchAll(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g)];
           const lastPrev = prevTokenMatches[prevTokenMatches.length - 1];
           const textAfterLastToken = lastPrev
             ? rawTextBefore.slice(lastPrev.index! + lastPrev[0].length)

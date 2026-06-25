@@ -1288,7 +1288,7 @@ export function injectAtCoord(
         if (injected || ci !== targetCi) { ci++; return tcXml; }
         ci++;
         injected = true;
-        const isSimpleToken = /^\{\{[A-Za-z_][A-Za-z0-9_]*\}\}$/.test(content.trim());
+        const isSimpleToken = /^\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}$/.test(content.trim());
 
         // User cleared the cell and typed only the placeholder: replace existing content.
         if (replaceContent && isSimpleToken) {
@@ -2645,7 +2645,7 @@ export function reportInjections(
 export function scanPlaceholders(docxBuffer: Buffer): string[] {
   const zip = new PizZip(docxBuffer);
   const xml = zip.files["word/document.xml"]?.asText() ?? "";
-  const pattern = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+  const pattern = /\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g;
   const found = new Set<string>();
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(xml)) !== null) {
@@ -2676,7 +2676,7 @@ export function extractFieldCoords(docxBuffer: Buffer): Record<string, string> {
       let ci = 0;
       for (const tcM of trM[0].matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)) {
         const cellText = extractText(tcM[0]);
-        for (const m of cellText.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)) {
+        for (const m of cellText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)) {
           const key = m[1];
           if (!(key in coords)) {
             coords[key] = `T${ti}R${ri}C${ci}`;
@@ -2718,7 +2718,7 @@ export function stripNonSchemaTokens(docxBuffer: Buffer, validKeys: Set<string>)
   let xml = normalizeDocxXml(zip.files[xmlPath].asText());
 
   // ── Pass 1: non-fragmented tokens ──────────────────────────────────────────
-  xml = xml.replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (match, key: string) =>
+  xml = xml.replace(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g, (match, key: string) =>
     validKeys.has(key) ? match : "",
   );
 
@@ -2739,7 +2739,7 @@ export function stripNonSchemaTokens(docxBuffer: Buffer, validKeys: Set<string>)
 
     const paraText = wtMatches.map((w) => w.text).join("");
     // Check if any stray token exists in the joined text
-    const strayTokenRe = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+    const strayTokenRe = /\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g;
     let hasStraToken = false;
     let tm: RegExpExecArray | null;
     while ((tm = strayTokenRe.exec(paraText)) !== null) {
@@ -2759,7 +2759,7 @@ export function stripNonSchemaTokens(docxBuffer: Buffer, validKeys: Set<string>)
 
     // Find char ranges to blank out
     const blankRanges: [number, number][] = [];
-    const re2 = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+    const re2 = /\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g;
     let m2: RegExpExecArray | null;
     while ((m2 = re2.exec(paraText)) !== null) {
       if (!validKeys.has(m2[1])) {
@@ -2825,7 +2825,7 @@ export function fillDocx(
     const stripped = docXmlEntry.asText().replace(
       /<w:p[ >][\s\S]*?<\/w:p>/g,
       (para) => {
-        if (!/{{\s*[A-Za-z_][A-Za-z0-9_]*\s*}}/.test(para)) return para;
+        if (!/{{\s*[A-Za-z0-9_][A-Za-z0-9_]*\s*}}/.test(para)) return para;
         return para.replace(/<w:jc[^/]*\/>/g, "");
       }
     );
