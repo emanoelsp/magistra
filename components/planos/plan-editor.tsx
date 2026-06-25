@@ -50,6 +50,8 @@ interface PlanEditorProps {
   initialPlanoId?: string;
   /** When true, ia_sugerida fields are preserved from initialValues instead of being cleared. */
   resumeDraft?: boolean;
+  /** Called whenever IA field completion changes — lets the wizard show a live counter. */
+  onProgressChange?: (filled: number, total: number) => void;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -258,7 +260,7 @@ function PreviewDocView({ html, values }: PreviewDocViewProps) {
 // ─── PlanEditor ───────────────────────────────────────────────────────────────
 
 export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function PlanEditor(
-  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false },
+  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange },
   ref,
 ) {
   const router = useRouter();
@@ -300,6 +302,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   });
 
   useImperativeHandle(ref, () => ({ getCurrentValues: () => values }));
+
+  const iaFilledCount = iaFields.filter((f) => !!values[f.key]?.trim()).length;
+  useEffect(() => {
+    if (wizardMode && onProgressChange && iaFields.length > 0) {
+      onProgressChange(iaFilledCount, iaFields.length);
+    }
+  }, [iaFilledCount, iaFields.length, wizardMode, onProgressChange]);
 
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [activeFieldMeta, setActiveFieldMeta] = useState<{ label: string; role: string } | null>(null);
@@ -860,6 +869,29 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             }`}
           >
             Magis IA
+          </button>
+        </div>
+      )}
+
+      {/* Entry banner — wizardMode only, shown when no IA field has been filled yet */}
+      {wizardMode && !bulkGenerating && iaFields.length > 0 && iaFilledCount === 0 && (
+        <div className="flex items-center gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm shadow-violet-200">
+            <Sparkles className="h-4 w-4 text-white" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-slate-900">Deixe a Magis preencher o plano</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {iaFields.length} campo{iaFields.length !== 1 ? "s" : ""} pedagógico{iaFields.length !== 1 ? "s" : ""} aguardando sugestões de IA.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void generateAllIaFields()}
+            className="shrink-0 flex items-center gap-1.5 rounded-2xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
+          >
+            <WandSparkles className="h-4 w-4" />
+            Gerar tudo
           </button>
         </div>
       )}

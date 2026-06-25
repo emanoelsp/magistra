@@ -59,6 +59,8 @@ export interface UserProfile {
   avulso_planos?: number;
   role?: "admin" | "professor";
   data_criacao?: string;
+  /** Acumulado vitalício — total de minutos economizados com o Magistra. */
+  tempo_economizado_min?: number;
 }
 
 export type TemplateFillableStatus = "processando" | "pronto" | "erro";

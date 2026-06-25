@@ -1341,14 +1341,12 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
 
   return (
     <>
-      {/* ── Empty state ─────────────────────────────────────────────────── */}
-      <div className="mt-8 flex flex-col gap-6">
+      {/* ── Magis bubble ─────────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-6">
         <div className="flex items-start gap-3 max-w-2xl">
-          {/* avatar */}
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
             <Sparkles className="h-5 w-5 text-white" />
           </div>
-          {/* bubble */}
           <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
             <div className="mb-1.5 flex items-center gap-1.5">
               <Sparkles className="h-3 w-3 text-violet-600" />
@@ -1378,129 +1376,152 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
         </div>
       </div>
 
-      {/* ── Escola cards ─────────────────────────────────────────────────── */}
-      <div className="space-y-4">
-        {escolas.map((escola) => {
-          const escolaTurmas = turmasForEscola(escola.id);
-          const hasCursos = escola.cursos && escola.cursos.length > 0;
-          const isCollapsed = collapsedEscolas.has(escola.id);
-          const toggleCollapse = () =>
-            setCollapsedEscolas((prev) => {
-              const next = new Set(prev);
-              if (next.has(escola.id)) next.delete(escola.id);
-              else next.add(escola.id);
-              return next;
-            });
+      {/* ── Escolas list ─────────────────────────────────────────────────── */}
+      {escolas.length > 0 && (
+        <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          {/* Section header */}
+          <div className="mb-3 flex items-center justify-between px-1">
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-slate-500" />
+              <p className="text-sm font-semibold text-slate-800">Escolas cadastradas</p>
+            </div>
+            <span className="text-sm text-slate-400">
+              {escolas.length} cadastrada{escolas.length !== 1 ? "s" : ""}
+            </span>
+          </div>
 
-          return (
-            <div key={escola.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              {/* School header */}
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-600">
-                  <Building2 className="h-5 w-5" />
-                </div>
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-slate-900 leading-tight">{escola.nome}</p>
-                    {escolaPadrao && escola.nome === escolaPadrao && (
-                      <span className="text-[10px] font-medium text-violet-600">Escola padrão</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={toggleCollapse}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                    aria-label={isCollapsed ? "Expandir" : "Recolher"}
-                  >
-                    <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`} />
-                  </button>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {hasCursos && (
-                    <button
-                      type="button"
-                      onClick={() => setAddCursoTarget(escola)}
-                      className="inline-flex items-center gap-1 rounded-2xl border border-dashed border-indigo-300 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50"
-                    >
-                      <Plus className="h-3 w-3" />
-                      Novo curso
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setEditEscolaTarget(escola)}
-                    className="inline-flex items-center gap-1 rounded-2xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    <Pencil className="h-3 w-3" />
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDeleteEscolaTarget(escola)}
-                    className="inline-flex items-center gap-1 rounded-2xl border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    Excluir
-                  </button>
-                </div>
-              </div>
+          {/* Escola cards */}
+          <div className="space-y-3">
+            {escolas.map((escola) => {
+              const escolaTurmas = turmasForEscola(escola.id);
+              const hasCursos = !!(escola.cursos && escola.cursos.length > 0);
+              const turmaCount = escolaTurmas.length;
+              const cursoCount = (escola.cursos ?? []).length;
+              const isCollapsed = collapsedEscolas.has(escola.id);
+              const toggleCollapse = () =>
+                setCollapsedEscolas((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(escola.id)) next.delete(escola.id);
+                  else next.add(escola.id);
+                  return next;
+                });
 
-              {/* Collapsible body */}
-              {!isCollapsed && (
-                <>
-                  <div className="my-4 border-t border-slate-100" />
-
-                  {/* Turmas — by curso or flat */}
-                  {hasCursos ? (
-                    <div className="space-y-4">
-                      {(escola.cursos ?? []).map((curso) => {
-                        const cursoTurmas = escolaTurmas.filter((t) => t.tipo_curso === curso.tipo);
-                        return (
-                          <TurmaSection
-                            key={curso.tipo}
-                            curso={curso}
-                            turmas={cursoTurmas}
-                            onAddTurma={() => setAddTurmaTarget({ escolaId: escola.id, tipoCurso: curso })}
-                            onEditTurma={(t) => setEditTurmaTarget(t)}
-                            onDeleteTurma={(t) => setDeleteTurmaTarget(t)}
-                            onDesagrupar={(t) => void handleDesagrupar(t)}
-                            onEditCurso={() => setEditCursoTarget({ escola, curso })}
-                            onDeleteCurso={() => setDeleteCursoTarget({ escola, curso })}
-                          />
-                        );
-                      })}
+              return (
+                <div key={escola.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  {/* Row */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+                      <Building2 className="h-4 w-4" />
                     </div>
-                  ) : (
-                    /* Legacy flat display for schools without cursos */
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Turmas</p>
-                      <div className="flex flex-wrap gap-2">
-                        {escolaTurmas.map((turma) => (
-                          <TurmaChip
-                            key={turma.id}
-                            turma={turma}
-                            onEdit={() => setEditTurmaTarget(turma)}
-                            onDelete={() => setDeleteTurmaTarget(turma)}
-                            onDesagrupar={undefined}
-                          />
-                        ))}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-slate-900 leading-tight">{escola.nome}</p>
+                        {escolaPadrao && escola.nome === escolaPadrao && (
+                          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
+                            padrão
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-400">
+                        {turmaCount > 0
+                          ? `${turmaCount} turma${turmaCount !== 1 ? "s" : ""}`
+                          : "Sem turmas"}
+                        {cursoCount > 0
+                          ? ` · ${cursoCount} modalidade${cursoCount !== 1 ? "s" : ""}`
+                          : ""}
+                      </p>
+                    </div>
+                    {/* Actions */}
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      {hasCursos ? (
+                        <button
+                          type="button"
+                          onClick={() => setAddCursoTarget(escola)}
+                          className="inline-flex items-center gap-1 rounded-xl border border-dashed border-indigo-300 px-3 py-1.5 text-xs font-medium text-indigo-600 transition hover:border-indigo-400 hover:bg-indigo-50"
+                        >
+                          <Plus className="h-3 w-3" />
+                          Novo curso
+                        </button>
+                      ) : (
                         <button
                           type="button"
                           onClick={() => setAddTurmaTarget({ escolaId: escola.id })}
-                          className="inline-flex items-center gap-1.5 rounded-2xl border border-dashed border-violet-300 px-3 py-1.5 text-sm font-medium text-violet-600 hover:border-violet-400 hover:bg-violet-50"
+                          className="inline-flex items-center gap-1 rounded-xl border border-dashed border-violet-300 px-3 py-1.5 text-xs font-medium text-violet-600 transition hover:border-violet-400 hover:bg-violet-50"
                         >
-                          <Plus className="h-3.5 w-3.5" />
+                          <Plus className="h-3 w-3" />
                           Nova turma
                         </button>
-                      </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setEditEscolaTarget(escola)}
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteEscolaTarget(escola)}
+                        className="inline-flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Excluir
+                      </button>
+                      <button
+                        type="button"
+                        onClick={toggleCollapse}
+                        aria-label={isCollapsed ? "Expandir turmas" : "Recolher turmas"}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                      >
+                        <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expandable turmas / cursos */}
+                  {!isCollapsed && (hasCursos || turmaCount > 0) && (
+                    <div className="mt-3 border-t border-slate-50 pt-3">
+                      {hasCursos ? (
+                        <div className="space-y-4">
+                          {(escola.cursos ?? []).map((curso) => {
+                            const cursoTurmas = escolaTurmas.filter((t) => t.tipo_curso === curso.tipo);
+                            return (
+                              <TurmaSection
+                                key={curso.tipo}
+                                curso={curso}
+                                turmas={cursoTurmas}
+                                onAddTurma={() => setAddTurmaTarget({ escolaId: escola.id, tipoCurso: curso })}
+                                onEditTurma={(t) => setEditTurmaTarget(t)}
+                                onDeleteTurma={(t) => setDeleteTurmaTarget(t)}
+                                onDesagrupar={(t) => void handleDesagrupar(t)}
+                                onEditCurso={() => setEditCursoTarget({ escola, curso })}
+                                onDeleteCurso={() => setDeleteCursoTarget({ escola, curso })}
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {escolaTurmas.map((turma) => (
+                            <TurmaChip
+                              key={turma.id}
+                              turma={turma}
+                              onEdit={() => setEditTurmaTarget(turma)}
+                              onDelete={() => setDeleteTurmaTarget(turma)}
+                              onDesagrupar={undefined}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
       {(addEscolaOpen || editEscolaTarget) && (

@@ -171,6 +171,9 @@ export function PlanGenerationWizard({
   const editorRef = useRef<PlanEditorHandle>(null);
   const hasAppliedResumeRef = useRef(false);
   const hasAppliedInitialTurmaRef = useRef(false);
+  const [iaProgress, setIaProgress] = useState<{ filled: number; total: number } | null>(null);
+  const sessionStartRef = useRef(Date.now());
+  const [tempoEconomizadoMin, setTempoEconomizadoMin] = useState<number | null>(null);
 
 
   const selectedTemplate = availableTemplates.find((t) => t.id === selectedTemplateId) ?? null;
@@ -417,9 +420,28 @@ export function PlanGenerationWizard({
     scheduleNext();
   }
 
+  function countWords(html: string): number {
+    if (!html) return 0;
+    return html
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&[a-z]+;/gi, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean).length;
+  }
+
+  function calcTempoEconomizado(): number {
+    const iaSchema = templateRecord?.schema_campos?.filter((f) => f.role === "ia_sugerida") ?? [];
+    const totalWords = iaSchema.reduce((sum, f) => sum + countWords(capturedEditorValues[f.key] ?? ""), 0);
+    const sessionMinutes = Math.max(1, Math.round((Date.now() - sessionStartRef.current) / 60_000));
+    const estimatedMinutes = Math.round(totalWords / 40 + 15);
+    return Math.max(5, estimatedMinutes - sessionMinutes);
+  }
+
   function handleFinalize() {
     if (!savedPlanoId || !selectedTemplate) return;
     setSaveError(null);
+    const economizado = calcTempoEconomizado();
     const conteudo: Record<string, unknown> = {
       criado_por: userName,
       template_nome: selectedTemplate.nome,
@@ -430,9 +452,15 @@ export function PlanGenerationWizard({
       void planosService
         .updatePlano(savedPlanoId, { conteudo_gerado: conteudo, status: "gerado" })
         .then(() => {
+          setTempoEconomizadoMin(economizado);
           setShowSaveSuccess(true);
-          setTimeout(() => setShowSaveSuccess(false), 3000);
+          setTimeout(() => setShowSaveSuccess(false), 7000);
           setIsFinalized(true);
+          void fetch("/api/perfil/tempo-economizado", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ minutos: economizado }),
+          }).catch(() => {});
           // Trigger async PDF pre-generation (fire-and-forget — client polls for completion)
           if (savedPlanoId) {
             void fetch(`/api/planos/${savedPlanoId}/gerar-pdf`, { method: "POST" }).catch(() => {});
@@ -856,6 +884,7 @@ export function PlanGenerationWizard({
             wizardMode
             initialValues={editorInitialValues}
             resumeDraft={!!resumeData}
+            onProgressChange={(filled, total) => setIaProgress({ filled, total })}
           />
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -875,7 +904,7 @@ export function PlanGenerationWizard({
               onClick={handleContinueStep3}
               className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800"
             >
-              Revisar plano
+              Revisar plano{iaProgress && iaProgress.total > 0 ? ` (${iaProgress.filled}/${iaProgress.total})` : ""}
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
@@ -894,6 +923,7 @@ export function PlanGenerationWizard({
               from { width: 100%; }
               to   { width: 0%; }
             }
+            .magis-progress-bar { animation: magis-progress-plan 7s linear forwards; }
           `}</style>
           <div
             className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl"
@@ -923,14 +953,23 @@ export function PlanGenerationWizard({
                   <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
                     <p className="text-sm text-slate-500">Agora você pode baixar em PDF. 📄</p>
                   </div>
+                  {tempoEconomizadoMin !== null && (
+                    <div className="rounded-2xl rounded-bl-sm bg-emerald-50 border border-emerald-100 px-4 py-2.5 shadow-sm">
+                      <p className="text-sm font-semibold text-emerald-700">
+                        ⏱ Você economizou ~{tempoEconomizadoMin >= 60
+                          ? `${Math.floor(tempoEconomizadoMin / 60)}h${tempoEconomizadoMin % 60 > 0 ? ` ${tempoEconomizadoMin % 60}min` : ""}`
+                          : `${tempoEconomizadoMin} min`} de trabalho!
+                      </p>
+                      <p className="mt-0.5 text-xs text-emerald-600">Acumulando no seu painel.</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Barra de progresso auto-dismiss */}
             <div className="h-1 w-full overflow-hidden bg-violet-100">
-              <div className="h-full bg-violet-500"
-                style={{ animation: "magis-progress-plan 3s linear forwards" }} />
+              <div className="magis-progress-bar h-full bg-violet-500" />
             </div>
           </div>
         </div>

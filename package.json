@@ -11,6 +11,9 @@
     "ingest:bncc": "tsx --env-file=.env.local scripts/ingest-bncc.ts",
     "seed:admin": "tsx --env-file=.env.local scripts/seed-admin.ts",
     "migrate:users": "tsx --env-file=.env.local scripts/migrate-users.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:update": "vitest run --update-snapshots",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui"
@@ -54,6 +57,7 @@
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.9"
   }
 }

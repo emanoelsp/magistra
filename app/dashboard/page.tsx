@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   Circle,
+  Clock,
   FileText,
   FolderKanban,
   GraduationCap,
@@ -46,6 +47,13 @@ import {
 } from "../../components/dashboard/dashboard-paginated-cards";
 
 export const dynamic = "force-dynamic";
+
+function formatTempoEconomizado(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
 
 const PLAN_LABELS: Record<string, string> = {
   free:     "Explorador",
@@ -147,6 +155,15 @@ export default async function DashboardPage() {
               <Sparkles className="h-4 w-4" />
               Gerar novo plano
             </Link>
+          </div>
+        )}
+
+        {(user.tempo_economizado_min ?? 0) > 0 && (
+          <div className="mt-4 flex items-center gap-2">
+            <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+              <Clock className="h-3.5 w-3.5" />
+              {formatTempoEconomizado(user.tempo_economizado_min!)} economizados com o Magistra
+            </span>
           </div>
         )}
 
