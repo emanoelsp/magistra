@@ -601,14 +601,15 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     if (!activeFieldKey) return;
     trackSugestaoAceita(suggestion.id, mode === "full" ? "completo" : "titulo");
 
+    const safeLabel = suggestion.label.replace(/\n/g, "<br>");
     const text =
       mode === "full" && suggestion.descricao
         ? `${suggestion.label}: ${suggestion.descricao}`
         : suggestion.label;
     const html =
       mode === "full" && suggestion.descricao
-        ? `<p><strong>${suggestion.label}</strong></p><p>${suggestion.descricao}</p>`
-        : `<p>${suggestion.label}</p>`;
+        ? `<p><strong>${safeLabel}</strong></p><p>${suggestion.descricao}</p>`
+        : `<p>${safeLabel}</p>`;
 
     // Document mode: insert directly into the DOM cell
     if (docHtml && docContainerRef.current) {
@@ -1464,6 +1465,8 @@ function AIChatPanel({
 }: AIChatPanelProps) {
   const [contextInput, setContextInput] = useState("");
   const [showGeneralCtx, setShowGeneralCtx] = useState(false);
+  const [editingSugId, setEditingSugId] = useState<string | null>(null);
+  const [editingSugText, setEditingSugText] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Show only pedagogically relevant fields — skip escola, professor, recursos.
@@ -1475,6 +1478,7 @@ function AIChatPanel({
 
   useEffect(() => {
     setContextInput("");
+    setEditingSugId(null);
   }, [activeField?.key]);
 
   useEffect(() => {
@@ -1634,11 +1638,11 @@ function AIChatPanel({
                   style={{ animationDelay: "240ms" }}
                 />
               </div>
-              {streamingCharCount > 0 && (
-                <p className="text-xs text-violet-500">
-                  Magis está escrevendo…
-                </p>
-              )}
+              <p className="text-xs text-violet-500">
+                {streamingCharCount > 0
+                  ? "Magis está escrevendo…"
+                  : "Consultando BNCC e currículo territorial…"}
+              </p>
             </div>
           </ChatBubble>
         )}
@@ -1659,37 +1663,87 @@ function AIChatPanel({
 
         {/* Suggestions */}
         {!isLoading &&
-          suggestions.map((s, i) => (
-            <ChatBubble key={s.id} animIndex={i}>
-              <p className="text-sm font-semibold text-slate-900">{s.label}</p>
-              {s.descricao && (
-                <p className="mt-0.5 text-xs text-slate-600">{s.descricao}</p>
-              )}
-              {s.fonte && (
-                <span className="mt-1 inline-block rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
-                  {s.fonte}
-                </span>
-              )}
-              <div className="mt-2 flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onInsert(s, "label")}
-                  className="flex-1 rounded-lg border border-violet-200 bg-violet-50 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
-                >
-                  Título
-                </button>
-                {s.descricao && (
-                  <button
-                    type="button"
-                    onClick={() => onInsert(s, "full")}
-                    className="flex-1 rounded-lg bg-violet-100 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
-                  >
-                    Completo
-                  </button>
+          suggestions.map((s, i) => {
+            const isEditing = editingSugId === s.id;
+            return (
+              <ChatBubble key={s.id} animIndex={i}>
+                {isEditing ? (
+                  /* ── Inline edit mode ── */
+                  <div className="flex flex-col gap-2">
+                    <textarea
+                      rows={3}
+                      autoFocus
+                      value={editingSugText}
+                      onChange={(e) => setEditingSugText(e.target.value)}
+                      className="w-full resize-none rounded-xl border border-violet-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+                    />
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setEditingSugId(null)}
+                        className="flex-1 rounded-lg border border-slate-200 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-400"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onInsert({ ...s, label: editingSugText.trim() || s.label }, "label");
+                          setEditingSugId(null);
+                        }}
+                        className="flex-1 rounded-lg bg-violet-600 py-1 text-xs font-semibold text-white transition hover:bg-violet-500"
+                      >
+                        Inserir editado
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── Normal display mode ── */
+                  <>
+                    <button
+                      type="button"
+                      title="Clique para editar antes de inserir"
+                      onClick={() => { setEditingSugId(s.id); setEditingSugText(s.label); }}
+                      className="group w-full text-left"
+                    >
+                      <p className="text-sm font-semibold text-slate-900 transition group-hover:text-violet-700">
+                        {s.label}
+                      </p>
+                      <span className="mt-0.5 hidden text-[10px] text-violet-400 group-hover:inline">
+                        clique para editar
+                      </span>
+                    </button>
+                    {s.descricao && (
+                      <p className="mt-0.5 text-xs text-slate-600">{s.descricao}</p>
+                    )}
+                    {s.fonte && (
+                      <span className="mt-1 inline-block rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                        {s.fonte}
+                      </span>
+                    )}
+                    <div className="mt-2 flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onInsert(s, "label")}
+                        className="flex-1 rounded-lg border border-violet-200 bg-violet-50 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
+                      >
+                        Título
+                      </button>
+                      {s.descricao && (
+                        <button
+                          type="button"
+                          onClick={() => onInsert(s, "full")}
+                          className="flex-1 rounded-lg bg-violet-100 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
+                        >
+                          Completo
+                        </button>
+                      )}
+                    </div>
+                  </>
                 )}
-              </div>
-            </ChatBubble>
-          ))}
+              </ChatBubble>
+            );
+          })}
 
         <div ref={chatEndRef} />
       </div>

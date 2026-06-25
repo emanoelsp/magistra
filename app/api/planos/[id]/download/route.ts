@@ -348,14 +348,23 @@ async function convertDocxToPdfGotenberg(
   const headers: Record<string, string> = {};
   if (apiKey) headers["X-Api-Key"] = apiKey;
 
-  const res = await fetch(`${baseUrl}/forms/libreoffice/convert`, {
-    method: "POST",
-    headers,
-    body: form,
-  });
+  // Hard deadline: abort before the 60s Vercel function limit so the error
+  // reaches the CloudConvert fallback rather than silently timing out.
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), 40_000);
 
-  if (!res.ok) throw new Error(`Gotenberg: conversão falhou (HTTP ${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  try {
+    const res = await fetch(`${baseUrl}/forms/libreoffice/convert`, {
+      method: "POST",
+      headers,
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Gotenberg: conversão falhou (HTTP ${res.status})`);
+    return Buffer.from(await res.arrayBuffer());
+  } finally {
+    clearTimeout(abortTimer);
+  }
 }
 
 // ── CloudConvert: DOCX → PDF (fallback enquanto há créditos) ────────────────
@@ -518,6 +527,12 @@ export async function GET(
         { status: 403 },
       );
     }
+    // Fast path: serve pre-generated PDF from Vercel Blob (zero compute cost)
+    if (planoData.pdf_url && planoData.pdf_status === "pronto") {
+      void db.collection("magins_planos_aula").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
+      return NextResponse.redirect(planoData.pdf_url, { status: 302 });
+    }
+
     const conteudo = normalizeConteudo(planoData.conteudo_gerado ?? {});
 
     // Use plan title as filename if set, otherwise fall back to template name

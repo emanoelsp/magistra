@@ -120,6 +120,10 @@ export interface PlanoRecord {
   arquivo_fillable_url?: string;
   turma_id?: string;
   escola_id?: string;
+  /** Pre-generated PDF stored in Vercel Blob — served via 302 redirect on download. */
+  pdf_url?: string;
+  pdf_status?: "gerando" | "pronto" | "erro";
+  pdf_error?: string;
 }
 
 export interface CreatePlanoInput {

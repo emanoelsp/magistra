@@ -126,10 +126,11 @@ interface DocxInteractiveProps {
   onChipClick?: (key: string) => void;
   onDocKeysUpdate?: (keys: Set<string>) => void;
   onLiveScan?: (edits: DocxEdit[], removedKeys: string[]) => void;
+  onRepeatKey?: (key: string) => void;
   scanRef?: { current: ((() => DocxInteractiveScanData) | null) };
 }
 
-function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick, onDocKeysUpdate, onLiveScan, scanRef }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick, onDocKeysUpdate, onLiveScan, onRepeatKey, scanRef }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
@@ -144,6 +145,12 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   useEffect(() => { fieldsRef.current = fields; }, [fields]);
   const onLiveScanRef = useRef(onLiveScan);
   useEffect(() => { onLiveScanRef.current = onLiveScan; }, [onLiveScan]);
+  const onRepeatKeyRef = useRef(onRepeatKey);
+  useEffect(() => { onRepeatKeyRef.current = onRepeatKey; }, [onRepeatKey]);
+  const fastScanTriggerRef = useRef<(() => void) | null>(null);
+  // Incremented when a repeat {{key}} appears in a new cell — forces the
+  // chip colorization effect to re-run without a full fields state update.
+  const [colorizeTick, setColorizeTick] = useState(0);
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
 
   useEffect(() => {
@@ -317,7 +324,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       }
       textNode.parentNode?.replaceChild(frag, textNode);
     }
-  }, [phase, fields]);
+  }, [phase, fields, colorizeTick]);
 
   // Fix anchor image positions after docx-preview renders
   useEffect(() => {
@@ -472,12 +479,49 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       sel.removeAllRanges();
       sel.addRange(range);
     }
+    // Block any deletion (backspace, delete, cut, drag) that would remove a chip.
+    // Redirects the user to the sidebar trash instead.
+    function onBeforeInput(e: Event) {
+      const ie = e as InputEvent;
+      const deleteTypes = [
+        "deleteContentBackward", "deleteContentForward",
+        "deleteByCut", "deleteByDrag", "deleteContent",
+      ];
+      if (!deleteTypes.includes(ie.inputType)) return;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      const chips = container.querySelectorAll<HTMLElement>("[data-field-chip]");
+      for (const chip of chips) {
+        if (range.intersectsNode(chip)) {
+          ie.preventDefault();
+          const key = chip.getAttribute("data-field-chip");
+          if (key) onChipClickRef.current?.(key);
+          return;
+        }
+      }
+    }
     for (const el of editableEls) {
       el.contentEditable = "true";
       el.style.cursor = "text";
       el.addEventListener("keydown", onKeyDown);
       el.addEventListener("paste", onPaste);
     }
+    // Detect {{key}} completion: fire scan immediately (no 400ms wait) so the
+    // sidebar card appears the instant the user types the closing }}.
+    function onInput() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const node = sel.getRangeAt(0).startContainer;
+      if (node.nodeType !== Node.TEXT_NODE) return;
+      const offset = sel.getRangeAt(0).startOffset;
+      const text = (node as Text).data ?? "";
+      if (/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}$/.test(text.slice(0, offset))) {
+        fastScanTriggerRef.current?.();
+      }
+    }
+    container.addEventListener("beforeinput", onBeforeInput);
+    container.addEventListener("input", onInput);
     return () => {
       for (const el of editableEls) {
         el.contentEditable = "false";
@@ -485,6 +529,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         el.removeEventListener("keydown", onKeyDown);
         el.removeEventListener("paste", onPaste);
       }
+      container.removeEventListener("beforeinput", onBeforeInput);
+      container.removeEventListener("input", onInput);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
@@ -500,10 +546,60 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
 
   // MutationObserver: live-scan the contenteditable doc for new/removed {{key}} patterns.
   // Fires onLiveScan so the sidebar can update immediately without a server save.
+  // fastScanTriggerRef exposes an immediate (no-debounce) trigger for the onInput handler.
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function runScan() {
+      const tds = [...container.querySelectorAll<HTMLElement>("td")]
+        .filter((td) => !td.closest("header") && !td.closest("footer"));
+      const standalones = [...container.querySelectorAll<HTMLElement>("p")]
+        .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
+      const existingKeys = new Set(fieldsRef.current.map((f) => f.key));
+      const seenKeys = new Set<string>();
+      const newEdits: DocxEdit[] = [];
+      const notifiedRepeatKeys = new Set<string>();
+      for (const el of [...tds, ...standalones]) {
+        const currentText = el.textContent ?? "";
+        for (const match of [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)]) {
+          const key = match[1];
+          seenKeys.add(key);
+          if (!existingKeys.has(key) && !newEdits.find((e) => e.key === key)) {
+            const originalText = originalTextsRef.current.get(el) ?? "";
+            const label = originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " ");
+            const role: "manual" | "ia_sugerida" =
+              /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade/.test(key)
+                ? "ia_sugerida" : "manual";
+            const coord = el.tagName === "TD" ? (el.getAttribute("data-xml-coord") ?? undefined) : undefined;
+            newEdits.push({ text: originalText, ordinal: 0, key, role, label, coord });
+          } else if (
+            existingKeys.has(key) &&
+            !notifiedRepeatKeys.has(key) &&
+            !el.querySelector(`[data-field-chip="${key}"]`)
+          ) {
+            // Existing key appearing in a new cell (repeat/reuse) — colorize it
+            // and notify parent so it can show a toast.
+            notifiedRepeatKeys.add(key);
+            setColorizeTick((t) => t + 1);
+            onRepeatKeyRef.current?.(key);
+          }
+        }
+      }
+      const removedKeys = [...existingKeys].filter(
+        (k) => !seenKeys.has(k) && initialDocKeysRef.current.has(k),
+      );
+      if (newEdits.length > 0 || removedKeys.length > 0) {
+        onLiveScanRef.current?.(newEdits, removedKeys);
+      }
+    }
+
+    fastScanTriggerRef.current = () => {
+      if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+      runScan();
+    };
+
     const observer = new MutationObserver((mutations) => {
       const relevant = mutations.some((m) => {
         const el = m.target instanceof Element ? m.target : (m.target as Node).parentElement;
@@ -511,40 +607,14 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       });
       if (!relevant) return;
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        const tds = [...container.querySelectorAll<HTMLElement>("td")]
-          .filter((td) => !td.closest("header") && !td.closest("footer"));
-        const standalones = [...container.querySelectorAll<HTMLElement>("p")]
-          .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
-        const existingKeys = new Set(fieldsRef.current.map((f) => f.key));
-        const seenKeys = new Set<string>();
-        const newEdits: DocxEdit[] = [];
-        for (const el of [...tds, ...standalones]) {
-          const currentText = el.textContent ?? "";
-          for (const match of [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)]) {
-            const key = match[1];
-            seenKeys.add(key);
-            if (!existingKeys.has(key) && !newEdits.find((e) => e.key === key)) {
-              const originalText = originalTextsRef.current.get(el) ?? "";
-              const label = originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " ");
-              const role: "manual" | "ia_sugerida" =
-                /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade/.test(key)
-                  ? "ia_sugerida" : "manual";
-              const coord = el.tagName === "TD" ? (el.getAttribute("data-xml-coord") ?? undefined) : undefined;
-              newEdits.push({ text: originalText, ordinal: 0, key, role, label, coord });
-            }
-          }
-        }
-        const removedKeys = [...existingKeys].filter(
-          (k) => !seenKeys.has(k) && initialDocKeysRef.current.has(k),
-        );
-        if (newEdits.length > 0 || removedKeys.length > 0) {
-          onLiveScanRef.current?.(newEdits, removedKeys);
-        }
-      }, 400);
+      debounceTimer = setTimeout(runScan, 400);
     });
     observer.observe(container, { characterData: true, childList: true, subtree: true });
-    return () => { observer.disconnect(); if (debounceTimer) clearTimeout(debounceTimer); };
+    return () => {
+      observer.disconnect();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      fastScanTriggerRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
@@ -904,6 +974,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [locateKey, setLocateKey] = useState<string | null>(null);
   const [expandedField, setExpandedField] = useState<string | null>(null);
+  const [flashFieldKey, setFlashFieldKey] = useState<string | null>(null);
+  const [focusKeyOf, setFocusKeyOf] = useState<string | null>(null);
+  const [focusLabelOf, setFocusLabelOf] = useState<string | null>(null);
   const [showConfirmSuccess, setShowConfirmSuccess] = useState(false);
   const [fieldPositions, setFieldPositions] = useState<Record<string, { cellText: string; ordinal: number; coord?: string }>>({});
   const [previewVersion, setPreviewVersion] = useState(0);
@@ -946,6 +1019,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   // Ref to DocxInteractive's extractDocEdits — used by handleAdvanceToReview to
   // collect pending doc edits without needing an extra server round-trip.
   const scanRef = useRef<(() => DocxInteractiveScanData) | null>(null);
+  const keyInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const labelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   // Placement mode
   const [placementKey, setPlacementKey] = useState<string | null>(null);
@@ -1096,6 +1171,26 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     const card = fieldListRef.current.querySelector(`[data-field-card="${activeFieldKey}"]`);
     if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeFieldKey]);
+
+  useEffect(() => {
+    if (!flashFieldKey) return;
+    const t = setTimeout(() => setFlashFieldKey(null), 500);
+    return () => clearTimeout(t);
+  }, [flashFieldKey]);
+
+  useEffect(() => {
+    if (!focusKeyOf) return;
+    const el = keyInputRefs.current[focusKeyOf];
+    if (el) { el.focus(); el.select(); }
+    setFocusKeyOf(null);
+  }, [focusKeyOf]);
+
+  useEffect(() => {
+    if (!focusLabelOf) return;
+    const el = labelInputRefs.current[focusLabelOf];
+    if (el) { el.focus(); el.select(); }
+    setFocusLabelOf(null);
+  }, [focusLabelOf]);
 
   async function handleReExtract() {
     setIsReExtracting(true);
@@ -1292,10 +1387,17 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       return { ...next, ...newPositions };
     });
     if (newFields.length > 0) {
+      const key = newFields[0].key;
       setPanelCollapsed(false);
-      setExpandedField(newFields[0].key);
-      setActiveFieldKey(newFields[0].key);
+      setExpandedField(key);
+      setActiveFieldKey(key);
       setPendingConfigKeys((prev) => new Set([...prev, ...newFields.map((f) => f.key)]));
+      setFocusLabelOf(key);
+      requestAnimationFrame(() => {
+        panelScrollRef.current
+          ?.querySelector<HTMLElement>(`[data-field-card="${key}"]`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
     }
   }
 
@@ -1574,10 +1676,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     finally { setIsSavingMagis(false); }
     setMagisQuestionsMode(false);
     setShowConfirmSuccess(true);
-    setTimeout(() => {
-      setShowConfirmSuccess(false);
-      router.push("/dashboard/templates");
-    }, 3000);
   }
 
   // Item 5: diff modal
@@ -1958,7 +2056,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   onDragOver={(e) => handleDragOver(e, field.key)}
                   onDrop={() => handleDrop(field.key)}
                   onDragEnd={handleDragEnd}
-                  className={`rounded-2xl border bg-white transition-all ${
+                  className={`rounded-2xl border bg-white transition-all ${flashFieldKey === field.key ? "chip-shake" : ""} ${
                     isDragging ? "opacity-40 scale-95" : isDragOver ? "border-violet-400 ring-2 ring-violet-200" : isNew ? "border-violet-400 ring-2 ring-violet-100" : isActive ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"
                   }`}
                 >
@@ -2038,9 +2136,9 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         <input
                           type="text"
                           value={field.label}
+                          ref={(el) => { labelInputRefs.current[field.key] = el; }}
                           onChange={(e) => updateField(index, { label: e.target.value })}
                           placeholder="Ex.: Turma, Objetivos de aprendizagem…"
-                          autoFocus={isNew}
                           className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-200"
                         />
                       </label>
@@ -2053,6 +2151,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                           <input
                             type="text"
                             value={field.key}
+                            ref={(el) => { keyInputRefs.current[field.key] = el; }}
                             onChange={(e) => {
                               const raw = e.target.value
                                 .toLowerCase()
@@ -2512,25 +2611,62 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             to   { opacity: 1; transform: scale(1) translateY(0); }
           }
         `}</style>
+
+        {/* Magis avatar com check */}
         <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-violet-600 shadow-lg shadow-violet-200">
           <Sparkles className="h-7 w-7 text-white" />
-          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
-            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}>
+          <span
+            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
+            style={{ animation: "magis-pop 0.4s 0.2s cubic-bezier(0.34,1.56,0.64,1) both" }}
+          >
             <CheckCircle2 className="h-3.5 w-3.5 text-white" />
           </span>
         </div>
+
+        {/* Balão Magis */}
         <div className="w-full rounded-2xl border border-violet-100 bg-violet-50 px-5 py-4 text-center">
           <div className="mb-1.5 flex items-center justify-center gap-1.5">
             <Sparkles className="h-3 w-3 text-violet-500" />
             <span className="text-xs font-bold text-violet-700">Magis</span>
           </div>
-          <p className="text-sm font-medium leading-relaxed text-slate-800">Seu template foi configurado com sucesso! 🎉</p>
-          <p className="mt-1 text-xs text-slate-500">Redirecionando para Meus Templates…</p>
+          <p className="text-sm font-medium leading-relaxed text-slate-800">
+            Template salvo com sucesso!
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            {fields.length} campo{fields.length !== 1 ? "s" : ""} configurado{fields.length !== 1 ? "s" : ""} e pronto{fields.length !== 1 ? "s" : ""} para uso.
+          </p>
         </div>
-        <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full rounded-full bg-violet-500" style={{ animation: "magis-progress 3s linear forwards" }} />
+
+        {/* CTAs */}
+        <div className="flex w-full flex-col gap-2.5">
+          <button
+            type="button"
+            onClick={() => router.push(`/dashboard/gerar?template=${template.id}`)}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-violet-700"
+          >
+            <Sparkles className="h-4 w-4" />
+            Gerar plano com este template
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowConfirmSuccess(false);
+              setReviewMode(false);
+              setPanelCollapsed(false);
+            }}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Continuar editando
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard/templates")}
+            className="text-center text-xs text-slate-400 hover:text-slate-600 transition"
+          >
+            Ver meus templates
+          </button>
         </div>
-        <style>{`@keyframes magis-progress { from { width: 100%; } to { width: 0%; } }`}</style>
       </div>
     </div>
   );
@@ -2609,6 +2745,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                     setPanelCollapsed(false);
                     setExpandedField(key);
                     setActiveFieldKey(key);
+                    setFlashFieldKey(key);
+                    setFocusKeyOf(key);
                     requestAnimationFrame(() => {
                       panelScrollRef.current
                         ?.querySelector<HTMLElement>(`[data-field-card="${key}"]`)
@@ -2617,6 +2755,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   }}
                   onDocKeysUpdate={(keys) => { latestDocKeysRef.current = keys; }}
                   onLiveScan={handleLiveScan}
+                  onRepeatKey={(key) => showMagisToast(`Campo {{${key}}} repetido — o valor preencherá todas as posições no documento.`, "info")}
                   scanRef={scanRef}
                 />
               )}

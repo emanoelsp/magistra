@@ -151,6 +151,10 @@ export function PlanGenerationWizard({
   const [isFinalized, setIsFinalized] = useState(false);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [pdfStatus, setPdfStatus] = useState<"idle" | "gerando" | "pronto" | "erro" | "timeout">("idle");
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollAttemptRef = useRef(0);
   const [isSavingMeta, startSavingMeta] = useTransition();
   const [isPending, startTransition] = useTransition();
   const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
@@ -197,6 +201,10 @@ export function PlanGenerationWizard({
     manualFields.every((f) => !!(metadataValues[f.key] ?? "").trim());
 
   // Quando template muda, pré-popula metadados com o que está salvo
+  useEffect(() => {
+    return () => { if (pollTimerRef.current) clearTimeout(pollTimerRef.current); };
+  }, []);
+
   useEffect(() => {
     if (!selectedTemplate) return;
 
@@ -379,6 +387,36 @@ export function PlanGenerationWizard({
       .finally(() => setIsAutoSaving(false));
   }
 
+  // Exponential-backoff polling: 2s → 3s → 5s → 8s → 10s × 4  (total ≈ 50s before timeout)
+  const POLL_DELAYS = [2000, 3000, 5000, 8000, 10000, 10000, 10000, 10000];
+
+  function startPdfPolling(planoId: string) {
+    pollAttemptRef.current = 0;
+    setPdfStatus("gerando");
+
+    function scheduleNext() {
+      const delay = POLL_DELAYS[pollAttemptRef.current] ?? null;
+      if (delay === null) { setPdfStatus("timeout"); return; }
+      pollTimerRef.current = setTimeout(async () => {
+        pollAttemptRef.current++;
+        try {
+          const res = await fetch(`/api/planos/${planoId}/pdf-status`);
+          if (!res.ok) { scheduleNext(); return; }
+          const data = await res.json() as { pdf_status: string | null; pdf_url: string | null };
+          if (data.pdf_status === "pronto" && data.pdf_url) {
+            setPdfUrl(data.pdf_url); setPdfStatus("pronto");
+          } else if (data.pdf_status === "erro") {
+            setPdfStatus("erro");
+          } else {
+            scheduleNext();
+          }
+        } catch { scheduleNext(); }
+      }, delay);
+    }
+
+    scheduleNext();
+  }
+
   function handleFinalize() {
     if (!savedPlanoId || !selectedTemplate) return;
     setSaveError(null);
@@ -395,6 +433,11 @@ export function PlanGenerationWizard({
           setShowSaveSuccess(true);
           setTimeout(() => setShowSaveSuccess(false), 3000);
           setIsFinalized(true);
+          // Trigger async PDF pre-generation (fire-and-forget — client polls for completion)
+          if (savedPlanoId) {
+            void fetch(`/api/planos/${savedPlanoId}/gerar-pdf`, { method: "POST" }).catch(() => {});
+            startPdfPolling(savedPlanoId);
+          }
           // Update pedagogic memory in background (fire-and-forget)
           void fetch("/api/ia/memoria", {
             method: "POST",
@@ -912,19 +955,53 @@ export function PlanGenerationWizard({
                     <Check className="h-3.5 w-3.5" />
                     Salvo
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!savedPlanoId) return;
-                      void triggerDownload(`/api/planos/${savedPlanoId}/download?format=pdf`)
-                        .then((info) => { if (info) setDownloadLimitInfo(info); })
-                        .catch(() => { window.open(`/api/planos/${savedPlanoId}/download?format=pdf`, "_blank"); });
-                    }}
-                    className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Baixar PDF
-                  </button>
+
+                  {/* PDF generation state machine */}
+                  {pdfStatus === "gerando" && (
+                    <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2">
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin text-violet-500" />
+                      <span className="text-xs font-medium text-violet-700">Preparando PDF…</span>
+                    </div>
+                  )}
+
+                  {pdfStatus === "pronto" && pdfUrl && (
+                    <a
+                      href={pdfUrl}
+                      download
+                      className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Baixar PDF
+                    </a>
+                  )}
+
+                  {(pdfStatus === "erro" || pdfStatus === "timeout") && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-rose-600">
+                        {pdfStatus === "timeout" ? "PDF demorou mais que o esperado." : "Falha na geração."}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { if (savedPlanoId) { void fetch(`/api/planos/${savedPlanoId}/gerar-pdf`, { method: "POST" }).catch(() => {}); startPdfPolling(savedPlanoId); } }}
+                        className="text-xs font-semibold text-violet-600 underline hover:text-violet-800"
+                      >
+                        Tentar novamente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!savedPlanoId) return;
+                          void triggerDownload(`/api/planos/${savedPlanoId}/download?format=pdf`)
+                            .then((info) => { if (info) setDownloadLimitInfo(info); })
+                            .catch(() => { window.open(`/api/planos/${savedPlanoId}/download?format=pdf`, "_blank"); });
+                        }}
+                        className="flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-950"
+                      >
+                        <Download className="h-3 w-3" />
+                        Baixar agora
+                      </button>
+                    </div>
+                  )}
                 </>
               ) : (
                 <button
