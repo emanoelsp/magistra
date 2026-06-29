@@ -200,6 +200,7 @@ export interface PlanoFilters {
   status?: string;
   templateId?: string;
   turmaId?: string;
+  escolaId?: string;
 }
 
 export async function getUserPlanosComNome(
@@ -240,6 +241,9 @@ export async function getUserPlanosComNome(
   }
   if (filters?.turmaId) {
     allPlanos = allPlanos.filter((p) => p.turma_id === filters.turmaId);
+  }
+  if (filters?.escolaId) {
+    allPlanos = allPlanos.filter((p) => p.escola_id === filters.escolaId);
   }
   if (filters?.q) {
     const qLower = filters.q.toLowerCase().trim();

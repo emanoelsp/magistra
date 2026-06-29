@@ -1,13 +1,26 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronLeft, ChevronRight, Clock, Edit2, FileText, FolderKanban, Lock, Pencil } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Edit2,
+  FileText,
+  FolderKanban,
+  Lock,
+  Pencil,
+  Sparkles,
+} from "lucide-react";
 
+import { redirect } from "next/navigation";
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import {
   getUserPlanosComNome,
   getUserTemplateOptions,
 } from "../../../lib/services/firestore/dashboard.server";
-import { getUserTurmas } from "../../../lib/services/firestore/escolas.server";
+import { getUserEscolas, getUserTurmas } from "../../../lib/services/firestore/escolas.server";
+import { getPlanCapabilities } from "../../../lib/services/plan-capabilities";
 import { HistoricoTabs } from "./historico-tabs";
 import { HistoricoFilters } from "./historico-filters";
 import { DownloadPlanButton } from "../../../components/planos/download-plan-button";
@@ -32,17 +45,34 @@ function formatDate(iso: string) {
   );
 }
 
-function pageUrl(tab: string, page: number, filters: { q?: string; status?: string; templateId?: string; turmaId?: string }) {
+function pageUrl(
+  tab: string,
+  page: number,
+  filters: { q?: string; status?: string; templateId?: string; turmaId?: string; escolaId?: string; cursoTipo?: string; fillableStatus?: string },
+) {
   const sp = new URLSearchParams({ tab, page: String(page) });
   if (filters.q) sp.set("q", filters.q);
   if (filters.status) sp.set("status", filters.status);
   if (filters.templateId) sp.set("templateId", filters.templateId);
   if (filters.turmaId) sp.set("turmaId", filters.turmaId);
+  if (filters.escolaId) sp.set("escolaId", filters.escolaId);
+  if (filters.cursoTipo) sp.set("cursoTipo", filters.cursoTipo);
+  if (filters.fillableStatus) sp.set("fillableStatus", filters.fillableStatus);
   return `/dashboard/historico?${sp.toString()}`;
 }
 
 interface PageProps {
-  searchParams: Promise<{ tab?: string; page?: string; q?: string; status?: string; templateId?: string; turmaId?: string }>;
+  searchParams: Promise<{
+    tab?: string;
+    page?: string;
+    q?: string;
+    status?: string;
+    templateId?: string;
+    turmaId?: string;
+    escolaId?: string;
+    cursoTipo?: string;
+    fillableStatus?: string;
+  }>;
 }
 
 const FREE_EXPIRY_DAYS = 90;
@@ -58,27 +88,61 @@ function isPreviousYear(dataGeracao: string): boolean {
   return new Date(dataGeracao).getFullYear() < CURRENT_YEAR;
 }
 
+function MagisBubble({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 max-w-2xl">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
+        <Sparkles className="h-5 w-5 text-white" />
+      </div>
+      <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <Sparkles className="h-3 w-3 text-violet-600" />
+          <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">Magis</span>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default async function HistoricoPage({ searchParams }: PageProps) {
   const user = await requireCurrentUserProfile();
-  const { tab: tabParam, page: pageParam, q, status: statusParam, templateId, turmaId } = await searchParams;
+  const caps = getPlanCapabilities(user.plano ?? "free");
+  if (!caps.canAccessHistorico) redirect("/dashboard");
+
+  const {
+    tab: tabParam,
+    page: pageParam,
+    q,
+    status: statusParam,
+    templateId,
+    turmaId,
+    escolaId,
+    cursoTipo,
+    fillableStatus,
+  } = await searchParams;
 
   const tab = tabParam === "templates" ? "templates" : "planos";
   const page = Math.max(1, Number(pageParam) || 1);
-  const filters = { q, status: statusParam, templateId, turmaId };
+  const filters = { q, status: statusParam, templateId, turmaId, escolaId }; // cursoTipo é UI-only
 
-  const [planosResult, templates, turmas] = await Promise.all([
+  const [planosResult, templates, turmas, escolas] = await Promise.all([
     getUserPlanosComNome(user.uid, PAGE_SIZE, page, filters),
     getUserTemplateOptions(user.uid),
-    getUserTurmas(user.uid),
+    caps.historicoWithOrg ? getUserTurmas(user.uid) : Promise.resolve([]),
+    caps.historicoWithOrg ? getUserEscolas(user.uid) : Promise.resolve([]),
   ]);
 
   const planos = planosResult.items;
   const totalPlanos = planosResult.total;
 
-  // Filter templates by search query (client-server: filter in memory)
-  const filteredTemplates = q
-    ? templates.filter((t) => t.nome.toLowerCase().includes(q.toLowerCase()))
-    : templates;
+  const selectedEscolaForFilter = escolaId ? escolas.find((e) => e.id === escolaId) : null;
+  const filteredTemplates = templates.filter((t) => {
+    if (q && !t.nome.toLowerCase().includes(q.toLowerCase())) return false;
+    if (selectedEscolaForFilter && t.escolaNome !== selectedEscolaForFilter.nome) return false;
+    if (fillableStatus && t.fillable_status !== fillableStatus) return false;
+    return true;
+  });
 
   const templateTotalPages = Math.max(1, Math.ceil(filteredTemplates.length / PAGE_SIZE));
   const totalPages = tab === "planos"
@@ -88,6 +152,9 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
   const pageItems = tab === "planos"
     ? planos
     : filteredTemplates.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const filtersWithCurso = { ...filters, cursoTipo, fillableStatus };
+  const hasFilters = !!(q || statusParam || templateId || turmaId || escolaId || cursoTipo || fillableStatus);
 
   return (
     <div className="space-y-6">
@@ -121,55 +188,53 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
         <HistoricoFilters
           tab={tab}
           templates={templates.map((t) => ({ id: t.id, nome: t.nome }))}
-          turmas={turmas.map((t) => ({ id: t.id, nome: t.nome, escola_nome: t.escola_nome }))}
+          turmas={turmas.map((t) => ({
+            id: t.id,
+            nome: t.nome,
+            escola_nome: t.escola_nome,
+            escola_id: t.escola_id,
+            tipo_curso: t.tipo_curso,
+          }))}
+          escolas={escolas.map((e) => ({
+            id: e.id,
+            nome: e.nome,
+            cursos: e.cursos?.map((c) => ({ tipo: c.tipo, label: c.nome ?? c.tipo })),
+          }))}
+          canShowOrgFilters={caps.historicoWithOrg}
         />
       </Suspense>
 
-      {/* Lista */}
+      {/* Lista ou empty state */}
       {pageItems.length === 0 ? (
-        <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center">
+        <div className="py-4">
           {tab === "planos" ? (
-            <>
-              <FileText className="mx-auto h-10 w-10 text-slate-300" />
-              {filters.q || filters.status || filters.templateId ? (
-                <>
-                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum plano encontrado</h2>
-                  <p className="mt-2 text-sm text-slate-500">Tente outros termos ou limpe os filtros.</p>
-                </>
-              ) : (
-                <>
-                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum plano ainda</h2>
-                  <p className="mt-2 text-sm text-slate-500">Gere seu primeiro plano no assistente.</p>
-                  <Link
-                    href="/dashboard/gerar"
-                    className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-                  >
-                    Gerar plano
-                  </Link>
-                </>
-              )}
-            </>
+            hasFilters ? (
+              <MagisBubble>
+                <p className="text-sm leading-relaxed text-slate-800">
+                  Não encontrei nenhum plano com esses filtros. Tente ajustar a busca ou limpar os filtros para ver todos os seus planos.
+                </p>
+              </MagisBubble>
+            ) : (
+              <MagisBubble>
+                <p className="text-sm leading-relaxed text-slate-800">
+                  Você ainda não gerou nenhum plano de aula. Quando criar o seu primeiro, ele vai aparecer aqui.
+                </p>
+              </MagisBubble>
+            )
           ) : (
-            <>
-              <FolderKanban className="mx-auto h-10 w-10 text-slate-300" />
-              {filters.q ? (
-                <>
-                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum template encontrado</h2>
-                  <p className="mt-2 text-sm text-slate-500">Tente outros termos de busca.</p>
-                </>
-              ) : (
-                <>
-                  <h2 className="mt-4 text-lg font-semibold text-slate-950">Nenhum template ainda</h2>
-                  <p className="mt-2 text-sm text-slate-500">Suba o modelo da sua escola para começar.</p>
-                  <Link
-                    href="/dashboard/templates"
-                    className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-                  >
-                    Adicionar template
-                  </Link>
-                </>
-              )}
-            </>
+            hasFilters ? (
+              <MagisBubble>
+                <p className="text-sm leading-relaxed text-slate-800">
+                  Não encontrei nenhum template com essa busca. Tente outros termos ou limpe os filtros.
+                </p>
+              </MagisBubble>
+            ) : (
+              <MagisBubble>
+                <p className="text-sm leading-relaxed text-slate-800">
+                  Você ainda não tem nenhum template cadastrado. Quando adicionar o modelo da sua escola, ele vai aparecer aqui.
+                </p>
+              </MagisBubble>
+            )
           )}
         </div>
       ) : (
@@ -312,7 +377,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
       {totalPages > 1 && (
         <div className="flex items-center justify-between gap-4 pt-2">
           <Link
-            href={pageUrl(tab, safePage - 1, filters)}
+            href={pageUrl(tab, safePage - 1, filtersWithCurso)}
             aria-disabled={safePage === 1}
             className={`inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-medium transition ${
               safePage === 1
@@ -330,7 +395,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
           </span>
 
           <Link
-            href={pageUrl(tab, safePage + 1, filters)}
+            href={pageUrl(tab, safePage + 1, filtersWithCurso)}
             aria-disabled={safePage === totalPages}
             className={`inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-medium transition ${
               safePage === totalPages

@@ -4,20 +4,21 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Clock, FileText, LayoutDashboard, Sparkles, User2 } from "lucide-react";
 
-const NAV_LINKS = [
-  { href: "/dashboard",           label: "Início",    icon: LayoutDashboard, exact: true },
-  { href: "/dashboard/templates", label: "Templates", icon: FileText },
-  { href: "/dashboard/gerar",     label: "Gerar",     icon: Sparkles,        cta: true },
-  { href: "/dashboard/historico", label: "Histórico", icon: Clock },
-  { href: "/dashboard/perfil",    label: "Perfil",    icon: User2 },
-] as const;
-
 interface MobileNavProps {
   profileIncomplete?: boolean;
+  canAccessHistorico?: boolean;
 }
 
-export function MobileNav({ profileIncomplete = false }: MobileNavProps) {
+export function MobileNav({ profileIncomplete = false, canAccessHistorico = true }: MobileNavProps) {
   const pathname = usePathname();
+
+  const allLinks = [
+    { href: "/dashboard",           label: "Início",    icon: LayoutDashboard, exact: true,  cta: false, show: true },
+    { href: "/dashboard/templates", label: "Templates", icon: FileText,                       cta: false, show: true },
+    { href: "/dashboard/gerar",     label: "Gerar",     icon: Sparkles,                       cta: true,  show: true },
+    { href: "/dashboard/historico", label: "Histórico", icon: Clock,                          cta: false, show: canAccessHistorico },
+    { href: "/dashboard/perfil",    label: "Perfil",    icon: User2,                          cta: false, show: true },
+  ].filter((l) => l.show);
 
   return (
     <nav
@@ -26,14 +27,14 @@ export function MobileNav({ profileIncomplete = false }: MobileNavProps) {
       aria-label="Navegação principal"
     >
       <div className="flex items-stretch">
-        {NAV_LINKS.map((item) => {
+        {allLinks.map((item) => {
           const Icon = item.icon;
           const active = "exact" in item && item.exact
             ? pathname === item.href
             : pathname.startsWith(item.href);
           const showBadge = profileIncomplete && item.href === "/dashboard/perfil";
 
-          if ("cta" in item && item.cta) {
+          if (item.cta) {
             return (
               <Link
                 key={item.href}

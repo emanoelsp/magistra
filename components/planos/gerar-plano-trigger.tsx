@@ -33,6 +33,8 @@ interface GerarPlanoTriggerProps {
   preSelectedTemplateId?: string;
   hasTemplates?: boolean;
   hasPlanos: boolean;
+  canAssociateEscola?: boolean;
+  canUseBulkIa?: boolean;
 }
 
 export function GerarPlanoTrigger({
@@ -41,6 +43,8 @@ export function GerarPlanoTrigger({
   resumeData,
   preSelectedTemplateId,
   recentPlanos,
+  canAssociateEscola = true,
+  canUseBulkIa = true,
   ...flowProps
 }: GerarPlanoTriggerProps) {
   const [open, setOpen] = useState(hasTemplates && (!!resumeData || !!preSelectedTemplateId));
@@ -179,6 +183,8 @@ export function GerarPlanoTrigger({
           recentPlanos={recentPlanos}
           resumeData={resumeData}
           preSelectedTemplateId={preSelectedTemplateId}
+          canAssociateEscola={canAssociateEscola}
+          canUseBulkIa={canUseBulkIa}
         />
       )}
     </>

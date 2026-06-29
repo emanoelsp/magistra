@@ -1,8 +1,10 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Building2 } from "lucide-react";
 import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getUserEscolas, getUserTurmas } from "../../../lib/services/firestore/escolas.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
+import { getPlanCapabilities } from "../../../lib/services/plan-capabilities";
 import { EscolasManager } from "../../../components/escolas/escolas-manager";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +21,9 @@ const PLAN_LABELS: Record<string, string> = {
 
 export default async function EscolasPage() {
   const user = await requireCurrentUserProfile();
+  const caps = getPlanCapabilities(user.plano ?? "free");
+  if (!caps.canAccessEscolas) redirect("/dashboard");
+
   const [escolas, turmas, limitsStatus] = await Promise.all([
     getUserEscolas(user.uid),
     getUserTurmas(user.uid),

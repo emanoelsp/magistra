@@ -5,6 +5,7 @@ import { requireCurrentUserProfile } from "../../../lib/auth/session";
 import { getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
 import { getUserEscolas } from "../../../lib/services/firestore/escolas.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
+import { getPlanCapabilities } from "../../../lib/services/plan-capabilities";
 import { TemplatesUploader } from "../../../components/templates/templates-uploader";
 import { TemplatesWizard } from "../../../components/templates/templates-wizard";
 import { TemplatesList } from "../../../components/templates/templates-list";
@@ -24,10 +25,12 @@ const PLAN_LABELS: Record<string, string> = {
 
 export default async function TemplatesPage() {
   const user = await requireCurrentUserProfile();
+  const caps = getPlanCapabilities(user.plano ?? "free");
+
   const [templates, limitsStatus, escolas] = await Promise.all([
     getUserTemplateOptions(user.uid),
     getLimitsStatus(user.uid, user.plano),
-    getUserEscolas(user.uid),
+    caps.canAssociateEscola ? getUserEscolas(user.uid) : Promise.resolve([]),
   ]);
 
   const templateLimitReached = !limitsStatus.canCreateTemplate;
@@ -108,7 +111,7 @@ export default async function TemplatesPage() {
             <LimitActions avulsoTipo="avulso_template" avulsoLabel="Contratar template avulso" />
           </div>
         ) : (
-          <TemplatesWizard userId={user.uid} escolas={escolas} hasTemplates={templates.length > 0} />
+          <TemplatesWizard userId={user.uid} escolas={escolas} hasTemplates={templates.length > 0} canAssociateEscola={caps.canAssociateEscola} />
         )}
       </section>
 

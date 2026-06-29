@@ -8,6 +8,7 @@ import { getAdminDb } from "../../../lib/firebase/admin";
 import { getUserPlanosComNome, getUserTemplateOptions } from "../../../lib/services/firestore/dashboard.server";
 import { getUserEscolas, getUserTurmas } from "../../../lib/services/firestore/escolas.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
+import { getPlanCapabilities } from "../../../lib/services/plan-capabilities";
 import { LimitActions } from "../../../components/dashboard/limit-actions";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +70,7 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
   const canCreatePlano = limits.canCreatePlano;
   const planos = planosResult.items;
   const userPlano = (user.plano ?? "free").trim().toLowerCase();
+  const caps = getPlanCapabilities(userPlano);
 
   return (
     <div className="space-y-6">
@@ -143,14 +145,16 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
           userId={user.uid}
           userName={user.nome || user.email}
           templates={templates}
-          escolas={escolas}
-          turmas={turmas}
+          escolas={caps.canAssociateEscola ? escolas : []}
+          turmas={caps.canAssociateEscola ? turmas : []}
           limitsStatus={limits}
           recentPlanos={planos}
           resumeData={resumeData}
           preSelectedTemplateId={resumeData ? undefined : preSelectedId}
           hasTemplates={templates.length > 0}
           hasPlanos={planos.length > 0}
+          canAssociateEscola={caps.canAssociateEscola}
+          canUseBulkIa={caps.canUseBulkIa}
         />
       )}
 

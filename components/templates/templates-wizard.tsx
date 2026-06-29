@@ -15,6 +15,7 @@ interface TemplatesWizardProps {
   userId: string;
   escolas: EscolaRecord[];
   hasTemplates?: boolean;
+  canAssociateEscola?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ function MagisBubble({ text }: { text: string }) {
 
 type Step = "docx" | "escola" | "nome" | "arquivo";
 
-export function TemplatesWizard({ userId, escolas, hasTemplates = false }: TemplatesWizardProps) {
+export function TemplatesWizard({ userId, escolas, hasTemplates = false, canAssociateEscola = true }: TemplatesWizardProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -246,7 +247,7 @@ export function TemplatesWizard({ userId, escolas, hasTemplates = false }: Templ
         <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
           <button
             type="button"
-            onClick={() => setStep("escola")}
+            onClick={() => setStep(canAssociateEscola ? "escola" : "nome")}
             className="w-full rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
           >
             Entendi, vamos lá! →

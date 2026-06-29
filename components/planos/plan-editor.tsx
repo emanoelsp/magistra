@@ -52,6 +52,8 @@ interface PlanEditorProps {
   resumeDraft?: boolean;
   /** Called whenever IA field completion changes — lets the wizard show a live counter. */
   onProgressChange?: (filled: number, total: number) => void;
+  /** When false, hides the "Gerar tudo" bulk IA entry banner (Mestre+ only). Default true. */
+  canUseBulkIa?: boolean;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -260,7 +262,7 @@ function PreviewDocView({ html, values }: PreviewDocViewProps) {
 // ─── PlanEditor ───────────────────────────────────────────────────────────────
 
 export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function PlanEditor(
-  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange },
+  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange, canUseBulkIa = true },
   ref,
 ) {
   const router = useRouter();
@@ -873,8 +875,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         </div>
       )}
 
-      {/* Entry banner — wizardMode only, shown when no IA field has been filled yet */}
-      {wizardMode && !bulkGenerating && iaFields.length > 0 && iaFilledCount === 0 && (
+      {/* Entry banner — wizardMode + Mestre+ only, shown when no IA field has been filled yet */}
+      {wizardMode && canUseBulkIa && !bulkGenerating && iaFields.length > 0 && iaFilledCount === 0 && (
         <div className="flex items-center gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm shadow-violet-200">
             <Sparkles className="h-4 w-4 text-white" />

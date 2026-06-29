@@ -26,6 +26,8 @@ interface GerarPlanoFlowProps {
   recentPlanos: RecentPlano[];
   resumeData?: ResumeData;
   preSelectedTemplateId?: string;
+  canAssociateEscola?: boolean;
+  canUseBulkIa?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +110,8 @@ export function GerarPlanoFlow({
   recentPlanos,
   resumeData,
   preSelectedTemplateId,
+  canAssociateEscola = true,
+  canUseBulkIa = true,
 }: GerarPlanoFlowProps) {
   const skipIntro = !!resumeData || !!preSelectedTemplateId;
 
@@ -178,6 +182,8 @@ export function GerarPlanoFlow({
         initialEscolaId={skipIntro ? undefined : selectedEscolaId}
         initialTurmaId={skipIntro ? undefined : selectedTurmaId}
         initialDisciplina={skipIntro ? undefined : selectedDisciplina}
+        canAssociateEscola={canAssociateEscola}
+        canUseBulkIa={canUseBulkIa}
       />
     );
   }
@@ -247,7 +253,10 @@ export function GerarPlanoFlow({
             onClick={() => {
               if (!selectedTemplateId) return;
               const tpl = activeTemplates.find((t) => t.id === selectedTemplateId);
-              if (tpl?.escolaNome) {
+              if (!canAssociateEscola) {
+                setTemplateHasEscola(false);
+                goToNomePlano();
+              } else if (tpl?.escolaNome) {
                 const match = escolas.find((e) => e.nome === tpl.escolaNome);
                 const newEscolaId = match?.id ?? "";
                 if (match) setSelectedEscolaId(newEscolaId);

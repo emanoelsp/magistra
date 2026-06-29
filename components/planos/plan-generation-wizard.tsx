@@ -62,6 +62,10 @@ interface PlanGenerationWizardProps {
   initialEscolaId?: string;
   initialTurmaId?: string;
   initialDisciplina?: string;
+  /** When false, hides turma shortcut bar (Explorador/Educador). Default true. */
+  canAssociateEscola?: boolean;
+  /** When false, hides "Gerar tudo" bulk IA banner (Explorador/Educador). Default true. */
+  canUseBulkIa?: boolean;
 }
 
 function formatDate(value: string) {
@@ -125,6 +129,8 @@ export function PlanGenerationWizard({
   initialEscolaId,
   initialTurmaId,
   initialDisciplina,
+  canAssociateEscola = true,
+  canUseBulkIa = true,
 }: PlanGenerationWizardProps) {
   const router = useRouter();
 
@@ -694,8 +700,8 @@ export function PlanGenerationWizard({
               )}
             </div>
 
-            {/* Atalho turma salva — só quando não veio do intro modal (intro já selecionou) */}
-            {!fromIntroModal && turmas.length > 0 && (
+            {/* Atalho turma salva — só quando não veio do intro modal e plano permite */}
+            {!fromIntroModal && canAssociateEscola && turmas.length > 0 && (
               <div className="border-b border-slate-100 bg-white px-4 py-3">
                 <p className="mb-2 text-xs font-semibold text-violet-600">⚡ Atalho — selecionar turma salva</p>
                 <div className="flex flex-wrap items-center gap-2">
@@ -885,6 +891,7 @@ export function PlanGenerationWizard({
             initialValues={editorInitialValues}
             resumeDraft={!!resumeData}
             onProgressChange={(filled, total) => setIaProgress({ filled, total })}
+            canUseBulkIa={canUseBulkIa}
           />
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
