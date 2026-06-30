@@ -122,7 +122,8 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
    G. CABEÇALHO COM IMAGENS: quando uma linha da tabela tem células com imagens (logos, brasões) intercaladas com texto institucional centralizado (ex: [logo] [ESTADO DE SANTA CATARINA / SECRETARIA...] [bandeira]), essa linha é EXCLUSIVAMENTE decorativa — NUNCA gera variável. Ignore todas as células dessa linha.
    Exemplos de TÍTULOS: "CEDUP HERMANN HERING", "PLANO DE AULA".
    Exemplos de CAMPOS: "HABILIDADES:" → campo. "Professor(a):" → campo. "- Carga horária prevista:" → campo.
-8. COLUNAS REPETIDAS: Quando o mesmo dado aparece em múltiplas colunas de uma tabela (células espelhadas), declare um ÚNICO campo — não crie chaves duplicadas. Exemplo: "Turma(s)" em 9 colunas → um único campo {{turma}}.
+8. COLUNAS REPETIDAS: Quando o MESMO rótulo aparece em múltiplas COLUNAS DA MESMA LINHA (células espelhadas lateralmente), declare um ÚNICO campo. Exemplo: "Turma(s)" repetido em 9 colunas da mesma linha → um único campo {{turma}}.
+   ATENÇÃO — NÃO confunda com campos em linhas diferentes: "HABILIDADES" (linha A) e "HABILIDADES CURRÍCULO DE EDUCAÇÃO DIGITAL" (linha B) são DOIS CAMPOS DISTINTOS mesmo que compartilhem palavras. Campos em linhas diferentes são sempre independentes. Do mesmo modo, "OBJETO DE CONHECIMENTO (COMPONENTE CURRICULAR)" e "OBJETO DE CONHECIMENTO (CURRÍCULO EDUCAÇÃO DIGITAL)" são campos SEPARADOS pois estão em linhas diferentes e têm qualificadores distintos entre parênteses.
 9. PADRÃO DE PERÍODOS/TRIMESTRES: Quando uma tabela tem cabeçalhos de período (1º, 2º, 3º trimestre; bimestres), analise a estrutura via injection_pattern: (a) Se o cabeçalho de conteúdo (HABILIDADES, CONCEITOS etc.) tem injection_pattern "adjacent_below" → a coluna tem UMA ÚNICA célula de valor diretamente abaixo → 1 campo por coluna sem sufixo. (b) Se o cabeçalho tem injection_pattern "period_column" → existem MÚLTIPLAS LINHAS de dados, uma por período → sufixo _tr1/_tr2/_tr3. (c) Marcadores de período (1º, 2º, 3º — células de ✓ ou texto do período) → chaves {{tr1}}, {{tr2}}, {{tr3}}.
 10. RANGE DE DATAS: Se o valor de um campo contém um intervalo ("13/07/2026 a 09/08/2026" ou "DD/MM - DD/MM"), declare DOIS campos separados: {base}_inicio e {base}_fim.
 11. ESCOPO DE BLOCO: Campos do tipo textarea têm conteúdo que se estende até o próximo título em caixa alta ou próxima seção. Marque esses campos com type "textarea" — nunca "text" para seções de conteúdo pedagógico.
@@ -136,6 +137,7 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
    • recuperacao_paralela → "Proponha atividades diferenciadas baseadas nas dificuldades previstas pelos objetivos e avaliação."
    • Outros campos ia_sugerida → "Seja específico ao contexto da turma, disciplina e período descritos no plano."
    Campos role "manual" → aiInstructions = "".
+13b. VARREDURA EXAUSTIVA (Regra 22 — OBRIGATÓRIA): O <schema_rascunho> é incompleto por definição. O scanner determinístico usa heurísticas de pontuação e formatação que omitem labels em Title Case, sem dois pontos ou com estrutura atípica. Após validar o rascunho, varra o <documento> integralmente — célula por célula, parágrafo por parágrafo — em busca de rótulos ausentes do rascunho. Critério de inclusão: qualquer texto curto (< 100 chars) em C0 seguido de célula/linha vazia adjacente é um campo candidato, mesmo sem ":" e mesmo em Title Case. Prefira falso positivo (campo a mais) a falso negativo (campo omitido).
 14. TOKENIZAÇÃO AVANÇADA DO KEY (normalização de rótulos):
    A. Marcador de plural "(s)" ou "(es)": remova os parênteses ao gerar o key. "Habilidade(s) selecionada(s)" → key "habilidades_selecionadas". "Professor(a)" → key "professor" (singular base).
    B. Símbolo "Nº" ou "N°": substitua por "numero" no key. "Nº aulas semanais" → key "numero_aulas_semanais".
@@ -172,6 +174,7 @@ Antes de extrair os campos, raciocine em "raciocinio" seguindo estes passos:
    • Misto + sem ":" → campo SOMENTE se houver vazio adjacente; senão título.
    • Vários parágrafos "rótulo:" na mesma célula → um campo por parágrafo.
 8. Para cada campo extraído, atribua ai_confidence (Regra 21) refletindo a certeza da extração. Pares com match em <estrutura_detectada> → ≥ 0.8. Sem match → ≤ 0.5.
+9. VARREDURA INDEPENDENTE (Regra 13b): após processar o <schema_rascunho>, percorra o <documento> linha a linha e célula a célula de forma independente do rascunho. Para cada linha [CX] texto curto | [CX+1] vazio que NÃO esteja coberta por nenhum campo já extraído, aplique o critério da Regra 13b e adicione o campo. Exemplos de labels que o scanner determinístico erra: "Metodologia aplicada" (Title Case, sem ":"), "Recursos didáticos" (sem bold), "Ano / Série" (sem formatação). Inclua todos.
 </raciocinio_obrigatorio>
 <contrato_de_saida>
 Responda com JSON: { "raciocinio": string, "campos": [...TemplateFieldSchema] }
@@ -491,10 +494,11 @@ export async function POST(request: Request) {
             `Sua tarefa é VALIDAR e COMPLETAR — não crie do zero:`,
             `  1. Para cada campo no rascunho: confirme key/group/role/type. Ajuste APENAS se o documento contradizer claramente.`,
             `  2. Copie o label EXATAMENTE como aparece no documento (não use o label do rascunho — ele é gerado automaticamente).`,
-            `  3. Adicione campos que existem no documento mas não estão no rascunho.`,
+            `  3. Adicione campos que existem no documento mas não estão no rascunho. IMPORTANTE: campo com label diferente mas parecido = campo NOVO — não descarte.`,
             `  4. Remova campos do rascunho que não existem no documento.`,
-            `  5. Aplique as Regras 8, 9 e 10 (colunas repetidas, períodos _tr1/_tr2/_tr3, datas _inicio/_fim).`,
+            `  5. Aplique as Regras 8, 9 e 10 (colunas repetidas, períodos _tr1/_tr2/_tr3, datas _inicio/_fim). Regra 8 NÃO se aplica a campos em linhas diferentes.`,
             `  6. Preencha injection_pattern a partir de <estrutura_detectada> (Regra 18).`,
+            `  7. Chaves auto-geradas longas ou truncadas (ex: "habilidades_curriculo_de_educacao_digi") devem ser renomeadas para uma versão concisa e legível seguindo as Regras 5 e 14 (ex: "habilidades_curriculo_educacao_digital").`,
           ].join("\n")
         : `Analise o texto em <documento> e extraia TODOS os campos visíveis. CRÍTICO: o 'label' deve ser copiado EXATAMENTE como aparece. O 'key' é o label em snake_case sem acentos. Aplique as Regras 8, 9 e 10.`,
       `</instrucao>`,

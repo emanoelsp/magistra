@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, Building2, Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2, LogOut } from "lucide-react";
+import { BarChart3, BookOpen, Building2, Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2, LogOut } from "lucide-react";
 
 interface SidebarProps {
   profileIncomplete?: boolean;
   canAccessEscolas?: boolean;
   canAccessHistorico?: boolean;
   canAccessBiblioteca?: boolean;
+  canAccessRelatorios?: boolean;
 }
 
 export function Sidebar({
@@ -16,18 +17,20 @@ export function Sidebar({
   canAccessEscolas = true,
   canAccessHistorico = true,
   canAccessBiblioteca = false,
+  canAccessRelatorios = false,
 }: SidebarProps) {
   const pathname = usePathname();
 
   const links = [
-    { href: "/dashboard",              label: "Visão geral",       icon: LayoutDashboard, always: true },
-    { href: "/dashboard/escolas",      label: "Minhas escolas",    icon: Building2,       always: canAccessEscolas },
-    { href: "/dashboard/templates",    label: "Meus templates",    icon: FileText,        always: true },
-    { href: "/dashboard/gerar",        label: "Gerar plano de aula", icon: Sparkles,      always: true },
-    { href: "/dashboard/historico",    label: "Histórico",         icon: Clock,           always: canAccessHistorico },
-    { href: "/dashboard/biblioteca",   label: "Biblioteca",        icon: BookOpen,        always: canAccessBiblioteca },
-    { href: "/dashboard/suporte",      label: "Suporte",           icon: LifeBuoy,        always: true },
-    { href: "/dashboard/perfil",       label: "Perfil & assinatura", icon: User2,         always: true },
+    { href: "/dashboard",              label: "Visão geral",         icon: LayoutDashboard, always: true },
+    { href: "/dashboard/escolas",      label: "Minhas escolas",      icon: Building2,       always: canAccessEscolas },
+    { href: "/dashboard/templates",    label: "Meus templates",      icon: FileText,        always: true },
+    { href: "/dashboard/gerar",        label: "Gerar plano de aula", icon: Sparkles,        always: true },
+    { href: "/dashboard/historico",    label: "Histórico",           icon: Clock,           always: canAccessHistorico },
+    { href: "/dashboard/biblioteca",   label: "Biblioteca",          icon: BookOpen,        always: canAccessBiblioteca },
+    { href: "/dashboard/relatorios",   label: "Relatórios",          icon: BarChart3,       always: canAccessRelatorios },
+    { href: "/dashboard/suporte",      label: "Suporte",             icon: LifeBuoy,        always: true },
+    { href: "/dashboard/perfil",       label: "Perfil & assinatura", icon: User2,           always: true },
   ].filter((l) => l.always);
 
   async function handleLogout() {

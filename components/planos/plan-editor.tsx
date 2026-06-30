@@ -270,7 +270,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
 
   const schema = template.schema_campos ?? [];
   const manualFields = schema.filter(
-    (f) => f.role === "manual" || f.group === "dados_turma" || (!f.role && !f.group),
+    (f) => f.role !== "ia_sugerida" && (f.role === "manual" || f.group === "dados_turma" || (!f.role && !f.group)),
   );
   const iaFields = schema.filter((f) => f.role === "ia_sugerida");
   const groupedIA = groupFields(iaFields);

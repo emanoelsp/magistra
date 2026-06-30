@@ -8,7 +8,6 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { deleteFile, downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
-  appendOrphanField,
   extractFieldCoords,
   injectAtCell,
   injectAtCoord,
@@ -180,6 +179,16 @@ export async function PATCH(
     for (const key of Object.keys(allPositions)) {
       if (!newKeys.has(key)) delete allPositions[key]; // stale cleanup
     }
+    // Invalidate historical positions for keys being repositioned by cell_edits.
+    // Without this, when injectAtCoord fails (wrong coord from a stale save), the
+    // key is NOT added to placedByCellEdits and step 1b falls back to the old
+    // Firestore coord — ghost-injecting the field at the previous location instead
+    // of the new one the user chose. Removing here means a failed reposition simply
+    // leaves the field unplaced (logged in camposSemPlaceholder) rather than reverting
+    // it silently to the old position.
+    for (const key of repositionedKeys) {
+      delete allPositions[key];
+    }
 
     // 1a. Apply verbatim cell-content overrides from the interactive editor.
     // Coord path (preferred): uses structural coordinates — immune to text-match
@@ -257,8 +266,7 @@ export async function PATCH(
 
     // 2. Label-based injection for fields with structural context.
     // Manually-added fields (no injection_pattern, no ai_confidence, no stored position)
-    // are excluded here — they fall through to appendOrphanField so that fuzzy label
-    // matching doesn't corrupt existing content in templates with many positioned fields.
+    // are excluded here — they are simply skipped if no placement exists yet.
     const autoPlaceKeys = new Set<string>([
       ...placedByCellEdits,
       ...Object.keys(allPositions),
@@ -275,20 +283,7 @@ export async function PATCH(
       console.info(`[templates/schema] Campos sem placeholder automático: ${camposSemPlaceholder.join(", ")}`);
     }
 
-    // 4. Tier 2 orphan fallback: fields still missing after all injection passes
-    //    → append a labeled row so docxtemplater always has a valid target.
-    // NOTE: We do NOT guard with allPositions here — a stored coord from a previous
-    // save may point to an orphan row that no longer exists in the original DOCX
-    // (orphans are re-appended each save). Guarding on allPositions would cause
-    // the field to be permanently lost with no token in the buffer.
-    for (const key of camposSemPlaceholder) {
-      const field = newSchema.find((f) => f.key === key);
-      if (!field) continue;
-      console.info(`[schema/orphan] appending orphan row for "${key}" (${field.label})`);
-      buffer = appendOrphanField(buffer, key, field.label);
-    }
-
-    // 5. Upload as the new fillable DOCX.
+    // 4. Upload as the new fillable DOCX.
     // Use a timestamped path so each save produces a unique URL — this eliminates
     // any CDN/storage propagation delay that could serve stale content when the
     // preview re-fetches immediately after the overwrite.
@@ -340,6 +335,7 @@ export async function PATCH(
     revalidatePath(`/dashboard/templates/${id}/editar`);
     revalidatePath(`/dashboard/templates/${id}/visualizar`);
     revalidatePath(`/dashboard/templates/${id}/confirmar`);
+    revalidatePath("/dashboard/gerar");
 
     return NextResponse.json({
       ok: true,

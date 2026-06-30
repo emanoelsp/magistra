@@ -12,6 +12,7 @@ import { callAIWithFallbacks, makeGeminiModel, isQuotaError } from "../../../../
 import { checkRateLimit } from "../../../../lib/services/rate-limit.server";
 import { validateSugestoes } from "../../../../lib/services/suggestion-validator";
 import { getPedagogicMemoryContext } from "../../../../lib/services/pedagogic-memory.server";
+import { getPlanCapabilities } from "../../../../lib/services/plan-capabilities";
 import { retrieveAllCurriculumContext } from "../../../../lib/services/bncc-rag.server";
 import {
   buildCacheKey,
@@ -384,7 +385,7 @@ Responda SOMENTE com JSON válido:
       isBibliografiaField
         ? Promise.resolve({ bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] })
         : retrieveAllCurriculumContext(ragQuery, { componente, etapa, estado }),
-      getPedagogicMemoryContext(user.uid).catch(() => ""),
+      getPedagogicMemoryContext(user.uid, getPlanCapabilities(user.plano ?? "free").canAccessBiblioteca).catch(() => ""),
     ]);
 
     const semContextoCurricular =

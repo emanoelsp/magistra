@@ -531,7 +531,18 @@ export function structuralPairsToSchema(pairs: StructuralPair[]): TemplateFieldS
       key = baseKey + pair.periodSuffix;
     }
 
-    if (seenKeys.has(key)) continue;
+    const cleanLabel = pair.label.replace(/:+$/, "").replace(/^[-\s]+/, "").trim();
+
+    if (seenKeys.has(key)) {
+      // Two structurally distinct pairs mapped to the same canonical key
+      // (e.g. "HABILIDADES" and "HABILIDADES CURRÍCULO DE EDUCAÇÃO DIGITAL" both → "habilidades").
+      // Generate a unique key from the full normalized label so both fields appear in the
+      // draft schema — the AI will then see them independently and assign proper keys.
+      const fullNorm = normForKey(cleanLabel).replace(/\s+/g, "_").slice(0, 40);
+      const fallbackKey = fullNorm && fullNorm !== key ? fullNorm : `${key}_2`;
+      if (seenKeys.has(fallbackKey)) continue; // truly identical label
+      key = fallbackKey;
+    }
     seenKeys.add(key);
 
     const meta = keyToFieldMeta(key);
@@ -545,8 +556,6 @@ export function structuralPairsToSchema(pairs: StructuralPair[]): TemplateFieldS
     ) {
       type = "text";
     }
-
-    const cleanLabel = pair.label.replace(/:+$/, "").replace(/^[-\s]+/, "").trim();
 
     const field: TemplateFieldSchema = {
       key,

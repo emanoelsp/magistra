@@ -1402,10 +1402,18 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
         for (let ci = 0; ci < row.cells.length; ci++) {
           if (isVMergeContinuation(row.cells[ci] ?? "")) continue;
           const cellNorm = normText(extractText(row.cells[ci] ?? ""));
+          // Compact comparison (P3): handles Word XML run-splitting artifacts where
+          // "Metodologia" is stored as two runs "Me " + "todologia" → normText gives
+          // "me todologia" which doesn't match "metodologia" exactly but does after
+          // stripping all whitespace. Safe: exact equality on compacted strings prevents
+          // the partial-substring false-positives that .includes() would cause.
+          const cellCompact  = cellNorm.replace(/\s+/g, "");
+          const labelCompact = labelNorm.replace(/\s+/g, "");
           const isAnchor =
             cellNorm === labelNorm ||
             (labelNorm.length >= 3 && cellNorm.endsWith(labelNorm)) ||
-            (labelNorm.length >= 4 && cellNorm.startsWith(labelNorm));
+            (labelNorm.length >= 4 && cellNorm.startsWith(labelNorm)) ||
+            (labelCompact.length >= 6 && cellCompact === labelCompact);
           if (!isAnchor) continue;
 
           const target = findNextEmptyCellAfterLabel(pass1Rows, ri, ci);
@@ -2512,9 +2520,26 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
     let ci = 0;
     while (ci < row.cells.length - 1) {
       const t = row.cellTexts[ci].trim();
+      // Read the adjacent cell early — needed for the geometric heuristic below.
+      const nextTextEarly = row.cellTexts[ci + 1].trim();
+
       // A cell is a label if it matches textual heuristics (ends with ":", ALL-CAPS)
       // OR if the cell uses bold formatting (common in some school templates)
-      const cellIsLabel = looksLikeLabel(t) || (t.length > 1 && hasBoldText(row.cells[ci] ?? ""));
+      let cellIsLabel = looksLikeLabel(t) || (t.length > 1 && hasBoldText(row.cells[ci] ?? ""));
+
+      // Geometric fallback (P1): "Metodologia aplicada" (Title Case, no colon, no bold)
+      // is a label when C0 is short and the adjacent cell is empty/blank.
+      // An empty neighbour is a stronger architectural signal than punctuation.
+      // Guard: only C0 (leftmost column of typical school tables), non-image, non-data-value.
+      if (!cellIsLabel && ci === 0
+          && t.length >= 2 && t.length <= 80
+          && !hasImageContent(row.cells[ci] ?? "")
+          && !/^\d+(\.\d+)?$/.test(t)             // not pure number
+          && !/^\d{1,2}[\/\-]\d{1,2}/.test(t)     // not date
+          && (nextTextEarly === "" || /^[_\-\s]+$/.test(nextTextEarly))) {
+        cellIsLabel = true;
+      }
+
       if (!cellIsLabel) { ci++; continue; }
 
       // Item 3: if label cell spans ≥60% of the row, prefer adjacent_below.
@@ -2539,7 +2564,7 @@ export function scanDocxStructure(docxBuffer: Buffer): StructuralPair[] {
         // Row below is also a label → fall through to adjacent_right check below
       }
 
-      const nextText = row.cellTexts[ci + 1].trim();
+      const nextText = nextTextEarly; // already read above for geometric heuristic
       // Require non-empty text for bold check: DOCX table cells can inherit bold
       // from style even when empty (e.g. "Escola:" + empty right cell). Treating
       // an empty bold cell as a label would silently skip the adjacent_right pair.

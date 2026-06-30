@@ -27,6 +27,7 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
           canAccessEscolas={caps.canAccessEscolas}
           canAccessHistorico={caps.canAccessHistorico}
           canAccessBiblioteca={caps.canAccessBiblioteca}
+          canAccessRelatorios={caps.canAccessRelatorios}
         />
         <main className="flex flex-col flex-1 min-w-0 overflow-y-auto rounded-none border-0 bg-white p-4 shadow-none md:rounded-3xl md:border md:border-slate-200 md:p-6 md:shadow-sm pb-24 md:pb-6">
           {children}

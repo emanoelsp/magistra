@@ -201,7 +201,7 @@ export function PlanGenerationWizard({
 
   const schema = selectedTemplate?.schema_campos ?? [];
   const manualFields = schema.filter(
-    (f) => f.role === "manual" || f.group === "dados_turma" || (!f.role && !f.group),
+    (f) => f.role !== "ia_sugerida" && (f.role === "manual" || f.group === "dados_turma" || (!f.role && !f.group)),
   );
   const has2prof = schema.some(is2profField);
 

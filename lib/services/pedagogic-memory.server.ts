@@ -69,20 +69,49 @@ export async function updatePedagogicMemory(
   });
 }
 
-export async function getPedagogicMemoryContext(userId: string): Promise<string> {
+/**
+ * Returns a pedagogic memory string to inject into the IA prompt.
+ * @param enriched Regente tier: lower activation threshold + more context depth.
+ */
+export async function getPedagogicMemoryContext(
+  userId: string,
+  enriched = false,
+): Promise<string> {
   const db = getAdminDb();
   const snap = await db.collection("magis_perfil_pedagogico").doc(userId).get();
 
   if (!snap.exists) return "";
 
   const mem = snap.data() as PedagogicMemory;
-  if ((mem.total_planos ?? 0) < 3) return ""; // not enough data yet
+  const minPlanos = enriched ? 1 : 3;
+  if ((mem.total_planos ?? 0) < minPlanos) return "";
 
   const lines: string[] = [];
-  if (mem.metodologias?.length) lines.push(`Metodologias preferidas: ${mem.metodologias.join(", ")}`);
-  if (mem.tipos_avaliacao?.length) lines.push(`Tipos de avaliação recorrentes: ${mem.tipos_avaliacao.join(", ")}`);
-  if (mem.componentes?.length) lines.push(`Componentes curriculares que leciona: ${mem.componentes.join(", ")}`);
-  if (mem.etapas?.length) lines.push(`Etapas de ensino: ${mem.etapas.join(", ")}`);
+
+  if (enriched) {
+    // Regente: richer profile context
+    if (mem.componentes?.length)
+      lines.push(`Componentes curriculares que leciona: ${mem.componentes.join(", ")}`);
+    if (mem.etapas?.length)
+      lines.push(`Etapas de ensino: ${mem.etapas.join(", ")}`);
+    if (mem.metodologias?.length)
+      lines.push(`Metodologias pedagógicas preferidas: ${mem.metodologias.join(", ")}`);
+    if (mem.tipos_avaliacao?.length)
+      lines.push(`Instrumentos de avaliação recorrentes: ${mem.tipos_avaliacao.join(", ")}`);
+    if ((mem.total_planos ?? 0) > 0)
+      lines.push(`Total de planos criados com a Magis: ${mem.total_planos}`);
+    lines.push("Adapte sugestões ao perfil consolidado acima — priorize metodologias e instrumentos já familiares ao professor.");
+  } else {
+    // Mestre e abaixo: perfil básico
+    if (mem.metodologias?.length)
+      lines.push(`Metodologias preferidas: ${mem.metodologias.join(", ")}`);
+    if (mem.tipos_avaliacao?.length)
+      lines.push(`Tipos de avaliação recorrentes: ${mem.tipos_avaliacao.join(", ")}`);
+    if (mem.componentes?.length)
+      lines.push(`Componentes curriculares que leciona: ${mem.componentes.join(", ")}`);
+    if (mem.etapas?.length)
+      lines.push(`Etapas de ensino: ${mem.etapas.join(", ")}`);
+  }
 
   if (lines.length === 0) return "";
 
