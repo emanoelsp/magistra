@@ -36,6 +36,58 @@ import {
 import { PlanVersionsButton } from "./plan-versions-button";
 import { showMagisToast } from "../../lib/utils/magis-toast";
 
+// ── Telemetria de feedback implícito ─────────────────────────────────────────
+
+interface InjectionRecord {
+  sugestaoId: string;
+  label: string;
+  fonte: string;
+  injectedText: string; // label puro, sem HTML, no momento da injeção
+  injectedAt: number;   // Date.now()
+}
+
+// Classificação de edição após injeção.
+// Proxy leve: evita Levenshtein completo no browser para textos longos.
+function classifyEdit(
+  injected: string,
+  final: string,
+): "accepted" | "expanded" | "replaced" {
+  const strip = (s: string) =>
+    s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  const a = strip(injected);
+  const b = strip(final);
+  if (!a) return "replaced";
+  if (a === b) return "accepted";
+
+  // Levenshtein rápido para strings curtas (≤ 120 chars)
+  if (a.length <= 120 && b.length <= 120) {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: n + 1 }, (_, i) => i);
+    for (let i = 1; i <= m; i++) {
+      let prev = i;
+      for (let j = 1; j <= n; j++) {
+        const curr =
+          a[i - 1] === b[j - 1] ? dp[j - 1]! : 1 + Math.min(prev, dp[j]!, dp[j - 1]!);
+        dp[j - 1] = prev;
+        prev = curr;
+      }
+      dp[n] = prev;
+    }
+    const sim = 1 - (dp[n]! / Math.max(m, n));
+    if (sim >= 0.88) return "accepted";
+    if (b.length > a.length && sim >= 0.35) return "expanded";
+    return "replaced";
+  }
+
+  // Proxy para textos longos: comprimento + prefixo compartilhado
+  const prefixLen = Math.min(a.length, b.length, 50);
+  const samePrefix = a.slice(0, prefixLen) === b.slice(0, prefixLen);
+  const lenRatio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+  if (samePrefix && lenRatio > 0.85) return "accepted";
+  if (samePrefix && b.length > a.length) return "expanded";
+  return "replaced";
+}
+
 export interface PlanEditorHandle {
   getCurrentValues: () => Record<string, string>;
 }
@@ -355,6 +407,10 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   // Always holds the latest savePlano to avoid stale closures in the debounce timer
   const latestSavePlanoRef = useRef<((status: "rascunho" | "gerado") => Promise<string>) | null>(null);
 
+  // Rastreia o que foi injetado por campo — nunca causa re-render (ref, não state).
+  // Chave: fieldKey; valor: último registro de injeção neste campo.
+  const injectionTrackRef = useRef<Map<string, InjectionRecord>>(new Map());
+
   // Bulk generation ("Gerar com Magis") — ref tracks latest values to avoid stale closure
   const valuesRef = useRef(values);
   useEffect(() => { valuesRef.current = values; }, [values]);
@@ -612,6 +668,20 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     if (!activeFieldKey) return;
     trackSugestaoAceita(suggestion.id, mode === "full" ? "completo" : "titulo");
 
+    // Grava injeção para telemetria de feedback implícito.
+    // O texto puro (sem HTML) é a referência para comparar com o valor final no save.
+    const injectedText =
+      mode === "full" && suggestion.descricao
+        ? `${suggestion.label}: ${suggestion.descricao}`
+        : suggestion.label;
+    injectionTrackRef.current.set(activeFieldKey, {
+      sugestaoId: suggestion.id,
+      label: suggestion.label,
+      fonte: suggestion.fonte ?? "",
+      injectedText,
+      injectedAt: Date.now(),
+    });
+
     const safeLabel = suggestion.label.replace(/\n/g, "<br>");
     const text =
       mode === "full" && suggestion.descricao
@@ -660,6 +730,31 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       template_nome: template.nome,
       ...values,
     };
+
+    // Coleta feedback implícito: compara texto injetado com valor atual de cada campo.
+    // Fire-and-forget — nunca bloqueia o save.
+    const injections = injectionTrackRef.current;
+    if (injections.size > 0) {
+      const feedbackBatch = [...injections.entries()].map(([fieldKey, rec]) => {
+        const finalRaw = values[fieldKey] ?? "";
+        const outcome = classifyEdit(rec.injectedText, finalRaw);
+        return {
+          fieldKey,
+          sugestaoId: rec.sugestaoId,
+          fonte: rec.fonte,
+          outcome,
+          injectedLen: rec.injectedText.length,
+          finalLen: finalRaw.replace(/<[^>]+>/g, "").trim().length,
+          msSinceInject: Date.now() - rec.injectedAt,
+        };
+      });
+      void fetch("/api/ia/aceitar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateId: template.id, feedback: feedbackBatch }),
+      }).catch(() => {});
+      injections.clear();
+    }
     if (planoId) {
       await planosService.updatePlano(planoId, {
         conteudo_gerado: conteudo,

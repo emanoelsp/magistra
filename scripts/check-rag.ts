@@ -58,11 +58,17 @@ async function main() {
     console.log(`   Vetores: ${total}`);
   } else {
     console.log("📂 Por namespace:");
-    const defaultNs = total - nsNames.reduce((s, k) => s + (namespaces[k]?.recordCount ?? 0), 0);
+    // Pinecone às vezes retorna "__default__" como chave explícita em vez de omitir.
+    // Somamos apenas namespaces nomeados para calcular o default corretamente.
+    const namedCount = nsNames
+      .filter((k) => k !== "__default__")
+      .reduce((s, k) => s + (namespaces[k]?.recordCount ?? 0), 0);
+    const defaultNs = namespaces["__default__"]?.recordCount ?? (total - namedCount);
     if (defaultNs > 0) {
       console.log(`   [default / BNCC]: ${defaultNs} vetores`);
     }
     for (const [ns, info] of Object.entries(namespaces)) {
+      if (ns === "__default__") continue;
       console.log(`   [${ns}]: ${info?.recordCount ?? 0} vetores`);
     }
   }
@@ -97,7 +103,10 @@ async function main() {
   }
 
   // Resumo
-  const bnccDefault = total - Object.values(namespaces).reduce((s, ns) => s + (ns?.recordCount ?? 0), 0);
+  const namedForSummary = Object.keys(namespaces)
+    .filter((k) => k !== "__default__")
+    .reduce((s, k) => s + (namespaces[k]?.recordCount ?? 0), 0);
+  const bnccDefault = namespaces["__default__"]?.recordCount ?? (total - namedForSummary);
   const totalEsperado = Object.values(EXPECTED).reduce((a, b) => a + b, 0);
 
   console.log("\n📋 Resumo:");
@@ -111,7 +120,7 @@ async function main() {
     console.log(`      Rode: npx tsx scripts/ingest-bncc.ts`);
   }
 
-  const otherNamespaces = ["ctbc", "saeb", "curriculo_estadual", "cnct"];
+  const otherNamespaces = ["saeb", "curriculo_estadual", "cnct", "curriculo_digital"];
   console.log("\n📂 Outros namespaces:");
   for (const ns of otherNamespaces) {
     const count = namespaces[ns]?.recordCount ?? 0;

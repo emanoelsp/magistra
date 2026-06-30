@@ -13,7 +13,7 @@ import { checkRateLimit } from "../../../../lib/services/rate-limit.server";
 import { validateSugestoes } from "../../../../lib/services/suggestion-validator";
 import { getPedagogicMemoryContext } from "../../../../lib/services/pedagogic-memory.server";
 import { getPlanCapabilities } from "../../../../lib/services/plan-capabilities";
-import { retrieveAllCurriculumContext } from "../../../../lib/services/bncc-rag.server";
+import { retrieveAllCurriculumContext, pruneCurriculumContext, buildRagQuery } from "../../../../lib/services/bncc-rag.server";
 import {
   buildCacheKey,
   getCachedSuggestions,
@@ -365,7 +365,14 @@ Responda SOMENTE com JSON válido:
       .filter(([k, v]) => v.trim() && !NON_PEDAGOGICAL_RE.test(k))
       .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`);
     const pedagogicalContext = pedagogicalMetaLines.join(" | ");
-    const ragQuery = `${fieldLabel} ${fieldGroup ?? ""} ${tipoPlano} ${pedagogicalContext} ${currentValuesContext}`.trim();
+    const ragQuery = buildRagQuery({
+      fieldLabel,
+      fieldGroup: fieldGroup ?? undefined,
+      componente,
+      tipoPlano,
+      pedagogicalContext,
+      currentValuesContext,
+    });
 
     // Robust etapa detection — tipo_plano (nível de ensino) is the strongest signal.
     // Falls back to metadata fields. undefined means "unknown, don't filter".
@@ -381,20 +388,24 @@ Responda SOMENTE com JSON válido:
         .test(etapaRaw) ? "EF"
       : undefined;
 
-    const [curriculum, pedagogicMemory] = await Promise.all([
+    const [curriculumRaw, pedagogicMemory] = await Promise.all([
       isBibliografiaField
-        ? Promise.resolve({ bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] })
+        ? Promise.resolve({ bncc: [], saeb: [], curriculo_estadual: [], cnct: [], curriculo_digital: [] })
         : retrieveAllCurriculumContext(ragQuery, { componente, etapa, estado }),
       getPedagogicMemoryContext(user.uid, getPlanCapabilities(user.plano ?? "free").canAccessBiblioteca).catch(() => ""),
     ]);
 
+    // Poda o contexto antes de injetar: 3 BNCC + 2 SAEB + 1 estadual + 1 cnct + 1 digital = 8 máx.
+    // Pinecone já retorna resultados ordenados por score DESC, então slice preserva os mais relevantes.
+    const curriculum = pruneCurriculumContext(curriculumRaw);
+
     const semContextoCurricular =
       !isBibliografiaField &&
       curriculum.bncc.length === 0 &&
-      curriculum.ctbc.length === 0 &&
       curriculum.saeb.length === 0 &&
       curriculum.curriculo_estadual.length === 0 &&
-      curriculum.cnct.length === 0;
+      curriculum.cnct.length === 0 &&
+      curriculum.curriculo_digital.length === 0;
     if (semContextoCurricular) {
       console.warn(
         `[ia/campo] RAG retornou vazio — campo="${fieldKey}" componente="${componente}" etapa="${etapa ?? "?"}" estado="${estado ?? "-"}"`,
@@ -404,9 +415,6 @@ Responda SOMENTE com JSON válido:
     const bnccContexto = curriculum.bncc.length > 0
       ? curriculum.bncc.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
       : null;
-    const ctbcContexto = curriculum.ctbc.length > 0
-      ? curriculum.ctbc.map((c) => c.texto).join("\n")
-      : null;
     const saebContexto = curriculum.saeb.length > 0
       ? curriculum.saeb.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
       : null;
@@ -415,6 +423,9 @@ Responda SOMENTE com JSON válido:
       : null;
     const cnctContexto = curriculum.cnct.length > 0
       ? curriculum.cnct.map((c) => `${c.curso}: ${c.texto}`).join("\n")
+      : null;
+    const digitalContexto = curriculum.curriculo_digital.length > 0
+      ? curriculum.curriculo_digital.map((c) => `${c.codigo ? c.codigo + ": " : ""}${c.texto}`).join("\n")
       : null;
 
     const filledFieldsLines = Object.entries(sanitizedCurrentValues)
@@ -437,10 +448,10 @@ Responda SOMENTE com JSON válido:
       `</contexto>`,
       ...(pedagogicMemory ? [pedagogicMemory] : []),
       ...(bnccContexto ? [`<habilidades_bncc>\n${bnccContexto}\n</habilidades_bncc>`] : []),
-      ...(ctbcContexto ? [`<habilidades_ctbc>\n${ctbcContexto}\n</habilidades_ctbc>`] : []),
       ...(saebContexto ? [`<descritores_saeb>\n${saebContexto}\n</descritores_saeb>`] : []),
       ...(estadualContexto ? [`<curriculo_${estado ?? "estadual"}>\n${estadualContexto}\n</curriculo_${estado ?? "estadual"}>`] : []),
       ...(cnctContexto ? [`<catalogo_tecnico_cnct>\n${cnctContexto}\n</catalogo_tecnico_cnct>`] : []),
+      ...(digitalContexto ? [`<curriculo_educacao_digital>\n${digitalContexto}\n</curriculo_educacao_digital>`] : []),
     ].join("\n");
 
     // Cache key — null when extraContext is present (one-off refinement, don't cache)

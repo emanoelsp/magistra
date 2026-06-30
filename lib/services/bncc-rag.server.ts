@@ -16,14 +16,6 @@ export interface BnccChunk {
   ano: string;
 }
 
-export interface CtbcChunk {
-  id: string;
-  texto: string;
-  secao: string;
-  componente: string;
-  etapa: string;
-}
-
 export interface SaebChunk {
   codigo: string;
   texto: string;
@@ -49,12 +41,21 @@ export interface CnctChunk {
   etapa: string;
 }
 
+export interface CurriculoDigitalChunk {
+  id: string;
+  codigo: string;
+  texto: string;
+  etapa: string;
+  ano: string;
+  area: string;
+}
+
 export interface CurriculumContext {
   bncc: BnccChunk[];
-  ctbc: CtbcChunk[];
   saeb: SaebChunk[];
   curriculo_estadual: CurriculoEstadualChunk[];
   cnct: CnctChunk[];
+  curriculo_digital: CurriculoDigitalChunk[];
 }
 
 function getPinecone(): Pinecone {
@@ -200,41 +201,6 @@ export async function retrieveBnccContext(
   }
 }
 
-// ── Currículo Territorial retrieval (namespace "ctbc") ───────────────────────
-
-async function retrieveCtbcContext(
-  vector: number[],
-  filters: { componente?: string; etapa?: string },
-): Promise<CtbcChunk[]> {
-  try {
-    const ns = getIndex().namespace("ctbc");
-    const pineconeFilter: Record<string, unknown> = {};
-    const comp = matchComponente(filters.componente ?? "");
-    if (comp) pineconeFilter["componente"] = { $eq: comp };
-    if (filters.etapa) pineconeFilter["etapa"] = { $eq: filters.etapa };
-
-    const response = await ns.query({
-      vector,
-      topK: TOP_K,
-      filter: Object.keys(pineconeFilter).length > 0 ? pineconeFilter : undefined,
-      includeMetadata: true,
-    });
-
-    return (response.matches ?? [])
-      .filter((m) => (m.score ?? 0) > 0.45)
-      .map((m) => ({
-        id: String(m.id),
-        texto: String(m.metadata?.["texto"] ?? ""),
-        secao: String(m.metadata?.["secao"] ?? ""),
-        componente: String(m.metadata?.["componente"] ?? ""),
-        etapa: String(m.metadata?.["etapa"] ?? ""),
-      }));
-  } catch (err) {
-    console.warn("[rag] Currículo Territorial retrieval falhou:", err);
-    return [];
-  }
-}
-
 // ── SAEB retrieval (namespace "saeb") ────────────────────────────────────────
 
 async function retrieveSaebContext(
@@ -340,15 +306,106 @@ async function retrieveCnct(
   }
 }
 
-// ── Combined retrieval — 1 embed call, 3 queries in parallel ─────────────────
+// ── Currículo Digital retrieval (namespace "curriculo_digital") ───────────────
+
+async function retrieveCurriculoDigital(
+  vector: number[],
+  filters: { etapa?: string },
+): Promise<CurriculoDigitalChunk[]> {
+  try {
+    const ns = getIndex().namespace("curriculo_digital");
+    const pineconeFilter: Record<string, unknown> = {};
+    if (filters.etapa) pineconeFilter["etapa"] = { $eq: filters.etapa };
+
+    const response = await ns.query({
+      vector,
+      topK: TOP_K,
+      filter: Object.keys(pineconeFilter).length > 0 ? pineconeFilter : undefined,
+      includeMetadata: true,
+    });
+
+    return (response.matches ?? [])
+      .filter((m) => (m.score ?? 0) > 0.45)
+      .map((m) => ({
+        id: String(m.id),
+        codigo: String(m.metadata?.["codigo"] ?? ""),
+        texto: String(m.metadata?.["texto"] ?? ""),
+        etapa: String(m.metadata?.["etapa"] ?? ""),
+        ano: String(m.metadata?.["ano"] ?? ""),
+        area: String(m.metadata?.["area"] ?? ""),
+      }));
+  } catch (err) {
+    console.warn("[rag] Currículo Digital retrieval falhou:", err);
+    return [];
+  }
+}
+
+// ── Context pruning — limita total de chunks antes de injetar no prompt ──────
+
+// Orçamento por namespace. BNCC é a âncora semântica (3 slots). SAEB complementa
+// com descritores de avaliação (2 slots). Estadual/digital/cnct são sinaleiros
+// contextuais — 1 slot cada é suficiente para ampliar sem afogar o modelo.
+// Máx total: 8 chunks → evita "Lost in the Middle" ao manter contexto circular.
+const NAMESPACE_BUDGET = {
+  bncc:               3,
+  saeb:               2,
+  curriculo_estadual: 1,
+  cnct:               1,
+  curriculo_digital:  1,
+} as const;
+
+// Pinecone retorna resultados já ordenados por score DESC. slice(0, n) mantém
+// os n mais relevantes de cada namespace — sem re-embedding, sem custo extra.
+export function pruneCurriculumContext(ctx: CurriculumContext): CurriculumContext {
+  return {
+    bncc:               ctx.bncc.slice(0, NAMESPACE_BUDGET.bncc),
+    saeb:               ctx.saeb.slice(0, NAMESPACE_BUDGET.saeb),
+    curriculo_estadual: ctx.curriculo_estadual.slice(0, NAMESPACE_BUDGET.curriculo_estadual),
+    cnct:               ctx.cnct.slice(0, NAMESPACE_BUDGET.cnct),
+    curriculo_digital:  ctx.curriculo_digital.slice(0, NAMESPACE_BUDGET.curriculo_digital),
+  };
+}
+
+// ── Query builder — linguagem natural melhora alinhamento vetorial ────────────
+
+// Modelos de embedding (especialmente os treinados pela Google) são otimizados
+// para intenção em linguagem natural, não para concatenação de tags. Transformar
+// "Objetivos objetivos EF disciplina: Matemática" em
+// "Objetivos de aprendizagem para Matemática no Ensino Fundamental" alinha o
+// vetor de query com o tom dos documentos da BNCC indexados como RETRIEVAL_DOCUMENT.
+export function buildRagQuery(params: {
+  fieldLabel: string;
+  fieldGroup?: string;
+  componente: string;
+  tipoPlano: string;
+  pedagogicalContext: string;
+  currentValuesContext: string;
+}): string {
+  const { fieldLabel, componente, tipoPlano, pedagogicalContext, currentValuesContext } = params;
+
+  const etapaLabel = /médi|medio/i.test(tipoPlano)
+    ? "Ensino Médio"
+    : /fund/i.test(tipoPlano)
+    ? "Ensino Fundamental"
+    : tipoPlano || "Educação Básica";
+
+  const base = componente
+    ? `${fieldLabel} para ${componente} no ${etapaLabel}`
+    : `${fieldLabel} para ${etapaLabel}`;
+
+  const extras = [pedagogicalContext, currentValuesContext].filter(Boolean).join(" — ").slice(0, 300);
+  return extras ? `${base} — ${extras}` : base;
+}
+
+// ── Combined retrieval — 1 embed call, queries in parallel ───────────────────
 
 export async function retrieveAllCurriculumContext(
   query: string,
   filters: { componente?: string; etapa?: string; estado?: string },
-  options?: { skipCtbc?: boolean; skipSaeb?: boolean; skipEstadual?: boolean; skipCnct?: boolean },
+  options?: { skipSaeb?: boolean; skipEstadual?: boolean; skipCnct?: boolean; skipDigital?: boolean },
 ): Promise<CurriculumContext> {
   const apiKey = process.env.PINECONE_API_KEY;
-  if (!apiKey) return { bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] };
+  if (!apiKey) return { bncc: [], saeb: [], curriculo_estadual: [], cnct: [], curriculo_digital: [] };
 
   try {
     const index = getIndex();
@@ -379,7 +436,7 @@ export async function retrieveAllCurriculumContext(
           }))
       : [];
 
-    const [bnccResult, ctbcResult, saebResult, estadualResult, cnctResult] = await Promise.all([
+    const [bnccResult, saebResult, estadualResult, cnctResult, digitalResult] = await Promise.all([
       // BNCC vector query — skipped when exact codes found
       bnccExact.length > 0
         ? Promise.resolve({ matches: [] as { score?: number; metadata?: Record<string, unknown> }[] })
@@ -388,11 +445,6 @@ export async function retrieveAllCurriculumContext(
             filter: hasFilter ? pineconeFilter : undefined,
             includeMetadata: true,
           }).catch(() => ({ matches: [] as { score?: number; metadata?: Record<string, unknown> }[] })),
-
-      // Currículo Territorial
-      options?.skipCtbc
-        ? Promise.resolve({ _ctbc: [] as CtbcChunk[] })
-        : retrieveCtbcContext(vector, filters).then((r) => ({ _ctbc: r })).catch(() => ({ _ctbc: [] as CtbcChunk[] })),
 
       // SAEB
       options?.skipSaeb
@@ -408,6 +460,11 @@ export async function retrieveAllCurriculumContext(
       options?.skipCnct
         ? Promise.resolve({ _cnct: [] as CnctChunk[] })
         : retrieveCnct(vector, { componente: filters.componente }).then((r) => ({ _cnct: r })).catch(() => ({ _cnct: [] as CnctChunk[] })),
+
+      // Currículo Digital / Computação na BNCC
+      options?.skipDigital
+        ? Promise.resolve({ _digital: [] as CurriculoDigitalChunk[] })
+        : retrieveCurriculoDigital(vector, { etapa: filters.etapa }).then((r) => ({ _digital: r })).catch(() => ({ _digital: [] as CurriculoDigitalChunk[] })),
     ]);
 
     // Prefer exact matches; fall back to vector search results
@@ -424,15 +481,15 @@ export async function retrieveAllCurriculumContext(
             ano: String(m.metadata?.["ano"] ?? ""),
           }));
 
-    const ctbc = "_ctbc" in ctbcResult ? ctbcResult._ctbc : [];
-    const saeb = "_saeb" in saebResult ? saebResult._saeb : [];
+    const saeb              = "_saeb"    in saebResult    ? saebResult._saeb       : [];
     const curriculo_estadual = "_estadual" in estadualResult ? estadualResult._estadual : [];
-    const cnct = "_cnct" in cnctResult ? cnctResult._cnct : [];
+    const cnct              = "_cnct"    in cnctResult    ? cnctResult._cnct       : [];
+    const curriculo_digital  = "_digital" in digitalResult  ? digitalResult._digital  : [];
 
-    return { bncc, ctbc, saeb, curriculo_estadual, cnct };
+    return { bncc, saeb, curriculo_estadual, cnct, curriculo_digital };
   } catch (err) {
     console.warn("[rag] Combined retrieval falhou, prosseguindo sem contexto:", err);
-    return { bncc: [], ctbc: [], saeb: [], curriculo_estadual: [], cnct: [] };
+    return { bncc: [], saeb: [], curriculo_estadual: [], cnct: [], curriculo_digital: [] };
   }
 }
 

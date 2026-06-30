@@ -30,7 +30,9 @@ const EMBEDDING_API_VER = "v1beta";
 const BATCH_SIZE = 50;
 const EMBED_DELAY_MS = 300;
 
+// URLs oficiais MEC com fallback para o domínio antigo
 const BNCC_URLS = [
+  "https://www.gov.br/mec/pt-br/escola-em-tempo-integral/arquivos/BNCC_EI_EF_110518_versaofinal.pdf",
   "https://basenacionalcomum.mec.gov.br/images/BNCC_EI_EF_110518_versaofinal_site.pdf",
   "https://basenacionalcomum.mec.gov.br/images/BNCC_20dez_site.pdf",
 ];
@@ -104,25 +106,50 @@ function parseCodigoInfo(codigo: string): { etapa: string; ano: string; componen
   return { etapa, ano, componente, area };
 }
 
+// Retorna o texto mais limpo: prefere texto after-code quando é mais descritivo.
+// Na BNCC, História/ER têm formato "(EFxxHI01) texto da habilidade",
+// enquanto Matemática/LP têm "texto da habilidade (EFxxMA01)".
+function bestDescription(beforeText: string, afterText: string): string {
+  const beforeLines = beforeText.split("\n").map((l) => l.trim()).filter(Boolean);
+  const before = beforeLines.slice(-3).join(" ").replace(/\s+/g, " ").trim();
+  const after = afterText.split("\n").map((l) => l.trim()).join(" ").replace(/\s+/g, " ").trim();
+
+  // Prefere after quando before parece um título de seção (sem verbo, sem código)
+  const beforeHasVerb = /\b(identificar|reconhecer|compreender|analisar|utilizar|relacionar|descrever|produzir|ler|interpretar|calcular|resolver|representar|comparar|associar|elaborar|formular|avaliar)\b/i.test(before);
+  if (!beforeHasVerb && after.length > 30 && after.length > before.length) {
+    return after.slice(0, 500);
+  }
+  return before;
+}
+
 function extractChunks(text: string): BnccChunk[] {
   const chunks: BnccChunk[] = [];
   const seen = new Set<string>();
 
-  let match: RegExpExecArray | null;
+  // Pré-computa posições para poder olhar o texto depois de cada código
+  const positions: Array<{ codigo: string; start: number; end: number }> = [];
   CODIGO_REGEX.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CODIGO_REGEX.exec(text)) !== null) {
+    positions.push({ codigo: m[1], start: m.index, end: m.index + m[0].length });
+  }
 
-  while ((match = CODIGO_REGEX.exec(text)) !== null) {
-    const codigo = match[1];
+  for (let i = 0; i < positions.length; i++) {
+    const { codigo, start, end } = positions[i];
     if (seen.has(codigo)) continue;
     seen.add(codigo);
 
-    // Pega o texto antes do código (até 600 chars), limpando quebras excessivas
-    const before = text.slice(Math.max(0, match.index - 600), match.index);
-    const lines = before.split("\n").map((l) => l.trim()).filter(Boolean);
+    // Texto antes do código (até 600 chars)
+    const before = text.slice(Math.max(0, start - 600), start);
 
-    // A habilidade está normalmente nas últimas 1-3 linhas antes do código
-    const descricao = lines.slice(-3).join(" ").replace(/\s+/g, " ").trim();
-    if (descricao.length < 20) continue;
+    // Texto após o código até o próximo código ou 400 chars (o que vier primeiro)
+    const nextStart = positions[i + 1]?.start ?? end + 400;
+    const afterRaw = text.slice(end, Math.min(nextStart, end + 400));
+    // Remove o código seguinte se estiver colado
+    const after = afterRaw.replace(/\([A-Z]{2}\d{2}[A-Z]{2,3}\d{2,3}\)/, "").trim();
+
+    const descricao = bestDescription(before, after);
+    if (descricao.length < 15) continue;
 
     const { etapa, ano, componente, area } = parseCodigoInfo(codigo);
 
@@ -142,25 +169,44 @@ function extractChunks(text: string): BnccChunk[] {
 
 // ── Embedding ────────────────────────────────────────────────────────────────
 
-// Embeda um lote inteiro em UMA chamada API (batchEmbedContents)
+const EMBED_SUB_BATCH = 20;
+
+// Embeda textos em sub-lotes de 20 com retry para rate limit (429/503)
 async function embedBatch(texts: string[]): Promise<number[][]> {
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY!;
-  const requests = texts.map((text) => ({
-    model: `models/${EMBEDDING_MODEL}`,
-    content: { parts: [{ text }] },
-    taskType: "RETRIEVAL_DOCUMENT",
-  }));
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/${EMBEDDING_API_VER}/models/${EMBEDDING_MODEL}:batchEmbedContents?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requests }),
-    },
-  );
-  if (!res.ok) throw new Error(`Embed error ${res.status}: ${await res.text()}`);
-  const data = (await res.json()) as { embeddings: { values: number[] }[] };
-  return data.embeddings.map((e) => e.values);
+  const allValues: number[][] = [];
+
+  for (let s = 0; s < texts.length; s += EMBED_SUB_BATCH) {
+    const sub = texts.slice(s, s + EMBED_SUB_BATCH);
+    const requests = sub.map((text) => ({
+      model: `models/${EMBEDDING_MODEL}`,
+      content: { parts: [{ text }] },
+      taskType: "RETRIEVAL_DOCUMENT",
+    }));
+
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/${EMBEDDING_API_VER}/models/${EMBEDDING_MODEL}:batchEmbedContents?key=${apiKey}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requests }) },
+      );
+      if (res.ok) {
+        const data = (await res.json()) as { embeddings: { values: number[] }[] };
+        allValues.push(...data.embeddings.map((e) => e.values));
+        break;
+      }
+      if (res.status === 429 || res.status === 503) {
+        const wait = (attempt + 1) * 15_000;
+        console.log(`\n  ⏳ Rate limit (${res.status}), aguardando ${wait / 1000}s...`);
+        await sleep(wait);
+        continue;
+      }
+      throw new Error(`Embed error ${res.status}: ${await res.text()}`);
+    }
+
+    if (s + EMBED_SUB_BATCH < texts.length) await sleep(2000);
+  }
+
+  return allValues;
 }
 
 function sleep(ms: number) {
@@ -225,7 +271,9 @@ async function downloadPdf(url: string): Promise<Buffer> {
   }
 
   console.log(`  → Baixando: ${url}`);
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" },
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status} ao baixar ${url}`);
   const buffer = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(filename, buffer);

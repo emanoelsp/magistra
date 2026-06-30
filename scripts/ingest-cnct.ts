@@ -30,17 +30,17 @@ const NAMESPACE        = "cnct";
 const GEMINI_API_KEY   = process.env.GOOGLE_GEMINI_API_KEY!;
 const EMBEDDING_MODEL  = "gemini-embedding-001";
 const EMBEDDING_API_VER = "v1beta";
-const BATCH_SIZE       = 50;
-const EMBED_SUB_BATCH  = 5;
-const EMBED_DELAY_MS   = 300;
-const EMBED_SUB_DELAY  = 2000;
+const BATCH_SIZE       = 100;
+const EMBED_SUB_BATCH  = 20;
+const EMBED_DELAY_MS   = 500;
+const EMBED_SUB_DELAY  = 8000;
 const MIN_CHUNK_LEN    = 80;
 const CHUNK_SIZE       = 900;
 
 const PDF_PATH = process.env.CNCT_PDF_PATH ?? "";
-
-// URL oficial MEC — CNCT 4ª edição (2020)
-const CNCT_URL = "https://download.inep.gov.br/educacao_basica/saeb/2022/documentos/catalogo_nacional_cursos_tecnicos.pdf";
+// URL do catálogo PDF via API do portal CNCT/MEC. Protegida por Cloudflare — pode retornar HTML.
+// Fallback: baixar manualmente em https://cnct.mec.gov.br e usar CNCT_PDF_PATH.
+const CNCT_URL = process.env.CNCT_URL ?? "https://cnct.mec.gov.br/cnct-api/catalogopdf";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -70,11 +70,19 @@ function detectEixo(text: string): string {
   return "";
 }
 
-function detectCurso(lines: string[]): string {
-  // Linha com todos caps e não muito longa é provavelmente o nome do curso
-  for (const l of lines) {
-    if (l === l.toUpperCase() && l.length > 4 && l.length < 80 && /[A-Z]/.test(l)) return l;
-  }
+// Extrai "TÉCNICO EM XXX" ou "TECNÓLOGO EM XXX" do início de um parágrafo.
+// Neste PDF gerado pelo portal CNCT, cada seção de curso começa com:
+//   "TÉCNICO EM [NOME] [carga] horas [conteúdo...]"
+// Captura tudo antes da carga horária (dígitos seguidos de "horas").
+function detectCurso(text: string): string {
+  // Caminho 1: parágrafo COMEÇA com o nome do curso (formato deste PDF)
+  const mStart = /^(T[EÉ]CNICO\s+EM\s+[\wÀ-ÿ\s]+?|TECN[OÓ]LOGO\s+EM\s+[\wÀ-ÿ\s]+?)\s+\d{3,4}\s+horas/i.exec(text);
+  if (mStart) return mStart[1].replace(/\s+/g, " ").trim().slice(0, 80);
+
+  // Caminho 2: nome no meio do texto (PDFs mais antigos, fallback)
+  const mMid = /(?:^|\s)(T[EÉ]CNICO\s+EM\s+[\wÀ-ÿ\s]+?|TECN[OÓ]LOGO\s+EM\s+[\wÀ-ÿ\s]+?)\s*(?:\d{3,4}\s+horas|$)/im.exec(text);
+  if (mMid) return mMid[1].replace(/\s+/g, " ").trim().slice(0, 80);
+
   return "";
 }
 
@@ -88,27 +96,46 @@ function extractChunks(text: string): CnctChunk[] {
   const paragraphs = text.split(/\n{2,}/).map((p) => p.replace(/\s+/g, " ").trim()).filter((p) => p.length > 40);
 
   let buffer = "";
-  let bufferLines: string[] = [];
   let idx = 0;
+  // Sticky: propaga eixo/curso para chunks que não os mencionam explicitamente.
+  // Reseta curso quando um novo eixo é detectado (nova seção do catálogo).
+  let currentEixo = "";
+  let currentCurso = "";
 
   const flush = () => {
-    if (buffer.length >= MIN_CHUNK_LEN) {
-      const eixo = detectEixo(buffer);
-      const curso = detectCurso(bufferLines);
-      // Técnico de nível médio cobre ensino médio integrado/concomitante/subsequente
-      chunks.push({ id: slugify(curso || eixo || "geral", idx++), texto: buffer.trim(), eixo, curso, etapa: "EM" });
+    if (buffer.length < MIN_CHUNK_LEN) { buffer = ""; return; }
+
+    const detectedEixo  = detectEixo(buffer);
+    const detectedCurso = detectCurso(buffer);
+
+    if (detectedEixo && detectedEixo !== currentEixo) {
+      currentEixo  = detectedEixo;
+      currentCurso = ""; // novo eixo → reset curso
     }
-    buffer = ""; bufferLines = [];
+    if (detectedCurso) currentCurso = detectedCurso;
+
+    // Descarta chunks de antes da primeira seção de eixo (cabeçalhos/sumário)
+    if (!currentEixo) { buffer = ""; return; }
+
+    chunks.push({
+      id: slugify(currentCurso || currentEixo, idx++),
+      texto: buffer.trim(),
+      eixo: currentEixo,
+      curso: currentCurso,
+      etapa: "EM",
+    });
+    buffer = "";
   };
 
   for (const p of paragraphs) {
     if (buffer.length + p.length > CHUNK_SIZE && buffer.length > 0) flush();
     buffer += (buffer ? " " : "") + p;
-    bufferLines.push(p);
   }
   flush();
 
-  console.log(`  → ${chunks.length} chunks extraídos`);
+  const semEixo   = chunks.filter((c) => !c.eixo).length;
+  const semCurso  = chunks.filter((c) => !c.curso).length;
+  console.log(`  → ${chunks.length} chunks extraídos (sem eixo: ${semEixo} | sem curso: ${semCurso})`);
   return chunks;
 }
 
@@ -119,21 +146,32 @@ function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 async function embedBatch(texts: string[]): Promise<number[][]> {
   const requests = texts.map((text) => ({ model: `models/${EMBEDDING_MODEL}`, content: { parts: [{ text }] }, taskType: "RETRIEVAL_DOCUMENT" }));
   for (let attempt = 0; attempt < 6; attempt++) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/${EMBEDDING_API_VER}/models/${EMBEDDING_MODEL}:batchEmbedContents?key=${GEMINI_API_KEY}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requests }) },
-    );
-    if (res.ok) {
-      const data = (await res.json()) as { embeddings: { values: number[] }[] };
-      return data.embeddings.map((e) => e.values);
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/${EMBEDDING_API_VER}/models/${EMBEDDING_MODEL}:batchEmbedContents?key=${GEMINI_API_KEY}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requests }) },
+      );
+      if (res.ok) {
+        const data = (await res.json()) as { embeddings: { values: number[] }[] };
+        return data.embeddings.map((e) => e.values);
+      }
+      if (res.status === 429 || res.status === 503) {
+        const wait = [30, 60, 90, 120, 150, 180][attempt] ?? 180;
+        console.log(`  ⏳ Rate limit (${res.status}), aguardando ${wait}s... (tentativa ${attempt + 1}/6)`);
+        await sleep(wait * 1000);
+        continue;
+      }
+      throw new Error(`Embed error ${res.status}: ${await res.text()}`);
+    } catch (err) {
+      // Captura timeouts de rede (ConnectTimeoutError) além de HTTP 4xx/5xx
+      if (err instanceof Error && (err.message.includes("fetch failed") || err.message.includes("Timeout"))) {
+        const wait = [30, 60, 90, 120, 150, 180][attempt] ?? 180;
+        console.log(`  ⏳ Erro de rede, aguardando ${wait}s... (tentativa ${attempt + 1}/6)`);
+        await sleep(wait * 1000);
+        continue;
+      }
+      throw err;
     }
-    if (res.status === 429 || res.status === 503) {
-      const wait = (attempt + 1) * 15_000;
-      console.log(`  ⏳ Rate limit (${res.status}), aguardando ${wait / 1000}s...`);
-      await sleep(wait);
-      continue;
-    }
-    throw new Error(`Embed error ${res.status}: ${await res.text()}`);
   }
   throw new Error("Embed falhou após 6 tentativas.");
 }
@@ -186,13 +224,36 @@ async function loadPdf(): Promise<Buffer> {
 
   if (fs.existsSync(filename)) { console.log(`  → Cache: ${filename}`); return fs.readFileSync(filename); }
 
-  console.log(`  → Baixando CNCT do MEC...`);
-  const res = await fetch(CNCT_URL, { headers: { "User-Agent": "Mozilla/5.0" } });
+  console.log(`  → Tentando baixar: ${CNCT_URL}`);
+  const res = await fetch(CNCT_URL, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "application/pdf,*/*",
+      "Accept-Language": "pt-BR,pt;q=0.9",
+    },
+  });
   if (!res.ok) {
     throw new Error(
       `HTTP ${res.status} ao baixar CNCT.\n` +
-      `Baixe manualmente o CNCT do MEC e defina CNCT_PDF_PATH=./docs/cnct.pdf`,
+      "O portal cnct.mec.gov.br está protegido por Cloudflare e bloqueia downloads automáticos.\n" +
+      "Baixe o PDF manualmente em: https://cnct.mec.gov.br → botão 'Catálogo PDF'\n" +
+      "Depois rode:\n" +
+      "  CNCT_PDF_PATH=./docs/cnct.pdf npx tsx scripts/ingest-cnct.ts",
     );
+  }
+  // Verifica se retornou HTML (Cloudflare JS challenge) em vez de PDF
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("text/html")) {
+    const html = await res.text();
+    if (html.includes("Cloudflare") || html.includes("Just a moment") || html.includes("challenge")) {
+      throw new Error(
+        "O Cloudflare está bloqueando o download automático do CNCT.\n" +
+        "Baixe o PDF manualmente em: https://cnct.mec.gov.br → botão 'Catálogo PDF'\n" +
+        "Depois rode:\n" +
+        "  CNCT_PDF_PATH=.cache/cnct_catalogo.pdf npx tsx scripts/ingest-cnct.ts",
+      );
+    }
+    throw new Error(`Resposta inesperada (HTML) ao baixar CNCT: ${html.slice(0, 200)}`);
   }
   const buffer = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(filename, buffer);

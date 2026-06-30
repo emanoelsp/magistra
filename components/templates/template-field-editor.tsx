@@ -85,6 +85,19 @@ function newField(): TemplateFieldSchema {
 // ─── DocxInteractive ──────────────────────────────────────────────────────────
 // mammoth/docx-preview renderer with inline-edit support.
 
+// Module-level chip CSS so it can be used both in the colorization effect and
+// in the "Highlight & Convert" path without re-defining inside a closure.
+function chipCss(isIa: boolean) {
+  return [
+    "display:inline-block", "padding:2px 8px", "border-radius:6px",
+    "font-family:monospace", "font-size:10px", "font-weight:700",
+    "white-space:nowrap", "line-height:1.7", "cursor:pointer",
+    isIa
+      ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
+      : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
+  ].join(";");
+}
+
 interface DocxEdit {
   text: string;       // original cell text (for server-side injectAtCell fallback)
   ordinal: number;    // occurrence index among cells with same original text
@@ -92,6 +105,7 @@ interface DocxEdit {
   role: "manual" | "ia_sugerida";
   label: string;      // human label (adjacent cell text or derived from key)
   coord?: string;     // "T{ti}R{ri}C{ci}" — preferred over text/ordinal when present
+  aiInstructions?: string; // pre-populated from "Highlight & Convert" selected text
 }
 
 interface CellEdit {
@@ -127,10 +141,11 @@ interface DocxInteractiveProps {
   onDocKeysUpdate?: (keys: Set<string>) => void;
   onLiveScan?: (edits: DocxEdit[], removedKeys: string[]) => void;
   onRepeatKey?: (key: string) => void;
+  onConvert?: (key: string, aiInstructions: string) => void;
   scanRef?: { current: ((() => DocxInteractiveScanData) | null) };
 }
 
-function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick, onDocKeysUpdate, onLiveScan, onRepeatKey, scanRef }: DocxInteractiveProps) {
+function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locateKey, previewVersion = 0, zoom = 100, onZoomChange, onSaveEdits, placementKey = null, onCancelPlacement, onPlace, onChipClick, onDocKeysUpdate, onLiveScan, onRepeatKey, onConvert, scanRef }: DocxInteractiveProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bufferRef = useRef<ArrayBuffer | null>(null);
@@ -260,16 +275,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     // CHIP INVARIANT: a chip must only be created/kept for a key that exists in
     // roleMap. Every chip-creation path below MUST check roleMap.has(key) first.
     // Violating this causes ghost chips that survive field deletion.
-    function chipCss(isIa: boolean) {
-      return [
-        "display:inline-block", "padding:2px 8px", "border-radius:6px",
-        "font-family:monospace", "font-size:10px", "font-weight:700",
-        "white-space:nowrap", "line-height:1.7", "cursor:pointer",
-        isIa
-          ? "background:rgba(139,92,246,.14);color:#6d28d9;border:1px solid rgba(139,92,246,.35)"
-          : "background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)",
-      ].join(";");
-    }
+    // (chipCss is defined at module level so it can also be used in executeConvert)
 
     // Update color of existing chips — and remove chips for deleted fields
     container.querySelectorAll("[data-field-chip]").forEach((el) => {
@@ -387,6 +393,87 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     return () => container.removeEventListener("mousedown", handleMouseDown);
   }, [phase]);
 
+  // ── Highlight & Convert (floating menu) ──────────────────────────────────────
+  // When the professor selects text inside a single td, a floating button appears
+  // offering to convert that text into an IA suggestion chip.
+  const [floatingMenu, setFloatingMenu] = useState<{
+    clientX: number; clientY: number;
+    selectedText: string;
+    anchorTd: HTMLElement;
+  } | null>(null);
+  const onConvertRef = useRef(onConvert);
+  useEffect(() => { onConvertRef.current = onConvert; }, [onConvert]);
+
+  useEffect(() => {
+    if (phase !== "done" || !containerRef.current || placementKey) return;
+    const container = containerRef.current;
+
+    function handleMouseUp() {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+        setFloatingMenu(null);
+        return;
+      }
+      const selectedText = sel.toString().trim();
+      if (selectedText.length < 3) { setFloatingMenu(null); return; }
+
+      // Cross-cell guard — selection must be confined to a single td
+      const anchor = sel.anchorNode?.parentElement?.closest("td");
+      const focus  = sel.focusNode?.parentElement?.closest("td");
+      if (!anchor || !container.contains(anchor) || anchor !== focus) {
+        setFloatingMenu(null);
+        return;
+      }
+
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      setFloatingMenu({
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top,
+        selectedText,
+        anchorTd: anchor as HTMLElement,
+      });
+    }
+
+    container.addEventListener("mouseup", handleMouseUp);
+    return () => container.removeEventListener("mouseup", handleMouseUp);
+  }, [phase, placementKey]);
+
+  function executeConvert() {
+    if (!floatingMenu || !containerRef.current) return;
+    const { selectedText, anchorTd } = floatingMenu;
+    setFloatingMenu(null);
+
+    // Derive a readable key from the first 3 words of the selected text
+    const hint = selectedText
+      .toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, " ").trim()
+      .split(/\s+/).slice(0, 3).join("_").slice(0, 30);
+    const baseKey = hint || "campo";
+    const finalKey = fieldsRef.current.some((f) => f.key === baseKey)
+      ? `${baseKey}_${String(Date.now()).slice(-4)}`
+      : baseKey;
+
+    // Replace selection with chip span
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const span = document.createElement("span");
+    span.setAttribute("data-field-chip", finalKey);
+    span.setAttribute("contenteditable", "false");
+    span.style.cssText = chipCss(true); // always ia_sugerida
+    span.textContent = `{{${finalKey}}}`;
+    range.insertNode(span);
+    sel.removeAllRanges();
+
+    // Register key so initialDocKeysRef is up-to-date and the chip isn't treated
+    // as a "removed" key on the next extractDocEdits call.
+    initialDocKeysRef.current.add(finalKey);
+
+    // Notify parent — opens sidebar with aiInstructions pre-populated
+    onConvertRef.current?.(finalKey, selectedText);
+  }
+
   // Assign XML structural coordinates to DOM cells (enables precise server-side injection).
   // Runs after chip effects so coords land on the final rendered cells.
   useEffect(() => {
@@ -432,6 +519,25 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     }
     initialDocKeysRef.current = docKeys;
     onDocKeysUpdate?.(new Set(docKeys));
+
+    // First-time discovery toast: shown once (per browser) when the document has
+    // at least one cell with substantial text that could be converted.
+    // Uses a localStorage flag so it never repeats after the user sees it once.
+    try {
+      const flag = "magis_convert_tip_seen";
+      if (!localStorage.getItem(flag)) {
+        const hasRichCell = [...originalTextsRef.current.values()].some((t) => t.length > 40);
+        if (hasRichCell) {
+          localStorage.setItem(flag, "1");
+          setTimeout(() => {
+            showMagisToast(
+              "💡 Dica: selecione qualquer texto numa célula e clique em \"Converter em Campo IA\" para criar um campo com contexto para a Magis.",
+              "info",
+            );
+          }, 1200); // slight delay so the document finishes rendering visually first
+        }
+      }
+    } catch { /* localStorage blocked in some environments */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, fieldPositions, fields]);
 
@@ -828,7 +934,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             <p className="flex-1 truncate text-[11px] text-violet-500">
               Edite as células &bull; digite{" "}
               <code className="rounded bg-violet-100 px-1 font-mono text-[10px] text-violet-700">{`{{chave}}`}</code>{" "}
-              para posicionar um campo &bull; clique num chip para configurar
+              para posicionar um campo &bull; clique num chip para configurar &bull;{" "}
+              <span className="font-medium text-violet-700">selecione texto para converter em Campo IA</span>
             </p>
             <div className="flex shrink-0 items-center gap-1.5">
               <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
@@ -934,6 +1041,41 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             <p className="text-xs text-slate-400">Configure os campos na lista à direita.</p>
           </div>
         </div>
+      )}
+
+      {/* Floating "Highlight & Convert" button — rendered via portal so it floats
+          above all table cells regardless of overflow/transform on the container. */}
+      {floatingMenu && typeof document !== "undefined" && createPortal(
+        <div
+          style={{
+            position: "fixed",
+            left: floatingMenu.clientX,
+            top: floatingMenu.clientY - 8,
+            transform: "translateX(-50%) translateY(-100%)",
+            zIndex: 9999,
+            pointerEvents: "auto",
+          }}
+        >
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()} // keep text selection alive
+            onClick={executeConvert}
+            className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-violet-700 active:scale-95"
+            style={{ whiteSpace: "nowrap" }}
+          >
+            <Sparkles className="h-3 w-3" />
+            Converter em Campo IA
+          </button>
+          {/* Arrow pointing down to the selection */}
+          <div style={{
+            position: "absolute", bottom: -5, left: "50%", transform: "translateX(-50%)",
+            width: 0, height: 0,
+            borderLeft: "5px solid transparent",
+            borderRight: "5px solid transparent",
+            borderTop: "5px solid #7c3aed",
+          }} />
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -1247,7 +1389,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     setPendingConfigKeys((prev) => new Set([...prev, f.key]));
   }
 
-  function addFieldFromEdit(rawText: string, ordinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida", explicitLabel?: string) {
+  function addFieldFromEdit(rawText: string, ordinal: number, explicitKey: string, explicitRole: "manual" | "ia_sugerida", explicitLabel?: string, aiInstructions?: string) {
     const key = explicitKey || `campo_${Date.now()}`;
 
     const existing = fields.find((f) => f.key === key);
@@ -1274,7 +1416,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       group,
       placeholder: "",
       helperText: "",
-      aiInstructions: "",
+      aiInstructions: aiInstructions ?? "",
     };
   }
 
@@ -1283,7 +1425,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     const newPositions: Record<string, { cellText: string; ordinal: number; coord?: string }> = {};
 
     for (const edit of edits) {
-      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label);
+      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label, edit.aiInstructions);
       if (!fields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
         newFields.push(f);
         // Store position: prefer coord (structural, unambiguous) over text/ordinal
@@ -1369,7 +1511,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     const newFields: TemplateFieldSchema[] = [];
     const newPositions: Record<string, { cellText: string; ordinal: number; coord?: string }> = {};
     for (const edit of edits) {
-      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label);
+      const f = addFieldFromEdit(edit.text, edit.ordinal, edit.key, edit.role, edit.label, edit.aiInstructions);
       if (!fields.find((existing) => existing.key === f.key) && !newFields.find((nf) => nf.key === f.key)) {
         newFields.push(f);
         newPositions[f.key] = { cellText: edit.text.trim(), ordinal: edit.ordinal, ...(edit.coord ? { coord: edit.coord } : {}) };
@@ -1399,6 +1541,37 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           ?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     }
+  }
+
+  // "Highlight & Convert" — called when professor selects text and clicks the
+  // floating "Converter em Campo IA" button. Creates an ia_sugerida field with
+  // the selected text pre-populated as aiInstructions, then opens the sidebar.
+  function handleConvert(key: string, aiInstructions: string) {
+    setFields((prev) => {
+      if (prev.find((f) => f.key === key)) return prev;
+      const newF: TemplateFieldSchema = {
+        key,
+        label: aiInstructions.replace(/\s+/g, " ").trim().slice(0, 80),
+        type: "textarea",
+        required: false,
+        role: "ia_sugerida",
+        group: "outros",
+        placeholder: "",
+        helperText: "",
+        aiInstructions,
+      };
+      return [...prev, newF];
+    });
+    setPendingConfigKeys((prev) => new Set([...prev, key]));
+    setPanelCollapsed(false);
+    setExpandedField(key);
+    setActiveFieldKey(key);
+    setTimeout(() => {
+      panelScrollRef.current
+        ?.querySelector<HTMLElement>(`[data-field-card="${key}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 120);
+    showMagisToast("Campo criado! Defina o label e revise as instruções para a Magis no painel.", "info");
   }
 
   function removeField(index: number) {
@@ -2755,6 +2928,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   }}
                   onDocKeysUpdate={(keys) => { latestDocKeysRef.current = keys; }}
                   onLiveScan={handleLiveScan}
+                  onConvert={handleConvert}
                   onRepeatKey={(key) => showMagisToast(`Campo {{${key}}} repetido — o valor preencherá todas as posições no documento.`, "info")}
                   scanRef={scanRef}
                 />
