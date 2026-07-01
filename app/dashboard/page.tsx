@@ -121,7 +121,7 @@ export default async function DashboardPage() {
   const temEscolas = caps.canAccessEscolas && escolasData.total > 0;
 
   return (
-    <div className="flex flex-col gap-6 md:gap-8">
+    <div className="flex min-w-0 flex-col gap-6 md:gap-8">
 
       {/* Hero */}
       <section className="rounded-[2rem] bg-slate-950 px-5 py-7 text-white shadow-xl md:px-8 md:py-10">
@@ -324,11 +324,11 @@ export default async function DashboardPage() {
       })()}
 
       {/* Escolas · Templates · Planos */}
-      <section className={`grid gap-6 ${caps.canAccessEscolas ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
+      <section className={`grid min-w-0 gap-6 grid-cols-1 ${caps.canAccessEscolas ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
 
       {/* Escolas e Turmas — Mestre+ only */}
       {caps.canAccessEscolas && (
-      <div className={`flex flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6 transition-all duration-300${showOnboarding && !temEscolas ? " opacity-40 blur-[1px] pointer-events-none select-none" : ""}`}>
+      <div className={`flex min-w-0 flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6 transition-all duration-300${showOnboarding && !temEscolas ? " opacity-40 blur-[1px] pointer-events-none select-none" : ""}`}>
         <div className="mb-4 flex items-center justify-between gap-3 md:mb-5">
           <h2 className="text-base font-semibold tracking-tight text-slate-950 md:text-lg">
             Suas escolas
@@ -368,7 +368,7 @@ export default async function DashboardPage() {
       )}
 
         {/* Templates */}
-        <div className={`flex flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6 transition-all duration-300${showOnboarding && !temTemplates ? " opacity-40 blur-[1px] pointer-events-none select-none" : ""}`}>
+        <div className={`flex min-w-0 flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6 transition-all duration-300${showOnboarding && !temTemplates ? " opacity-40 blur-[1px] pointer-events-none select-none" : ""}`}>
           <div className="mb-4 flex items-center justify-between gap-3 md:mb-5">
             <h2 className="text-base font-semibold tracking-tight text-slate-950 md:text-lg">
               Seus templates
@@ -408,7 +408,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Planos */}
-        <div className={`flex flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6 transition-all duration-300${showOnboarding && !temCamposConfigurados ? " opacity-40 blur-[1px] pointer-events-none select-none" : ""}`}>
+        <div className={`flex min-w-0 flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:p-6 transition-all duration-300${showOnboarding && !temCamposConfigurados ? " opacity-40 blur-[1px] pointer-events-none select-none" : ""}`}>
           <div className="mb-4 flex items-center justify-between gap-3 md:mb-5">
             <h2 className="text-base font-semibold tracking-tight text-slate-950 md:text-lg">
               Seus planos

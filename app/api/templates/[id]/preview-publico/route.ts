@@ -36,9 +36,13 @@ export async function GET(
     const fillableUrl = data.arquivo_fillable_url as string | undefined;
     const arquivoUrl = data.arquivo_url as string | undefined;
 
-    // annotated: always regenerate from the original DOCX so injectPlaceholders reflects current schema
-    // fillable: serve the pre-built fillable (placeholders already placed)
-    const fileUrl = (!annotated && fillable && fillableUrl) ? fillableUrl : (arquivoUrl ?? "");
+    // annotated: use fillable as base (has correct manual chip positions) → injectColoredPlaceholders
+    //   colorizes existing tokens without moving them (idempotent); fall back to original if no fillable
+    // fillable: serve the pre-built fillable directly (placeholders already placed, no colors)
+    // default: serve the original DOCX as-is
+    const fileUrl = annotated
+      ? (fillableUrl ?? arquivoUrl ?? "")
+      : (fillable && fillableUrl ? fillableUrl : (arquivoUrl ?? ""));
     if (!fileUrl) {
       return new NextResponse("Arquivo não disponível.", { status: 404 });
     }

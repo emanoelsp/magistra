@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     if (templateId && Array.isArray(feedback) && feedback.length > 0) {
       for (const entry of feedback.slice(0, 20)) { // teto: 20 campos por save
         if (!entry.fieldKey || !entry.outcome) continue;
-        const ref = db.collection("rag_feedback").doc();
+        const ref = db.collection("magis_rag_feedback").doc();
         batch.set(ref, {
           user_id:           user.uid,
           template_id:       templateId,

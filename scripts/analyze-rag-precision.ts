@@ -1,7 +1,7 @@
 /**
  * Analisa feedback implícito de qualidade do RAG coletado em produção.
  *
- * Lê a coleção `rag_feedback` do Firestore e produz métricas de precisão
+ * Lê a coleção `magis_rag_feedback` do Firestore e produz métricas de precisão
  * por namespace, por tipo de campo e por fonte curriclar.
  *
  * Uso:
@@ -47,7 +47,7 @@ async function main() {
   const db = getAdminDb();
   const since = new Date(Date.now() - DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  let query = db.collection("rag_feedback")
+  let query = db.collection("magis_rag_feedback")
     .where("timestamp", ">=", since)
     .orderBy("timestamp", "desc") as FirebaseFirestore.Query;
 

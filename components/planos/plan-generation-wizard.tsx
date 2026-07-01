@@ -277,24 +277,25 @@ export function PlanGenerationWizard({
   function applyTurma(turma: TurmaRecord) {
     setSelectedTurmaId(turma.id);
     setSelectedEscolaId(turma.escola_id);
-    setMetadataValues((prev) => {
-      const next = { ...prev };
-      const escolaField = manualFields.find((f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"));
-      if (escolaField) next[escolaField.key] = turma.escola_nome;
-      const turmaField = manualFields.find((f) =>
-        f.key.includes("turma") || f.key.includes("class") ||
-        f.label.toLowerCase().includes("turma") || f.label.toLowerCase().includes("class"),
+
+    const updates: Record<string, string> = {};
+    const escolaField = manualFields.find((f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"));
+    if (escolaField) updates[escolaField.key] = turma.escola_nome;
+    const turmaField = manualFields.find((f) =>
+      f.key.includes("turma") || f.key.includes("class") ||
+      f.label.toLowerCase().includes("turma") || f.label.toLowerCase().includes("class"),
+    );
+    if (turmaField) updates[turmaField.key] = turma.nome;
+    if (turma.disciplina) {
+      const discField = manualFields.find((f) =>
+        f.key.includes("disciplina") || f.key.includes("componente") ||
+        f.label.toLowerCase().includes("disciplina") || f.label.toLowerCase().includes("componente"),
       );
-      if (turmaField) next[turmaField.key] = turma.nome;
-      if (turma.disciplina) {
-        const discField = manualFields.find((f) =>
-          f.key.includes("disciplina") || f.key.includes("componente") ||
-          f.label.toLowerCase().includes("disciplina") || f.label.toLowerCase().includes("componente"),
-        );
-        if (discField) next[discField.key] = turma.disciplina;
-      }
-      return next;
-    });
+      if (discField) updates[discField.key] = turma.disciplina;
+    }
+
+    setMetadataValues((prev) => ({ ...prev, ...updates }));
+    setCommittedValues((prev) => ({ ...prev, ...updates }));
   }
 
   function commitField(key: string, value: string) {
@@ -573,14 +574,16 @@ export function PlanGenerationWizard({
         {STEPS.map((step, index) => {
           const isCompleted = index < currentStep || (index === 3 && isFinalized);
           const isCurrent = index === currentStep && !(index === 3 && isFinalized);
+          const Tag = isCompleted ? "button" : "div";
           return (
-            <div
+            <Tag
               key={step.id}
+              {...(isCompleted ? { type: "button" as const, onClick: () => setCurrentStep(index), title: `Voltar para ${step.title}` } : {})}
               className={`flex flex-1 items-center gap-2 rounded-2xl border px-3 py-2 transition ${
                 isCurrent
                   ? "border-slate-950 bg-slate-950 text-white"
                   : isCompleted
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800 cursor-pointer hover:border-emerald-400 hover:bg-emerald-100"
                     : "border-slate-200 bg-white text-slate-400"
               }`}
             >
@@ -599,7 +602,7 @@ export function PlanGenerationWizard({
                 <p className="truncate text-xs font-bold leading-tight">{step.title}</p>
                 <p className="hidden truncate text-[10px] leading-tight opacity-65 sm:block">{step.description}</p>
               </div>
-            </div>
+            </Tag>
           );
         })}
       </div>
@@ -871,16 +874,6 @@ export function PlanGenerationWizard({
       {/* ── Passo 3: Editor com IA ─────────────────────────────────────────── */}
       {currentStep === 2 && templateRecord && (
         <div className="flex flex-col gap-4">
-          {has2prof && (
-            <div className="flex items-center gap-2 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-2.5">
-              <Sparkles className="h-4 w-4 shrink-0 text-violet-600" />
-              <p className="text-xs font-medium text-violet-700">
-                2° Professor — o assistente vai sugerir adaptações inclusivas para os campos
-                pedagógicos.
-              </p>
-            </div>
-          )}
-
           <PlanEditor
             ref={editorRef}
             key={`${templateRecord.id}-editor`}
@@ -892,6 +885,7 @@ export function PlanGenerationWizard({
             resumeDraft={!!resumeData}
             onProgressChange={(filled, total) => setIaProgress({ filled, total })}
             canUseBulkIa={canUseBulkIa}
+            has2prof={has2prof}
           />
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">

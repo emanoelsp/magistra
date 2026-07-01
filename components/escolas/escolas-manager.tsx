@@ -66,12 +66,12 @@ interface Props {
 function MagisModal({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 pt-8 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-[10vh] backdrop-blur-sm"
       style={{ background: "rgba(0,0,0,0.55)" }}
     >
       <style>{`@keyframes magis-pop { from { opacity:0;transform:scale(.85) translateY(24px)} to { opacity:1;transform:scale(1) translateY(0)} }`}</style>
       <div
-        className={`flex w-full flex-col overflow-hidden rounded-3xl shadow-2xl ${wide ? "max-w-md" : "max-w-sm"}`}
+        className={`flex w-full max-h-[80vh] flex-col overflow-hidden rounded-3xl shadow-2xl ${wide ? "max-w-md" : "max-w-sm"}`}
         style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
       >
         {children}
@@ -101,7 +101,7 @@ function MagisHeader({ onClose }: { onClose: () => void }) {
   );
 }
 
-function MagisBubble({ text, variant = "default" }: { text: string; variant?: "default" | "warning" }) {
+function MagisBubble({ text, children, variant = "default" }: { text?: string; children?: React.ReactNode; variant?: "default" | "warning" }) {
   return (
     <div className="flex items-end gap-2">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
@@ -109,7 +109,9 @@ function MagisBubble({ text, variant = "default" }: { text: string; variant?: "d
       </div>
       <div className="max-w-[82%]">
         <div className={`rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm ${variant === "warning" ? "bg-amber-50" : "bg-white"}`}>
-          <p className={`text-sm leading-snug ${variant === "warning" ? "text-amber-800" : "text-slate-800"}`}>{text}</p>
+          {children ?? (
+            <p className={`text-sm leading-snug ${variant === "warning" ? "text-amber-800" : "text-slate-800"}`}>{text}</p>
+          )}
         </div>
       </div>
     </div>
@@ -144,6 +146,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
   const [addingTurma, setAddingTurma] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingDefault, setSettingDefault] = useState(false);
+  const [confirmSemTurmas, setConfirmSemTurmas] = useState(false);
   const nomeRef = useRef<HTMLInputElement>(null);
   const turmaRef = useRef<HTMLInputElement>(null);
 
@@ -274,20 +277,36 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
     }
   }
 
-  function handleAdvanceCurso() {
+  function doAdvanceCurso() {
+    setConfirmSemTurmas(false);
+    setError(null);
     if (cursoIdx < cursos.length - 1) {
       setCursoIdx((i) => i + 1);
       setTurmaInput("");
       setDisciplinaInput("");
-      setError(null);
     } else {
-      // All cursos done
       if (!hasEscolaPadrao && createdEscola) {
         setStep("confirm_default");
       } else {
         onClose();
       }
     }
+  }
+
+  function handleAdvanceCurso() {
+    // Campos preenchidos mas não adicionados — erro explícito
+    if (turmaInput.trim() || disciplinaInput.trim()) {
+      setError("Você preencheu os campos mas não clicou em + Adicionar turma. Adicione a turma antes de continuar.");
+      turmaRef.current?.focus();
+      return;
+    }
+    // Nenhuma turma adicionada — pede confirmação
+    const jaAdicionadas = turmasAdicionadas[cursoIdx] ?? [];
+    if (jaAdicionadas.length === 0 && !confirmSemTurmas) {
+      setConfirmSemTurmas(true);
+      return;
+    }
+    doAdvanceCurso();
   }
 
   // ── Step: confirm_default ─────────────────────────────────────────────────
@@ -342,14 +361,31 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
     return (
       <MagisModal wide>
         <MagisHeader onClose={onClose} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2 max-h-56 overflow-y-auto">
-          <MagisBubble text={`Ótimo! Agora adicione as turmas e disciplinas de ${cursoLabel(curso)}. Ex: turma "1º A" com disciplina "Matemática".`} />
+        <div className="bg-[#ece5dd] px-4 py-5 space-y-2 flex-1 min-h-0 overflow-y-auto">
+          <MagisBubble>
+            <p className="text-sm leading-snug text-slate-800">
+              Ótimo! Agora adicione as turmas e disciplinas de{" "}
+              <strong className="text-violet-700">{cursoLabel(curso)}</strong>{" "}
+              em <strong className="text-violet-700">{createdEscola?.nome ?? nome}</strong>.{" "}
+              Ex: turma &ldquo;1º A&rdquo; com disciplina &ldquo;Matemática&rdquo;.
+            </p>
+          </MagisBubble>
           {jaAdicionadas.length > 0 && (
             <MagisBubble text={`Adicionadas: ${jaAdicionadas.map((t) => t.disciplina ? `${t.nome} · ${t.disciplina}` : t.nome).join(", ")} 👍`} />
           )}
+          {confirmSemTurmas && (
+            <MagisBubble variant="warning">
+              <p className="text-sm leading-snug text-amber-800">
+                Tem certeza que deseja continuar sem cadastrar turmas para{" "}
+                <strong>{cursoLabel(curso)}</strong>? Você pode adicionar depois.
+              </p>
+            </MagisBubble>
+          )}
         </div>
         <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
-          {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+          {error && (
+            <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
+          )}
           {jaAdicionadas.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {jaAdicionadas.map((t) => (
@@ -365,14 +401,14 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
                 ref={turmaRef}
                 type="text"
                 value={turmaInput}
-                onChange={(e) => setTurmaInput(e.target.value)}
+                onChange={(e) => { setTurmaInput(e.target.value); setError(null); setConfirmSemTurmas(false); }}
                 placeholder="Turma · Ex: 1º A"
                 className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
               />
               <input
                 type="text"
                 value={disciplinaInput}
-                onChange={(e) => setDisciplinaInput(e.target.value)}
+                onChange={(e) => { setDisciplinaInput(e.target.value); setError(null); }}
                 placeholder="Disciplina · Ex: Matemática"
                 className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
               />
@@ -386,12 +422,41 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
             </button>
           </form>
           <div className="flex gap-2 pt-1">
-            <button type="button" onClick={handleAdvanceCurso} className="flex-1 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-slate-400">
-              Pular
-            </button>
-            <button type="button" onClick={handleAdvanceCurso} className="flex-1 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white">
-              {isLast ? "Concluir" : `Próximo: ${cursoLabel(cursos[cursoIdx + 1])}`}
-            </button>
+            {confirmSemTurmas ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setConfirmSemTurmas(false); turmaRef.current?.focus(); }}
+                  className="flex-1 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-slate-400"
+                >
+                  Voltar e adicionar
+                </button>
+                <button
+                  type="button"
+                  onClick={doAdvanceCurso}
+                  className="flex-1 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white"
+                >
+                  Sim, continuar
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleAdvanceCurso}
+                  className="flex-1 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:border-slate-400"
+                >
+                  Pular
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAdvanceCurso}
+                  className="flex-1 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white"
+                >
+                  {isLast ? "Concluir" : `Próximo: ${cursoLabel(cursos[cursoIdx + 1])}`}
+                </button>
+              </>
+            )}
           </div>
           <p className="text-center text-xs text-slate-400">
             {cursoIdx + 1} de {cursos.length} modalidades
@@ -409,7 +474,11 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
       <MagisModal wide>
         <MagisHeader onClose={onClose} />
         <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
-          <MagisBubble text={`"${nome.trim()}" — quais modalidades você leciona nessa escola?`} />
+          <MagisBubble>
+            <p className="text-sm leading-snug text-slate-800">
+              Escola: <strong className="text-violet-700">&ldquo;{nome.trim()}&rdquo;</strong> — quais modalidades você leciona nessa escola?
+            </p>
+          </MagisBubble>
           <MagisBubble text="Pode selecionar mais de uma." />
         </div>
         <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
@@ -1414,8 +1483,8 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
                       <Building2 className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-slate-900 leading-tight">{escola.nome}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-bold text-violet-700 leading-tight">{escola.nome}</p>
                         {escolaPadrao && escola.nome === escolaPadrao && (
                           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
                             padrão

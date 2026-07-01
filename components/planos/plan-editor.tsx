@@ -111,6 +111,8 @@ interface PlanEditorProps {
   onProgressChange?: (filled: number, total: number) => void;
   /** When false, hides the "Gerar tudo" bulk IA entry banner (Mestre+ only). Default true. */
   canUseBulkIa?: boolean;
+  /** When true, renders an inline banner before the first 2° professor field. */
+  has2prof?: boolean;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -318,8 +320,23 @@ function PreviewDocView({ html, values }: PreviewDocViewProps) {
 
 // ─── PlanEditor ───────────────────────────────────────────────────────────────
 
+function is2profField(field: TemplateFieldSchema): boolean {
+  const text = `${field.key} ${field.label}`.toLowerCase();
+  return (
+    text.includes("2prof") ||
+    text.includes("2°") ||
+    text.includes("segundo prof") ||
+    text.includes("apoio") ||
+    text.includes("inclusao") ||
+    text.includes("inclusão") ||
+    text.includes("nee") ||
+    text.includes("adaptacao") ||
+    text.includes("adaptação")
+  );
+}
+
 export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function PlanEditor(
-  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange, canUseBulkIa = true },
+  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange, canUseBulkIa = true, has2prof = false },
   ref,
 ) {
   const router = useRouter();
@@ -331,6 +348,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   );
   const iaFields = schema.filter((f) => f.role === "ia_sugerida");
   const groupedIA = groupFields(iaFields);
+  const first2profFieldKey = has2prof ? iaFields.find(is2profField)?.key : undefined;
 
   const [values, setValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -569,7 +587,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   );
 
   useEffect(() => {
-    if (!metadataComplete || autoSuggestedOnce || iaFields.length === 0) return;
+    // Skip prefetch when bulk IA is available — user will generate all fields at once
+    if (!metadataComplete || autoSuggestedOnce || iaFields.length === 0 || canUseBulkIa) return;
     setAutoSuggestedOnce(true);
     const first = iaFields[0];
     if (first) void fetchSuggestionsForField(first, metadata);
@@ -1223,8 +1242,9 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                   if (f) setActiveFieldMeta({ label: f.label, role: f.role ?? "" });
                 }}
                 setFieldValue={setFieldValue}
-                fetchSuggestions={(field) => void fetchSuggestionsForField(field, metadata)}
+                fetchSuggestions={(field, bypass) => void fetchSuggestionsForField(field, metadata, undefined, bypass)}
                 hideManualFields={wizardMode}
+                first2profFieldKey={first2profFieldKey}
               />
             </div>
           )}
@@ -1465,8 +1485,9 @@ interface FormViewProps {
   suggestions: Record<string, IaSugestao[]>;
   setActiveFieldKey: (key: string) => void;
   setFieldValue: (key: string, value: string) => void;
-  fetchSuggestions: (field: TemplateFieldSchema) => void;
+  fetchSuggestions: (field: TemplateFieldSchema, bypass?: boolean) => void;
   hideManualFields?: boolean;
+  first2profFieldKey?: string;
 }
 
 function FormView({
@@ -1474,6 +1495,7 @@ function FormView({
   loadingField, metadataComplete, suggestions,
   setActiveFieldKey, setFieldValue, fetchSuggestions,
   hideManualFields = false,
+  first2profFieldKey,
 }: FormViewProps) {
   if (schema.length === 0) {
     return (
@@ -1516,18 +1538,27 @@ function FormView({
           </div>
           <div className="space-y-4">
             {fields.map((field) => (
-              <IaFieldInput
-                key={field.key}
-                field={field}
-                value={values[field.key] ?? ""}
-                active={activeFieldKey === field.key}
-                hasSuggestions={(suggestions[field.key]?.length ?? 0) > 0}
-                isLoading={loadingField === field.key}
-                metadataComplete={metadataComplete}
-                onChange={(v) => setFieldValue(field.key, v)}
-                onFocus={() => setActiveFieldKey(field.key)}
-                onSuggest={() => fetchSuggestions(field)}
-              />
+              <div key={field.key}>
+                {field.key === first2profFieldKey && (
+                  <div className="mb-3 flex items-center gap-2 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-2.5">
+                    <Sparkles className="h-4 w-4 shrink-0 text-violet-600" />
+                    <p className="text-xs font-medium text-violet-700">
+                      2° Professor — o assistente vai sugerir adaptações inclusivas para os campos pedagógicos.
+                    </p>
+                  </div>
+                )}
+                <IaFieldInput
+                  field={field}
+                  value={values[field.key] ?? ""}
+                  active={activeFieldKey === field.key}
+                  hasSuggestions={(suggestions[field.key]?.length ?? 0) > 0}
+                  isLoading={loadingField === field.key}
+                  metadataComplete={metadataComplete}
+                  onChange={(v) => setFieldValue(field.key, v)}
+                  onFocus={() => setActiveFieldKey(field.key)}
+                  onSuggest={(bypass) => fetchSuggestions(field, bypass)}
+                />
+              </div>
             ))}
           </div>
         </section>
@@ -2059,7 +2090,7 @@ interface IaFieldInputProps extends FieldInputProps {
   hasSuggestions: boolean;
   isLoading: boolean;
   metadataComplete: boolean;
-  onSuggest: () => void;
+  onSuggest: (bypass?: boolean) => void;
 }
 
 function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadataComplete, onChange, onFocus, onSuggest }: IaFieldInputProps) {
@@ -2074,7 +2105,7 @@ function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadat
         <span className="text-sm font-medium text-slate-800">{field.label}</span>
         <button
           type="button"
-          onClick={() => { onFocus(); onSuggest(); }}
+          onClick={() => { onFocus(); onSuggest(hasSuggestions); }}
           disabled={isLoading || !metadataComplete}
           className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
         >

@@ -36,6 +36,9 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
       <MobileNav
         profileIncomplete={profileIncomplete}
         canAccessHistorico={caps.canAccessHistorico}
+        canAccessEscolas={caps.canAccessEscolas}
+        canAccessBiblioteca={caps.canAccessBiblioteca}
+        canAccessRelatorios={caps.canAccessRelatorios}
       />
       <MagisToastContainer />
     </div>

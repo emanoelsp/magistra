@@ -205,14 +205,23 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     if (!containerRef.current) return;
     const container = containerRef.current;
     container.querySelectorAll("[data-mhl]").forEach((el) => {
-      (el as HTMLElement).style.removeProperty("background");
-      (el as HTMLElement).style.removeProperty("outline");
-      (el as HTMLElement).style.removeProperty("border-radius");
+      const htmlEl = el as HTMLElement;
+      // Restore original background-color that was saved before the highlight override
+      const origBg = htmlEl.getAttribute("data-orig-bg");
+      htmlEl.style.removeProperty("background");
+      if (origBg !== null && origBg !== "") htmlEl.style.backgroundColor = origBg;
+      htmlEl.removeAttribute("data-orig-bg");
+      htmlEl.style.removeProperty("outline");
+      htmlEl.style.removeProperty("border-radius");
       el.removeAttribute("data-mhl");
     });
     const field = fields.find((f) => f.key === key);
     if (!field) return;
     function highlight(el: HTMLElement) {
+      // Save original background-color before overriding so we can restore it later
+      if (!el.hasAttribute("data-orig-bg")) {
+        el.setAttribute("data-orig-bg", el.style.backgroundColor);
+      }
       el.style.background = "rgba(139,92,246,0.15)";
       el.style.outline = "2px solid rgba(139,92,246,0.5)";
       el.style.borderRadius = "2px";
@@ -929,25 +938,27 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         </div>
       ) : (
         <div className="shrink-0 border-b border-violet-100 bg-violet-50">
-          {/* Row 1: hint + zoom + save */}
-          <div className="flex items-center gap-2 px-3 pt-1.5 pb-1">
+          {/* Row 1: hint + chip color legend */}
+          <div className="flex items-center gap-3 px-3 pt-1.5 pb-1">
             <p className="flex-1 truncate text-[11px] text-violet-500">
-              Edite as células &bull; digite{" "}
+              Digite{" "}
               <code className="rounded bg-violet-100 px-1 font-mono text-[10px] text-violet-700">{`{{chave}}`}</code>{" "}
-              para posicionar um campo &bull; clique num chip para configurar &bull;{" "}
-              <span className="font-medium text-violet-700">selecione texto para converter em Campo IA</span>
+              para criar um chip &bull; selecione texto e clique em{" "}
+              <span className="font-semibold text-violet-700">Converter</span>{" "}
+              para Campo IA
             </p>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
-              <input
-                type="range" min={70} max={150} step={5} value={zoom}
-                onChange={(e) => onZoomChange?.(Number(e.target.value))}
-                className="h-1 w-20 accent-violet-600"
-              />
-              <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>
+            <div className="flex shrink-0 items-center gap-2 text-[10px]">
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "rgba(245,158,11,.4)", border: "1px solid rgba(245,158,11,.6)" }} />
+                <span className="text-amber-700 font-medium">Professor</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "rgba(139,92,246,.25)", border: "1px solid rgba(139,92,246,.5)" }} />
+                <span className="text-violet-700 font-medium">Magis</span>
+              </span>
             </div>
           </div>
-          {/* Row 2: formatting toolbar */}
+          {/* Row 2: formatting toolbar + zoom */}
           <div className="flex items-center gap-0.5 px-3 pb-1.5">
             {/* Bold / Italic */}
             <button type="button" title="Negrito (Ctrl+B)"
@@ -1012,6 +1023,16 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
               <option value="" disabled>Tam.</option>
               {TOOLBAR_SIZES.map((s) => <option key={s} value={s}>{s}pt</option>)}
             </select>
+            {/* Zoom — mesma linha que a toolbar, lado direito */}
+            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+              <ZoomIn className="h-3 w-3 shrink-0 text-slate-400" />
+              <input
+                type="range" min={50} max={150} step={5} value={zoom}
+                onChange={(e) => onZoomChange?.(Number(e.target.value))}
+                className="h-1 w-20 accent-violet-600"
+              />
+              <span className="w-7 text-right text-[10px] text-slate-500">{zoom}%</span>
+            </span>
           </div>
         </div>
       )}
@@ -1175,6 +1196,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
     try { return parseInt(localStorage.getItem("magis_panel_width") ?? "326") || 326; } catch { return 326; }
   });
   const panelResizeRef = useRef<{ dragging: boolean; startX: number; startW: number }>({ dragging: false, startX: 0, startW: 0 });
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1279px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   // Portal target for header action buttons (clock + help)
   const [headerActionsEl, setHeaderActionsEl] = useState<Element | null>(null);
@@ -1252,7 +1281,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       if (!panelResizeRef.current.dragging) return;
       e.preventDefault();
       const delta = panelResizeRef.current.startX - e.clientX;
-      const maxW = Math.floor(window.innerWidth * 0.35);
+      const maxW = 400;
       const next = Math.max(240, Math.min(maxW, panelResizeRef.current.startW + delta));
       setPanelWidth(next);
     }
@@ -2913,6 +2942,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                   onCancelPlacement={() => setPlacementKey(null)}
                   onPlace={handlePlace}
                   onChipClick={(key) => {
+                    setMobileTab("campos");
                     setRoleFilter(null);
                     setShowOnlyMissing(false);
                     setPanelCollapsed(false);
@@ -2955,7 +2985,13 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           {/* Item 16: resizable right panel */}
           <div
             ref={panelScrollRef}
-            style={panelCollapsed ? { display: "none" } : { width: panelWidth + "px", maxWidth: "33%" }}
+            style={
+              isMobile && mobileTab === "campos"
+                ? undefined
+                : panelCollapsed
+                ? { display: "none" }
+                : { width: panelWidth + "px", maxWidth: "400px" }
+            }
             className={`min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white [overflow-anchor:none] shrink-0 ${
               mobileTab === "campos" ? "flex flex-col flex-1" : "hidden xl:flex xl:flex-col"
             }`}
@@ -2990,13 +3026,13 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             type="button"
             onClick={() => {
               if (panelCollapsed) {
-                setPanelWidth(Math.floor(window.innerWidth * 0.35));
+                setPanelWidth(326);
                 setPanelCollapsed(false);
               } else {
                 setPanelCollapsed(true);
               }
             }}
-            className="flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
+            className="hidden xl:flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-slate-950 hover:text-slate-950"
             title={panelCollapsed ? "Mostrar painel de campos" : "Recolher painel de campos"}
           >
             {panelCollapsed

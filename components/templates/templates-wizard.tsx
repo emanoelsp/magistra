@@ -25,12 +25,12 @@ interface TemplatesWizardProps {
 function MagisModal({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 pt-8 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-[10vh] backdrop-blur-sm"
       style={{ background: "rgba(0,0,0,0.55)" }}
     >
       <style>{`@keyframes magis-pop { from { opacity:0;transform:scale(.85) translateY(24px)} to { opacity:1;transform:scale(1) translateY(0)} }`}</style>
       <div
-        className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl"
+        className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl shadow-2xl max-h-[80vh]"
         style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
       >
         {children}
@@ -241,8 +241,17 @@ export function TemplatesWizard({ userId, escolas, hasTemplates = false, canAsso
     return (
       <MagisModal>
         <MagisHeader onClose={handleClose} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <div className="bg-[#ece5dd] px-4 py-5 space-y-3">
           <MagisBubble text="Para reconhecer o template com 100% de fidelidade, use o arquivo .docx em branco — sem conteúdo preenchido, só a estrutura da escola." />
+          <div className="ml-9 flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3">
+            <FileText className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">Arquivo em branco</p>
+              <p className="mt-0.5 text-xs leading-snug text-amber-800">
+                Sem dados preenchidos — apenas o formulário/<br />estrutura da escola. Pode apagar os exemplos antes de subir.
+              </p>
+            </div>
+          </div>
         </div>
         <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4">
           <button
@@ -272,9 +281,9 @@ export function TemplatesWizard({ userId, escolas, hasTemplates = false, canAsso
             <MagisBubble text="Você ainda não tem escola cadastrada. Pode pular essa etapa e associar depois." />
           )}
         </div>
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        <div className="flex min-h-0 flex-1 flex-col border-t border-slate-200 bg-white">
           {escolas.length > 0 && (
-            <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4 space-y-1.5 pr-4">
               {escolas.map((escola) => (
                 <label
                   key={escola.id}
@@ -293,7 +302,7 @@ export function TemplatesWizard({ userId, escolas, hasTemplates = false, canAsso
               ))}
             </div>
           )}
-          <div className="flex gap-2 pt-1">
+          <div className="flex shrink-0 gap-2 px-5 py-4">
             <button
               type="button"
               onClick={handleEscolaPular}
@@ -332,13 +341,19 @@ export function TemplatesWizard({ userId, escolas, hasTemplates = false, canAsso
           onSubmit={(e) => { e.preventDefault(); if (nomeTemplate.trim()) setStep("arquivo"); }}
           className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3"
         >
-          <input
-            type="text"
+          <textarea
             value={nomeTemplate}
             onChange={(e) => setNomeTemplate(e.target.value)}
+            onInput={(e) => {
+              const el = e.currentTarget;
+              el.style.height = "auto";
+              el.style.height = `${el.scrollHeight}px`;
+            }}
+            rows={1}
             placeholder="Ex: Plano de aula semanal"
             autoFocus
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-950"
+            className="w-full resize-none overflow-hidden rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-950"
+            style={{ minHeight: "48px" }}
           />
           <div className="flex gap-2 pt-1">
             <button
@@ -414,6 +429,7 @@ export function TemplatesWizard({ userId, escolas, hasTemplates = false, canAsso
                 </span>
                 <span className="text-xs text-slate-400">.pdf — aceito</span>
               </div>
+              <p className="mt-2 text-[11px] font-medium text-amber-600">⚠ Em branco — sem dados preenchidos</p>
             </div>
             <input
               ref={fileInputRef}

@@ -7,6 +7,11 @@ const EMBEDDING_API_VER = "v1beta";
 const EMBEDDING_DIMENSIONS = 3072;
 const TOP_K = 5;
 
+// In-process embedding cache (5-min TTL) — avoids re-embedding identical RAG queries
+// within a warm server instance. Keys are `${taskType}::${text}`.
+const embeddingCache = new Map<string, { vector: number[]; expiresAt: number }>();
+const EMBEDDING_CACHE_TTL_MS = 5 * 60 * 1000;
+
 export interface BnccChunk {
   codigo: string;
   texto: string;
@@ -75,6 +80,10 @@ export async function embedText(
   text: string,
   taskType: EmbedTaskType = "RETRIEVAL_QUERY",
 ): Promise<number[]> {
+  const cacheKey = `${taskType}::${text}`;
+  const cached = embeddingCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) return cached.vector;
+
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
   const controller = new AbortController();
@@ -95,6 +104,7 @@ export async function embedText(
     );
     if (!res.ok) throw new Error(`Embed error ${res.status}: ${await res.text()}`);
     const data = (await res.json()) as { embedding: { values: number[] } };
+    embeddingCache.set(cacheKey, { vector: data.embedding.values, expiresAt: Date.now() + EMBEDDING_CACHE_TTL_MS });
     return data.embedding.values;
   } finally {
     clearTimeout(timeoutId);
