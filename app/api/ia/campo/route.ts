@@ -6,14 +6,23 @@ import type { ResponseSchema } from "@google/generative-ai";
 
 import { createHash } from "crypto";
 
+import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "../../../../lib/firebase/admin";
 import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 import { callAIWithFallbacks, makeGeminiModel, isQuotaError } from "../../../../lib/ai/provider";
 import { checkRateLimit } from "../../../../lib/services/rate-limit.server";
+import { PLAN_LIMITS, normalizePlanKey } from "../../../../lib/services/plan-config";
 import { validateSugestoes } from "../../../../lib/services/suggestion-validator";
 import { getPedagogicMemoryContext } from "../../../../lib/services/pedagogic-memory.server";
 import { getPlanCapabilities } from "../../../../lib/services/plan-capabilities";
-import { retrieveAllCurriculumContext, pruneCurriculumContext, buildRagQuery } from "../../../../lib/services/bncc-rag.server";
+import {
+  retrieveAllCurriculumContext,
+  pruneCurriculumContext,
+  buildRagQuery,
+  buildNamespaceLookup,
+  resolveNamespace,
+  matchComponente,
+} from "../../../../lib/services/bncc-rag.server";
 import {
   buildCacheKey,
   getCachedSuggestions,
@@ -126,7 +135,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireCurrentUserProfile();
 
-    // Rate limit: per user/hour based on plan
+    // ── Rate limit por hora (anti-burst) ──────────────────────────────────────
     const rl = await checkRateLimit(user.uid, user.plano ?? "free", "ia_campo");
     if (!rl.allowed) {
       return NextResponse.json(
@@ -136,6 +145,44 @@ export async function POST(request: Request) {
           headers: { "X-RateLimit-Reset": rl.resetAt, "X-RateLimit-Remaining": "0" },
         },
       );
+    }
+
+    // ── Teto mensal (anti-grinding) ────────────────────────────────────────────
+    const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+    const planoKey = normalizePlanKey(user.plano);
+    const limitesMes = (PLAN_LIMITS[planoKey] ?? PLAN_LIMITS.free).maxIaCampoCallsPerMonth;
+    const callsMes = user.ia_campo_mes === currentMonth ? (user.ia_campo_calls_mes ?? 0) : 0;
+    if (callsMes >= limitesMes) {
+      return NextResponse.json(
+        {
+          error: `Você atingiu o limite de ${limitesMes} sugestões este mês. Aguarde o próximo mês ou faça upgrade do plano.`,
+          quotaRemaining: 0,
+        },
+        { status: 403 },
+      );
+    }
+
+    // Incremento atômico via transação Firestore — garante contagem exata mesmo
+    // com requests concorrentes. Retorna o saldo restante após o incremento.
+    // Reset automático quando o mês muda (ia_campo_mes !== currentMonth).
+    async function atomicIncrement(): Promise<number> {
+      const db = getAdminDb();
+      const userRef = db.collection("magis_users").doc(user.uid);
+      let remaining = 0;
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(userRef);
+          const data = snap.data() ?? {};
+          const storedMonth = (data.ia_campo_mes as string | undefined) ?? "";
+          const currentCount = storedMonth === currentMonth
+            ? ((data.ia_campo_calls_mes as number | undefined) ?? 0)
+            : 0;
+          const newCount = currentCount + 1;
+          remaining = Math.max(0, limitesMes - newCount);
+          tx.update(userRef, { ia_campo_calls_mes: newCount, ia_campo_mes: currentMonth });
+        });
+      } catch { /* nunca quebra o response */ }
+      return remaining;
     }
 
     const body = (await request.json()) as {
@@ -320,6 +367,7 @@ Gere de 3 a 5 sugestões de preenchimento para o campo indicado em <campo>. Cada
 4. Se <instrucao_do_professor> estiver presente, respeite-a como prioridade máxima.
 5. SEMPRE inicie o campo "label" de cada sugestão com um verbo de ação no infinitivo (ex: Identificar, Analisar, Resolver, Produzir, Aplicar, Criar, Comparar, Explicar, Desenvolver, Elaborar, Utilizar, Observar, Registrar, Avaliar, Planejar, Discutir, Investigar, Relacionar, Selecionar, Organizar). Isso vale para todos os tipos de campo.
 6. Este plano é para o ano letivo ${anoLetivo}. As sugestões devem refletir o currículo vigente nesse ano — use as versões e atualizações mais recentes da BNCC, SAEB e currículos territoriais disponíveis.
+7. Se uma habilidade BNCC ou descritor SAEB estiver marcado com [ComponenteX → adaptável para ComponenteY], significa que é de outro componente curricular e não há equivalente exato no componente solicitado. Nesse caso: (a) preencha o campo "aviso" com UMA frase em português começando com "Não encontrei habilidade exata de [ComponenteY]." e explicando em 1 linha por que esta habilidade de [ComponenteX] se alinha ao contexto — ex: "Não encontrei habilidade exata de Matemática. EF06CI01 é de Ciências, mas se alinha porque ambas trabalham raciocínio proporcional e representação de dados."; (b) no "label", descreva a habilidade normalmente, sem repetir o aviso; (c) no "fonte", indique: "BNCC EF06CI01 (Ciências → adaptado para Matemática)". Nunca omita "aviso" quando adaptar de outro componente.
 </regras>
 <exemplos>
 ${fewShotExample}
@@ -337,8 +385,9 @@ Cada sugestão deve conter:
 - label: texto curto e pronto para inserção direta — SEMPRE inicia com verbo de ação no infinitivo — o professor clica e insere
 - descricao: justificativa pedagógica em 1-2 frases — POR QUE esta sugestão serve para este campo e contexto
 - fonte: referência curricular específica (ex: 'BNCC EF09MA06', 'Competência Geral 2', 'SAEB', 'currículo territorial', 'Avaliação formativa')
+- aviso: (OPCIONAL) presente SOMENTE quando a habilidade é adaptada de outro componente curricular (regra 7) — frase curta alertando o professor
 Responda SOMENTE com JSON válido:
-{ "raciocinio": string, "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string }] }
+{ "raciocinio": string, "sugestoes": [{ "id": string, "label": string, "descricao": string, "fonte": string, "aviso"?: string }] }
 </contrato_de_saida>`;
 
     // Enrich RAG query with already-filled ia_sugerida field values for better Pinecone recall
@@ -412,11 +461,27 @@ Responda SOMENTE com JSON válido:
       );
     }
 
+    // Componente normalizado para detectar habilidades cross-componente.
+    // Quando o RAG retorna EF06CI01 para uma aula de Matemática, marcamos explicitamente
+    // para a Magis indicar na sugestão que é uma adaptação — não uma habilidade nativa.
+    const requestedComp = matchComponente(componente);
+    const normC = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+
     const bnccContexto = curriculum.bncc.length > 0
-      ? curriculum.bncc.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
+      ? curriculum.bncc.map((c) => {
+          const isCross = requestedComp && c.componente &&
+            normC(c.componente) !== normC(requestedComp);
+          const tag = isCross ? ` [${c.componente} → adaptável para ${requestedComp}]` : "";
+          return `${c.codigo}${tag}: ${c.texto}`;
+        }).join("\n")
       : null;
     const saebContexto = curriculum.saeb.length > 0
-      ? curriculum.saeb.map((c) => `${c.codigo}: ${c.texto}`).join("\n")
+      ? curriculum.saeb.map((c) => {
+          const isCross = requestedComp && c.componente &&
+            normC(c.componente) !== normC(requestedComp);
+          const tag = isCross ? ` [${c.componente} → adaptável]` : "";
+          return `${c.codigo}${tag}: ${c.texto}`;
+        }).join("\n")
       : null;
     const estadualContexto = curriculum.curriculo_estadual.length > 0
       ? curriculum.curriculo_estadual.map((c) => c.texto).join("\n")
@@ -486,11 +551,14 @@ Responda SOMENTE com JSON válido:
             }
             const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
             const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
-            const sugestoes = validateSugestoes(raw, { templateId, fieldKey });
+            const nsLookupFb = buildNamespaceLookup(curriculum);
+            const sugestoes = validateSugestoes(raw, { templateId, fieldKey })
+              .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookupFb) }));
             if (cacheKey && sugestoes.length > 0) {
               void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
             }
-            return NextResponse.json({ sugestoes, provider: fbProvider });
+            const remaining = await atomicIncrement();
+            return NextResponse.json({ sugestoes, provider: fbProvider, quotaRemaining: remaining });
           } catch {
             return NextResponse.json({ error: "Cota da IA esgotada. Tente novamente mais tarde." }, { status: 429 });
           }
@@ -509,11 +577,14 @@ Responda SOMENTE com JSON válido:
               accumulated += text;
               controller.enqueue(encoder.encode(text));
             }
+            void atomicIncrement(); // fire-and-forget — headers já foram enviados no streaming
             // Save to cache after full generation (updates cache even on bypassCache)
             try {
               const parsed = JSON.parse(accumulated) as { sugestoes: IaSugestao[] };
               const rawSug = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
-              const sugestoes = validateSugestoes(rawSug, { templateId, fieldKey });
+              const nsLookupStr = buildNamespaceLookup(curriculum);
+              const sugestoes = validateSugestoes(rawSug, { templateId, fieldKey })
+                .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookupStr) }));
               if (cacheKey && sugestoes.length > 0) {
                 void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
               }
@@ -533,6 +604,8 @@ Responda SOMENTE com JSON válido:
           "Cache-Control": "no-cache, no-store",
           "X-Accel-Buffering": "no",
           "X-AI-Provider": "gemini",
+          // Valor pré-incremento — aproximado para streaming (headers enviados antes do fim)
+          "X-Quota-Remaining": String(Math.max(0, limitesMes - callsMes - 1)),
         },
       });
     }
@@ -582,13 +655,16 @@ Responda SOMENTE com JSON válido:
     }
 
     const rawSugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
-    const sugestoes = validateSugestoes(rawSugestoes, { templateId, fieldKey });
+    const nsLookup = buildNamespaceLookup(curriculum);
+    const sugestoes = validateSugestoes(rawSugestoes, { templateId, fieldKey })
+      .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookup) }));
 
     if (cacheKey && sugestoes.length > 0) {
       void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
     }
 
-    return NextResponse.json({ sugestoes, provider: aiProvider });
+    const remaining = await atomicIncrement();
+    return NextResponse.json({ sugestoes, provider: aiProvider, quotaRemaining: remaining });
   } catch (error) {
     console.error("[PlanoMagistra/api/ia/campo] Erro:", error);
     return NextResponse.json({ error: "Falha ao gerar sugestões para o campo." }, { status: 500 });

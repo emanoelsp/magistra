@@ -23,7 +23,7 @@ export function LandingFeatures() {
             {
               icon: Sparkles,
               title: "Magis, Assistente Pedagógica",
-              desc: "Sugere habilidades BNCC, competências SAEB e conteúdos do currículo específico de cada território — com a precisão de uma coordenadora, sem inventar códigos.",
+              desc: "Sugere habilidades BNCC, competências SAEB, competências do Currículo Digital e conteúdos do currículo específico de cada território — com a precisão de uma coordenadora, sem inventar códigos.",
               bg: "bg-violet-600",
               tag: "Magis IA",
             },
@@ -43,8 +43,8 @@ export function LandingFeatures() {
             },
             {
               icon: Shield,
-              title: "BNCC, SAEB e currículos territoriais reais",
-              desc: "Nenhum dado inventado. A Magis usa referências verificadas de fontes oficiais.",
+              title: "BNCC, SAEB, Currículo Digital e currículos territoriais",
+              desc: "Nenhum dado inventado. A Magis usa referências verificadas de fontes oficiais do MEC.",
               bg: "bg-slate-950",
               tag: null,
             },

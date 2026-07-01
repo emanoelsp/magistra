@@ -41,7 +41,7 @@ import { showMagisToast } from "../../lib/utils/magis-toast";
 interface InjectionRecord {
   sugestaoId: string;
   label: string;
-  fonte: string;
+  namespace: string;    // namespace RAG de origem — gravado no momento da injeção, não derivado depois
   injectedText: string; // label puro, sem HTML, no momento da injeção
   injectedAt: number;   // Date.now()
 }
@@ -59,7 +59,13 @@ function classifyEdit(
   if (!a) return "replaced";
   if (a === b) return "accepted";
 
-  // Levenshtein rápido para strings curtas (≤ 120 chars)
+  // Prefixo compartilhado: âncora para distinguir truncamento de rejeição.
+  // "Identificar frações" truncado de "Identificar frações equivalentes" = accepted,
+  // não replaced — o professor focou a sugestão, não a descartou.
+  const prefixLen = Math.min(a.length, b.length, 50);
+  const samePrefix = prefixLen > 8 && a.slice(0, prefixLen) === b.slice(0, prefixLen);
+
+  // Levenshtein DP para strings curtas (≤ 120 chars)
   if (a.length <= 120 && b.length <= 120) {
     const m = a.length, n = b.length;
     const dp = Array.from({ length: n + 1 }, (_, i) => i);
@@ -75,15 +81,14 @@ function classifyEdit(
     }
     const sim = 1 - (dp[n]! / Math.max(m, n));
     if (sim >= 0.88) return "accepted";
+    if (samePrefix && b.length < a.length) return "accepted"; // truncamento = foco, não rejeição
     if (b.length > a.length && sim >= 0.35) return "expanded";
     return "replaced";
   }
 
-  // Proxy para textos longos: comprimento + prefixo compartilhado
-  const prefixLen = Math.min(a.length, b.length, 50);
-  const samePrefix = a.slice(0, prefixLen) === b.slice(0, prefixLen);
+  // Proxy para textos longos: prefixo + comprimento relativo
   const lenRatio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
-  if (samePrefix && lenRatio > 0.85) return "accepted";
+  if (samePrefix && lenRatio > 0.5) return "accepted"; // cobre truncamento e pequenas edições
   if (samePrefix && b.length > a.length) return "expanded";
   return "replaced";
 }
@@ -370,6 +375,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const [loadingField, setLoadingField] = useState<string | null>(null);
   const [streamingCharCount, setStreamingCharCount] = useState(0);
   const [suggestError, setSuggestError] = useState<string | null>(null);
+  const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [planoId, setPlanoId] = useState<string | null>(initialPlanoId ?? null);
   const [autoSuggestedOnce, setAutoSuggestedOnce] = useState(false);
@@ -505,7 +511,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         });
 
         if (!res.ok) {
-          const d = (await res.json().catch(() => null)) as { error?: string } | null;
+          const d = (await res.json().catch(() => null)) as { error?: string; quotaRemaining?: number } | null;
+          if (typeof d?.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
           throw new Error(d?.error ?? "Falha ao buscar sugestões.");
         }
 
@@ -541,10 +548,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             throw new Error(parsed.error ?? parsed._streamError ?? "Erro no streaming.");
           }
           sugestoes = Array.isArray(parsed.sugestoes) ? parsed.sugestoes : [];
+          const qh = res.headers.get("X-Quota-Remaining");
+          if (qh !== null) setQuotaRemaining(Number(qh));
         } else {
-          // Cache hit — regular JSON response
-          const d = (await res.json()) as { sugestoes: IaSugestao[] };
+          // Cache hit ou fallback batch — JSON response
+          const d = (await res.json()) as { sugestoes: IaSugestao[]; quotaRemaining?: number };
           sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
+          if (typeof d.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
         }
 
         setSuggestions((prev) => ({ ...prev, [field.key]: sugestoes }));
@@ -619,7 +629,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
           }),
         });
         if (!res.ok) continue;
-        const d = (await res.json()) as { sugestoes?: IaSugestao[] };
+        const d = (await res.json()) as { sugestoes?: IaSugestao[]; quotaRemaining?: number };
+        if (typeof d.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
         const sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
         if (sugestoes.length > 0) {
           const best = sugestoes[0];
@@ -677,7 +688,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     injectionTrackRef.current.set(activeFieldKey, {
       sugestaoId: suggestion.id,
       label: suggestion.label,
-      fonte: suggestion.fonte ?? "",
+      namespace: suggestion.namespace ?? "unknown",
       injectedText,
       injectedAt: Date.now(),
     });
@@ -741,7 +752,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         return {
           fieldKey,
           sugestaoId: rec.sugestaoId,
-          fonte: rec.fonte,
+          namespace: rec.namespace,
           outcome,
           injectedLen: rec.injectedText.length,
           finalLen: finalRaw.replace(/<[^>]+>/g, "").trim().length,
@@ -1302,6 +1313,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
               onGenerate={(extraContext, bypass) => {
                 if (activeField) void fetchSuggestionsForField(activeField, metadata, extraContext, bypass);
               }}
+              quotaRemaining={quotaRemaining}
               panelClassName={mobileTab !== "magis" ? "hidden lg:flex" : ""}
               onRegenerate={
                 activeField?.role === "ia_sugerida" && activeFieldKey && values[activeFieldKey]?.trim()
@@ -1328,8 +1340,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                             ),
                           }),
                         });
-                        if (!res.ok) throw new Error("Falha na regeneração.");
-                        const d = (await res.json()) as { sugestoes?: IaSugestao[] };
+                        if (!res.ok) {
+                          const errBody = (await res.json().catch(() => null)) as { error?: string; quotaRemaining?: number } | null;
+                          if (typeof errBody?.quotaRemaining === "number") setQuotaRemaining(errBody.quotaRemaining);
+                          throw new Error(errBody?.error ?? "Falha na regeneração.");
+                        }
+                        const d = (await res.json()) as { sugestoes?: IaSugestao[]; quotaRemaining?: number };
+                        if (typeof d.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
                         const sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
                         if (sugestoes.length > 0) {
                           setSuggestions((prev) => ({ ...prev, [activeField.key]: sugestoes }));
@@ -1562,6 +1579,8 @@ interface AIChatPanelProps {
   onGenerate: (extraContext?: string, bypassCache?: boolean) => void;
   /** Fetches fresh suggestion and auto-inserts best result — one-click regenerate */
   onRegenerate?: () => void;
+  /** Saldo restante de chamadas mensais — null enquanto não há resposta da API */
+  quotaRemaining?: number | null;
   /** When provided, shows "Gerar com Magis" button for one-click bulk generation */
   onGenerateAll?: () => void;
   /** Extra class applied to the root element — used for mobile show/hide */
@@ -1591,11 +1610,13 @@ function AIChatPanel({
   onRegenerate,
   onGenerateAll,
   panelClassName,
+  quotaRemaining,
 }: AIChatPanelProps) {
   const [contextInput, setContextInput] = useState("");
   const [showGeneralCtx, setShowGeneralCtx] = useState(false);
   const [editingSugId, setEditingSugId] = useState<string | null>(null);
   const [editingSugText, setEditingSugText] = useState("");
+  const [cooldown, setCooldown] = useState(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Show only pedagogically relevant fields — skip escola, professor, recursos.
@@ -1608,16 +1629,31 @@ function AIChatPanel({
   useEffect(() => {
     setContextInput("");
     setEditingSugId(null);
+    setCooldown(0); // campo trocado — cooldown zera
   }, [activeField?.key]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [suggestions, isLoading]);
 
   function sendContext() {
-    if (!contextInput.trim()) return;
+    if (!contextInput.trim() || cooldown > 0) return;
+    setCooldown(10);
     onGenerate(contextInput.trim(), true);
     setContextInput("");
+  }
+
+  function handleRegenerate() {
+    if (cooldown > 0 || !metadataComplete) return;
+    setCooldown(10);
+    if (onRegenerate) onRegenerate();
+    else onGenerate(undefined, true);
   }
 
   return (
@@ -1842,6 +1878,12 @@ function AIChatPanel({
                         clique para editar
                       </span>
                     </button>
+                    {s.aviso && (
+                      <div className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5">
+                        <span className="mt-px shrink-0 text-amber-500" aria-hidden>⚠</span>
+                        <p className="text-[11px] leading-snug text-amber-800">{s.aviso}</p>
+                      </div>
+                    )}
                     {s.descricao && (
                       <p className="mt-0.5 text-xs text-slate-600">{s.descricao}</p>
                     )}
@@ -1879,26 +1921,22 @@ function AIChatPanel({
 
       {/* Action bar */}
       <div className="shrink-0 border-t border-slate-200 bg-white p-3 space-y-2">
-        {fieldLabel && !isLoading && onRegenerate && (
-          <button
-            type="button"
-            onClick={onRegenerate}
-            disabled={!metadataComplete}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-50 border border-violet-200 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50"
-          >
-            <WandSparkles className="h-3.5 w-3.5" />
-            Regenerar este campo
-          </button>
+        {quotaRemaining !== null && quotaRemaining !== undefined && quotaRemaining <= 5 && (
+          <p className={`text-center text-[11px] font-medium ${quotaRemaining === 0 ? "text-red-600" : "text-amber-600"}`}>
+            {quotaRemaining === 0
+              ? "Limite mensal de sugestões atingido. Retorna no próximo mês."
+              : `${quotaRemaining} sugestão${quotaRemaining === 1 ? "" : "ões"} restante${quotaRemaining === 1 ? "" : "s"} este mês`}
+          </p>
         )}
-        {fieldLabel && !isLoading && suggestions.length > 0 && !onRegenerate && (
+        {fieldLabel && !isLoading && (onRegenerate || suggestions.length > 0) && (
           <button
             type="button"
-            onClick={() => onGenerate(undefined, true)}
-            disabled={!metadataComplete}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-violet-200 py-2 text-xs font-medium text-violet-700 transition hover:bg-violet-50 disabled:opacity-50"
+            onClick={handleRegenerate}
+            disabled={!metadataComplete || cooldown > 0}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-50 border border-violet-200 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <WandSparkles className="h-3.5 w-3.5" />
-            Pedir novas sugestões à Magis
+            {cooldown > 0 ? `Aguarde ${cooldown}s…` : onRegenerate ? "Regenerar este campo" : "Pedir novas sugestões à Magis"}
           </button>
         )}
         <div className="flex gap-2">

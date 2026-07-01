@@ -2,16 +2,18 @@ export interface PlanLimits {
   maxTemplates: number;
   maxPlanosPerMonth: number;
   maxDownloadsPerPlano: number;
+  /** Teto mensal de chamadas à /api/ia/campo — protege contra grinding sustentado */
+  maxIaCampoCallsPerMonth: number;
 }
 
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
-  free:     { maxTemplates: 1,   maxPlanosPerMonth: 1,   maxDownloadsPerPlano: 1   },
-  starter:  { maxTemplates: 1,   maxPlanosPerMonth: 2,   maxDownloadsPerPlano: 1   },
-  medio:    { maxTemplates: 2,   maxPlanosPerMonth: 4,   maxDownloadsPerPlano: 3   },
-  pro:      { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 3   },
-  avancado: { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4   },
-  premium:  { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4   },
-  escola:   { maxTemplates: 999, maxPlanosPerMonth: 999, maxDownloadsPerPlano: 999 },
+  free:     { maxTemplates: 1,   maxPlanosPerMonth: 1,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 30   },
+  starter:  { maxTemplates: 1,   maxPlanosPerMonth: 2,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 100  },
+  medio:    { maxTemplates: 2,   maxPlanosPerMonth: 4,   maxDownloadsPerPlano: 3,   maxIaCampoCallsPerMonth: 200  },
+  pro:      { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 3,   maxIaCampoCallsPerMonth: 600  },
+  avancado: { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4,   maxIaCampoCallsPerMonth: 600  },
+  premium:  { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4,   maxIaCampoCallsPerMonth: 600  },
+  escola:   { maxTemplates: 999, maxPlanosPerMonth: 999, maxDownloadsPerPlano: 999, maxIaCampoCallsPerMonth: 9999 },
 };
 
 export const PLAN_PRICES_BRL: Record<string, number> = {

@@ -8,7 +8,7 @@ export function LandingJsonLd() {
     applicationCategory: "EducationalApplication",
     operatingSystem: "Web",
     description:
-      "Reduza 70% do tempo com burocracia escolar. Suba o template da sua escola, a Magis extrai a estrutura e sugere conteúdos campo a campo — BNCC, SAEB e currículo territorial.",
+      "Reduza 70% do tempo com burocracia escolar. Suba o template da sua escola, a Magis extrai a estrutura e sugere conteúdos campo a campo — BNCC, SAEB, Currículo Digital e currículo territorial.",
     offers: {
       "@type": "Offer",
       price: PLAN_PRICES_BRL.free.toString(),

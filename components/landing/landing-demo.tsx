@@ -12,8 +12,8 @@ export function LandingDemo() {
             <span className="wordmark-accent">em ação.</span>
           </h2>
           <p className="mx-auto mt-5 max-w-lg text-lg text-slate-500">
-            Foque em um campo e a Magis gera sugestões pedagógicas precisas na hora — BNCC, SAEB e currículo do seu
-            território, sem digitar nada.
+            Foque em um campo e a Magis gera sugestões pedagógicas precisas na hora — BNCC, SAEB, Currículo Digital e
+            currículo do seu território, sem digitar nada.
           </p>
         </div>
 

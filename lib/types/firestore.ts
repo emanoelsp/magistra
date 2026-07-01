@@ -61,6 +61,10 @@ export interface UserProfile {
   data_criacao?: string;
   /** Acumulado vitalício — total de minutos economizados com o Magistra. */
   tempo_economizado_min?: number;
+  /** Contador mensal de chamadas à /api/ia/campo — reset quando ia_campo_mes muda */
+  ia_campo_calls_mes?: number;
+  /** Mês de referência do contador — formato "YYYY-MM" */
+  ia_campo_mes?: string;
 }
 
 export type TemplateFillableStatus = "processando" | "pronto" | "erro";
@@ -178,6 +182,8 @@ export interface IaSugestao {
   label: string;
   descricao?: string;
   fonte?: string;
+  namespace?: string; // namespace RAG de origem: "bncc" | "saeb" | "curriculo_estadual" | "cnct" | "curriculo_digital" | "unknown"
+  aviso?: string;    // presente quando adaptado de outro componente curricular — ex: "Não encontrei habilidade exata de Matemática. EF06CI01 é de Ciências, mas se alinha porque ambas desenvolvem raciocínio proporcional."
 }
 
 export type UsageAction = "introspect" | "ia_campo" | "gerar_plano";

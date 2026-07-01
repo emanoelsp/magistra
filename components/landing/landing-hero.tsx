@@ -44,8 +44,8 @@ export function LandingHero() {
 
             <p className="anim-up d-3 max-w-xl text-lg leading-relaxed text-slate-600">
               Suba o template da sua escola e a <strong className="text-slate-900">Magis</strong> — nossa assistente
-              pedagógica — aprende a estrutura e sugere conteúdos campo a campo: BNCC, SAEB e currículos regionais
-              alinhados a cada território.
+              pedagógica — aprende a estrutura e sugere conteúdos campo a campo: BNCC, SAEB, Currículo Digital e
+              currículos regionais alinhados a cada território.
             </p>
 
             <p className="anim-up d-4 mt-4 flex max-w-xl items-center gap-2 text-sm font-semibold text-violet-700">

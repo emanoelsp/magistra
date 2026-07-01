@@ -122,7 +122,7 @@ function extractBnccCodes(query: string): string[] {
 }
 
 // ── Componente fuzzy match ────────────────────────────────────────────────────
-function matchComponente(raw: string): string | undefined {
+export function matchComponente(raw: string): string | undefined {
   if (!raw) return undefined;
   const needle = normComp(raw);
   const needleTokens = needle.split(/\s+/);
@@ -364,6 +364,47 @@ export function pruneCurriculumContext(ctx: CurriculumContext): CurriculumContex
     cnct:               ctx.cnct.slice(0, NAMESPACE_BUDGET.cnct),
     curriculo_digital:  ctx.curriculo_digital.slice(0, NAMESPACE_BUDGET.curriculo_digital),
   };
+}
+
+// ── Namespace lookup — resolve namespace via dados reais, não heurística ──────
+
+// Constrói um mapa token → namespace a partir dos chunks efetivamente recuperados.
+// Usar os dados reais elimina a dependência de regex sobre a string `fonte` do LLM.
+export function buildNamespaceLookup(ctx: CurriculumContext): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const c of ctx.bncc) {
+    if (c.codigo) m.set(c.codigo.toLowerCase(), "bncc");
+  }
+  for (const c of ctx.saeb) {
+    if (c.codigo) {
+      m.set(c.codigo.toLowerCase(), "saeb");
+      // Também indexa o código curto sem prefixo "saeb_lp_2001_" → "d01"
+      const bare = c.codigo.replace(/^saeb_[a-z]+_\d{4}_/i, "");
+      if (bare && bare !== c.codigo) m.set(bare.toLowerCase(), "saeb");
+    }
+  }
+  for (const c of ctx.curriculo_estadual) {
+    if (c.id) m.set(c.id.toLowerCase(), "curriculo_estadual");
+  }
+  for (const c of ctx.cnct) {
+    if (c.curso) m.set(c.curso.toLowerCase(), "cnct");
+    if (c.eixo) m.set(c.eixo.toLowerCase(), "cnct");
+  }
+  for (const c of ctx.curriculo_digital) {
+    if (c.area) m.set(c.area.toLowerCase(), "curriculo_digital");
+    if (c.codigo) m.set(c.codigo.toLowerCase(), "curriculo_digital");
+  }
+  return m;
+}
+
+// Resolve namespace pesquisando tokens do mapa no campo `fonte` do LLM.
+// Tokens com ≤ 3 chars são ignorados para evitar colisões ("D0" etc.).
+export function resolveNamespace(fonte: string, lookup: Map<string, string>): string {
+  const fl = fonte.toLowerCase();
+  for (const [token, ns] of lookup) {
+    if (token.length > 3 && fl.includes(token)) return ns;
+  }
+  return "unknown";
 }
 
 // ── Query builder — linguagem natural melhora alinhamento vetorial ────────────

@@ -10,7 +10,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "A Magis inventa códigos da BNCC?",
-    a: "Não. A Magis usa referências verificadas de fontes oficiais (BNCC, SAEB e currículos territoriais). Ela foi instruída a nunca reproduzir texto literal de documentos oficiais nem inventar códigos.",
+    a: "Não. A Magis usa referências verificadas de fontes oficiais (BNCC, SAEB, Currículo Digital do MEC e currículos territoriais). Ela foi instruída a nunca reproduzir texto literal de documentos oficiais nem inventar códigos.",
   },
   {
     q: "Como recebo o plano de aula pronto?",
@@ -26,7 +26,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Posso usar em qualquer estado do Brasil?",
-    a: "Sim. A Magis cobre currículos territoriais dos 27 estados, além da BNCC e do SAEB.",
+    a: "Sim. A Magis cobre currículos territoriais dos 27 estados, além da BNCC, do SAEB e do Currículo Digital do MEC.",
   },
   {
     q: "Quanto tempo leva para montar um plano?",

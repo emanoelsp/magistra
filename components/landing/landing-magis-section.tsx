@@ -54,7 +54,7 @@ export function LandingMagisSection() {
             <div className="grid w-full max-w-xs grid-cols-2 gap-3">
               {[
                 { icon: Heart, label: "Acolhedora", desc: "Linguagem próxima e empática" },
-                { icon: Brain, label: "Especialista", desc: "BNCC, SAEB e currículos territoriais" },
+                { icon: Brain, label: "Especialista", desc: "BNCC, SAEB, Currículo Digital e currículos territoriais" },
                 { icon: Shield, label: "Confiável", desc: "Zero referências inventadas" },
                 { icon: MessageCircle, label: "Contextual", desc: "Adapta ao seu perfil de turma" },
               ].map((t) => {
@@ -87,8 +87,8 @@ export function LandingMagisSection() {
             <p className="mt-6 text-lg leading-relaxed text-slate-600">
               A <strong className="text-slate-900">Magis</strong> não é apenas um gerador de texto. Ela foi treinada
               para pensar como uma coordenadora pedagógica moderna: conhece a BNCC de ponta a ponta, domina o SAEB,
-              entende o currículo específico de cada território nacional — e ainda aprende a estrutura do documento da{" "}
-              <em>sua</em> escola.
+              incorpora o Currículo Digital do MEC e entende o currículo específico de cada território nacional — e
+              ainda aprende a estrutura do documento da <em>sua</em> escola.
             </p>
             <p className="mt-4 text-lg leading-relaxed text-slate-600">
               Ela é acolhedora sem ser imprecisa, técnica sem ser fria. Cada sugestão vem contextualizada pela série,

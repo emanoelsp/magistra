@@ -7,23 +7,11 @@ import { requireCurrentUserProfile } from "../../../../lib/auth/session";
 interface FeedbackEntry {
   fieldKey: string;
   sugestaoId: string;
-  fonte: string;          // ex: "BNCC EF06MA01", "SAEB D01", "currículo territorial"
+  namespace: string;   // resolvido server-side no /api/ia/campo — "bncc" | "saeb" | "curriculo_estadual" | "cnct" | "curriculo_digital" | "unknown"
   outcome: "accepted" | "expanded" | "replaced";
   injectedLen: number;
   finalLen: number;
   msSinceInject: number;
-}
-
-// Deriva o namespace RAG a partir do campo "fonte" da sugestão.
-// Permite agrupar acurácia por corpus sem armazenar o texto bruto.
-function inferNamespace(fonte: string): string {
-  const f = fonte.toLowerCase();
-  if (/\bef\d{2}|em\d{2}/.test(f) || f.startsWith("bncc") || f.startsWith("competência")) return "bncc";
-  if (f.includes("saeb") || /d\d{2}/.test(f)) return "saeb";
-  if (f.includes("territorial") || f.includes("estadual") || f.includes("currícul")) return "curriculo_estadual";
-  if (f.includes("técnico") || f.includes("cnct") || f.includes("eixo")) return "cnct";
-  if (f.includes("digital") || f.includes("computação") || f.includes("co\d")) return "curriculo_digital";
-  return "unknown";
 }
 
 export async function POST(request: Request) {
@@ -66,8 +54,7 @@ export async function POST(request: Request) {
           template_id:       templateId,
           field_key:         entry.fieldKey,
           sugestao_id:       entry.sugestaoId,
-          fonte:             entry.fonte,
-          namespace:         inferNamespace(entry.fonte),
+          namespace:         entry.namespace ?? "unknown",
           outcome:           entry.outcome,          // "accepted" | "expanded" | "replaced"
           injected_len:      entry.injectedLen,
           final_len:         entry.finalLen,
