@@ -14,6 +14,10 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
   const user = await requireCurrentUserProfile();
   const caps = getPlanCapabilities(user.plano ?? "free");
 
+  // "Meus alunos" is unlocked when professor has at least one escola marked as "segundo_professor"
+  // Flag is denormalized to UserProfile to avoid an extra Firestore read on every page load
+  const isSegundoProfessor = user.is_segundo_professor === true;
+
   // Escola não é requisito para planos sem acesso a escolas
   const profileIncomplete = caps.canAccessEscolas
     ? !user.nome?.trim() || !user.escola_padrao?.trim()
@@ -28,6 +32,7 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
           canAccessHistorico={caps.canAccessHistorico}
           canAccessBiblioteca={caps.canAccessBiblioteca}
           canAccessRelatorios={caps.canAccessRelatorios}
+          canManageEstudantes={isSegundoProfessor}
         />
         <main className="flex flex-col flex-1 min-w-0 overflow-y-auto rounded-none border-0 bg-white p-4 shadow-none md:rounded-3xl md:border md:border-slate-200 md:p-6 md:shadow-sm pb-24 md:pb-6">
           {children}

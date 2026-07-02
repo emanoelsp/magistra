@@ -45,6 +45,8 @@ export interface TemplateFieldSchema {
   injection_pattern?: InjectionPattern;
   /** AI's confidence in this field's identity and position (0–1). Set during introspection. */
   ai_confidence?: number;
+  /** When true, the PlanEditor shows an "Importar do professor de área" button for this field. */
+  importavel_de_regente?: boolean;
 }
 
 export interface UserProfile {
@@ -65,9 +67,70 @@ export interface UserProfile {
   ia_campo_calls_mes?: number;
   /** Mês de referência do contador — formato "YYYY-MM" */
   ia_campo_mes?: string;
+  /** Denormalized flag — true when any turma has tipo_professor === "segundo_professor" */
+  is_segundo_professor?: boolean;
 }
 
 export type TemplateFillableStatus = "processando" | "pronto" | "erro";
+
+export type TemplateType = "regente" | "plano_educacional_individualizado";
+
+// ── Plano do Professor Regente (extraído de PDF/DOCX) ────────────────────────
+
+export interface PlanoRegenteConteudo {
+  objetivos?: string;
+  competencias?: string;
+  habilidades?: string;
+  conteudos?: string;
+  avaliacao?: string;
+  metodologia?: string;
+  outros?: string;
+}
+
+export interface PlanoRegenteRecord {
+  id: string;
+  user_id: string;
+  /** Componente curricular detectado pela IA */
+  disciplina: string;
+  /** Nome do professor regente (se detectado no arquivo) */
+  professor?: string;
+  arquivo_nome: string;
+  conteudo: PlanoRegenteConteudo;
+  criado_em: string;
+  /** IDs dos planos PEI que já importaram deste plano */
+  usado_por_pei?: string[];
+}
+
+/**
+ * Bloco de disciplina extraído de um plano de ensino do regente — uso em memória,
+ * sem persistência no Firestore. Um por arquivo enviado no fluxo PEI.
+ * Os valores de "turma" vêm do regente; os de "estudante" são preenchidos
+ * pelo segundo professor (com sugestão da Magis) no editor do PEI.
+ */
+export interface DisciplinaBlock {
+  /** Componente curricular (ex: "Língua Portuguesa") */
+  disciplina: string;
+  /** Nome do professor regente (pode estar vazio) */
+  professor: string;
+  /** Nome do arquivo de origem */
+  arquivo_nome: string;
+  /** Habilidades da turma extraídas do plano do regente */
+  habilidades_turma: string;
+  /** Objeto de conhecimento da turma */
+  objeto_conhecimento_turma: string;
+  /** Competências da turma */
+  competencias_turma: string;
+  /** Objetivos do regente */
+  objetivos_turma: string;
+  /** Avaliação proposta pelo regente */
+  avaliacao_turma: string;
+  /** Metodologia do regente */
+  metodologia_turma: string;
+  // Campos do estudante — preenchidos pelo 2.º professor no editor
+  habilidades_estudante: string;
+  objeto_conhecimento_estudante: string;
+  avaliacao_estudante: string;
+}
 
 export interface TemplateRecord {
   id: string;
@@ -76,6 +139,10 @@ export interface TemplateRecord {
   escola_nome?: string | null;
   tipo_plano?: string | null;
   estado?: string | null;
+  /** Drives wizard bifurcation: regente = standard flow, plano_educacional_individualizado = second-teacher flow */
+  template_type?: TemplateType;
+  /** Set by introspection when the document signals PEI traits but confidence is below threshold */
+  tipo_incerto?: boolean;
   schema_campos: TemplateFieldSchema[];
   data_criacao: string;
   metadata_padrao?: Record<string, string>;
@@ -94,6 +161,7 @@ export interface CreateTemplateInput {
   nome: string;
   escola_nome?: string;
   tipo_plano?: string;
+  template_type?: TemplateType;
   schema_campos: TemplateFieldSchema[];
   data_criacao?: string;
 }
@@ -126,6 +194,11 @@ export interface PlanoRecord {
   arquivo_fillable_url?: string;
   turma_id?: string;
   escola_id?: string;
+  /** Linked special-needs student for Plano Educacional Individualizado flows */
+  estudante_id?: string;
+  estudante_nome?: string;
+  /** Extracted text from regente teacher's plans — used as AI context for PEI field suggestions */
+  planos_regentes_contexto?: string;
   /** Pre-generated PDF stored in Vercel Blob — served via 302 redirect on download. */
   pdf_url?: string;
   pdf_status?: "gerando" | "pronto" | "erro";
@@ -143,6 +216,9 @@ export interface CreatePlanoInput {
   arquivo_fillable_url?: string;
   turma_id?: string;
   escola_id?: string;
+  estudante_id?: string;
+  estudante_nome?: string;
+  planos_regentes_contexto?: string;
 }
 
 export interface UpdatePlanoInput {
@@ -151,6 +227,9 @@ export interface UpdatePlanoInput {
   status?: PlanoStatus;
   arquivo_url?: string;
   arquivo_fillable_url?: string;
+  estudante_id?: string;
+  estudante_nome?: string;
+  planos_regentes_contexto?: string;
 }
 
 export interface DashboardStats {
@@ -168,6 +247,9 @@ export interface TemplateOption {
   escolaNome?: string | null;
   tipoPlano?: string | null;
   estado?: string | null;
+  template_type?: TemplateType;
+  /** True when introspection detected PEI signals but confidence is below threshold — UI should ask professor to confirm. */
+  tipo_incerto?: boolean;
   campoCount: number;
   criadoEm: string;
   schema_campos?: TemplateFieldSchema[];
@@ -299,6 +381,8 @@ export interface CursoEntry {
   nome?: string; // nome do curso — obrigatório para medio_tecnico e superior
 }
 
+export type TipoProfessor = "segundo_professor" | "professor_area";
+
 export interface EscolaRecord {
   id: string;
   user_id: string;
@@ -314,10 +398,74 @@ export interface TurmaRecord {
   escola_nome: string;
   nome: string;
   ano_letivo: number;
+  tipo_professor?: TipoProfessor;
   disciplina?: string;
   tipo_curso?: CursoTipo;
   curso_nome?: string;
   grupo_id?: string | null;
   tem_aluno_especial?: boolean;
   criado_em: string;
+}
+
+// ── Estudante (Segundo Professor / Plano Educacional Individualizado) ─────────
+
+/** Support intensity level per PAEE classification */
+export type NivelSuporte = "baixo" | "medio" | "alto";
+
+/**
+ * Represents a special-needs student whose PEI is managed by a segundo professor.
+ * Stored in the `magis_estudantes` Firestore collection.
+ */
+export interface EstudanteRecord {
+  id: string;
+  user_id: string;              // UID do segundo professor responsável
+  nome: string;
+  data_nascimento?: string;     // ISO date string "YYYY-MM-DD"
+  escola_id?: string;
+  escola_nome?: string;
+  turma_id?: string;
+  turma_nome?: string;
+  /** CID-10 code(s) — e.g. "F84.0", "F70" */
+  cid?: string;
+  /** Free-text clinical/pedagogical diagnosis */
+  diagnostico?: string;
+  /** Educational needs description (NEE) */
+  necessidades?: string;
+  nivel_suporte?: NivelSuporte;
+  /** Predictive skills targeted in this student's PEI */
+  habilidades_preditoras?: string[];
+  observacoes?: string;
+  criado_em: string;
+  atualizado_em?: string;
+}
+
+export interface CreateEstudanteInput {
+  user_id: string;
+  nome: string;
+  data_nascimento?: string;
+  escola_id?: string;
+  escola_nome?: string;
+  turma_id?: string;
+  turma_nome?: string;
+  cid?: string;
+  diagnostico?: string;
+  necessidades?: string;
+  nivel_suporte?: NivelSuporte;
+  habilidades_preditoras?: string[];
+  observacoes?: string;
+}
+
+export interface UpdateEstudanteInput {
+  nome?: string;
+  data_nascimento?: string;
+  escola_id?: string;
+  escola_nome?: string;
+  turma_id?: string;
+  turma_nome?: string;
+  cid?: string;
+  diagnostico?: string;
+  necessidades?: string;
+  nivel_suporte?: NivelSuporte;
+  habilidades_preditoras?: string[];
+  observacoes?: string;
 }

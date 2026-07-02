@@ -7,12 +7,12 @@ export interface PlanLimits {
 }
 
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
-  free:     { maxTemplates: 1,   maxPlanosPerMonth: 1,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 30   },
-  starter:  { maxTemplates: 1,   maxPlanosPerMonth: 2,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 100  },
-  medio:    { maxTemplates: 2,   maxPlanosPerMonth: 4,   maxDownloadsPerPlano: 3,   maxIaCampoCallsPerMonth: 200  },
-  pro:      { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 3,   maxIaCampoCallsPerMonth: 600  },
-  avancado: { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4,   maxIaCampoCallsPerMonth: 600  },
-  premium:  { maxTemplates: 5,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4,   maxIaCampoCallsPerMonth: 600  },
+  free:     { maxTemplates: 1,   maxPlanosPerMonth: 1,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 50   },
+  starter:  { maxTemplates: 2,   maxPlanosPerMonth: 2,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 130  },
+  medio:    { maxTemplates: 3,   maxPlanosPerMonth: 4,   maxDownloadsPerPlano: 3,   maxIaCampoCallsPerMonth: 270  },
+  pro:      { maxTemplates: 8,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 3,   maxIaCampoCallsPerMonth: 675  },
+  avancado: { maxTemplates: 8,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4,   maxIaCampoCallsPerMonth: 675  },
+  premium:  { maxTemplates: 8,   maxPlanosPerMonth: 10,  maxDownloadsPerPlano: 4,   maxIaCampoCallsPerMonth: 675  },
   escola:   { maxTemplates: 999, maxPlanosPerMonth: 999, maxDownloadsPerPlano: 999, maxIaCampoCallsPerMonth: 9999 },
 };
 

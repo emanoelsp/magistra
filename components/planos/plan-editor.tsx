@@ -12,7 +12,9 @@ import {
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  BookOpen,
   CheckCircle2,
+  ChevronDown,
   Download,
   Eye,
   EyeOff,
@@ -22,11 +24,13 @@ import {
   Save,
   Send,
   Sparkles,
+  UserCheck,
   WandSparkles,
 } from "lucide-react";
 
 import { planosService } from "../../lib/services/firestore/planos.service";
-import type { IaSugestao, TemplateFieldSchema, TemplateRecord } from "../../lib/types/firestore";
+import type { DisciplinaBlock, EstudanteRecord, IaSugestao, PlanoRegenteRecord, TemplateFieldSchema, TemplateRecord } from "../../lib/types/firestore";
+import { PlanoRegentePicker } from "./plano-regente-picker";
 import { RichTextEditor } from "../editor/RichTextEditor";
 import {
   DownloadLimitDialog,
@@ -113,6 +117,18 @@ interface PlanEditorProps {
   canUseBulkIa?: boolean;
   /** When true, renders an inline banner before the first 2° professor field. */
   has2prof?: boolean;
+  /** Structured plans extracted from regente PDFs — enables field-level import picker. */
+  planosRegente?: PlanoRegenteRecord[];
+  /** Called when the library changes (plan added/removed from picker). */
+  onPlanosRegenteChange?: (planos: PlanoRegenteRecord[]) => void;
+  /** Name of the linked special-needs student — shown in the Magis context panel. */
+  estudanteNome?: string;
+  /** Full student record — used to build rich AI context for PEI suggestions. */
+  estudante?: EstudanteRecord;
+  /** Discipline blocks extracted from regente PDFs in the wizard flow — auto-populates SEÇÃO 3 for PEI templates. */
+  disciplinaBlocks?: DisciplinaBlock[];
+  /** Called when the user edits a discipline block field (updates the block state in the parent). */
+  onDisciplinaBlocksChange?: (blocks: DisciplinaBlock[]) => void;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -336,11 +352,55 @@ function is2profField(field: TemplateFieldSchema): boolean {
 }
 
 export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function PlanEditor(
-  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange, canUseBulkIa = true, has2prof = false },
+  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange, canUseBulkIa = true, has2prof = false, planosRegente: initialPlanosRegente = [], onPlanosRegenteChange, estudanteNome, estudante, disciplinaBlocks: initialDisciplinaBlocks = [], onDisciplinaBlocksChange },
   ref,
 ) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Picker state
+  const [planosRegente, setPlanosRegenteState] = useState<PlanoRegenteRecord[]>(initialPlanosRegente);
+  const [pickerField, setPickerField] = useState<TemplateFieldSchema | null>(null);
+  const [usedPlanIds, setUsedPlanIds] = useState<Set<string>>(new Set());
+
+  // Discipline blocks state (PEI — SEÇÃO 3)
+  const [disciplinaBlocks, setDisciplinaBlocksState] = useState<DisciplinaBlock[]>(initialDisciplinaBlocks);
+  function updateDisciplinaBlocks(next: DisciplinaBlock[]) {
+    setDisciplinaBlocksState(next);
+    onDisciplinaBlocksChange?.(next);
+  }
+  // Updates a single disc_* value in both `values` and the disciplinaBlocks state
+  function setDiscValue(key: string, value: string) {
+    setValues((prev) => ({ ...prev, [key]: value }));
+    const match = /^disc_(\d+)_(habilidades_estudante|objeto_conhecimento_estudante|avaliacao_estudante)$/.exec(key);
+    if (match) {
+      const idx = Number(match[1]);
+      const field = match[2] as keyof DisciplinaBlock;
+      setDisciplinaBlocksState((prev) => {
+        const next = [...prev];
+        if (next[idx]) next[idx] = { ...next[idx]!, [field]: value };
+        return next;
+      });
+    }
+  }
+  const isPeiTemplate = template.template_type === "plano_educacional_individualizado";
+
+  function updatePlanosRegente(next: PlanoRegenteRecord[]) {
+    setPlanosRegenteState(next);
+    onPlanosRegenteChange?.(next);
+  }
+
+  // Build a concise student profile string for the AI when a full record is available.
+  const estudanteContexto: string | undefined = estudante
+    ? [
+        estudante.nome ? `Estudante: ${estudante.nome}` : null,
+        estudante.cid ? `CID: ${estudante.cid}` : null,
+        estudante.diagnostico ? `Diagnóstico: ${estudante.diagnostico}` : null,
+        estudante.necessidades ? `Necessidades: ${estudante.necessidades}` : null,
+        estudante.nivel_suporte ? `Nível de suporte: ${estudante.nivel_suporte}` : null,
+        estudante.observacoes ? `Observações: ${estudante.observacoes}` : null,
+      ].filter(Boolean).join(" | ") || undefined
+    : undefined;
 
   const schema = template.schema_campos ?? [];
   const manualFields = schema.filter(
@@ -374,6 +434,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       if (ef) {
         merged[ef.key] = initialValues[ef.key] || template.escola_nome || "";
       }
+    }
+    // Discipline block student fields — initialize from passed blocks (empty by default)
+    for (let i = 0; i < initialDisciplinaBlocks.length; i++) {
+      const b = initialDisciplinaBlocks[i]!;
+      merged[`disc_${i}_habilidades_estudante`] = b.habilidades_estudante;
+      merged[`disc_${i}_objeto_conhecimento_estudante`] = b.objeto_conhecimento_estudante;
+      merged[`disc_${i}_avaliacao_estudante`] = b.avaliacao_estudante;
     }
     return merged;
   });
@@ -523,6 +590,8 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             metadata: meta,
             ...(combinedContext ? { extraContext: combinedContext } : {}),
             ...(Object.keys(filledValues).length > 0 ? { currentValues: filledValues } : {}),
+            ...(estudanteNome ? { estudanteNome } : {}),
+            ...(estudanteContexto ? { estudanteContexto } : {}),
             stream: true,
             ...(bypassCache ? { bypassCache: true } : {}),
           }),
@@ -1243,6 +1312,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 }}
                 setFieldValue={setFieldValue}
                 fetchSuggestions={(field, bypass) => void fetchSuggestionsForField(field, metadata, undefined, bypass)}
+                onImportFromRegente={template.template_type === "plano_educacional_individualizado" ? (field) => setPickerField(field) : undefined}
                 hideManualFields={wizardMode}
                 first2profFieldKey={first2profFieldKey}
               />
@@ -1387,6 +1457,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                   ? () => void generateAllIaFields()
                   : undefined
               }
+              estudanteNome={estudanteNome}
             />
           )
         )}
@@ -1448,6 +1519,19 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       </div>
     </div>
 
+    {/* SEÇÃO 3 — Blocos de Disciplina (PEI com planos do regente importados) */}
+    {isPeiTemplate && disciplinaBlocks.length > 0 && (
+      <DisciplineBlocksSection
+        blocks={disciplinaBlocks}
+        values={values}
+        setDiscValue={setDiscValue}
+        templateId={template.id}
+        estudante={estudante}
+        estudanteNome={estudanteNome}
+        estudanteContexto={estudanteContexto}
+      />
+    )}
+
     {downloadToast && (
       <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 shadow-lg">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600">
@@ -1468,9 +1552,248 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         onClose={() => setDownloadLimitInfo(null)}
       />
     )}
+
+    {/* Picker de plano do regente */}
+    {pickerField && (
+      <PlanoRegentePicker
+        field={pickerField}
+        planos={planosRegente}
+        usedPlanIds={usedPlanIds}
+        planoPeiId={planoId ?? undefined}
+        onPlanosChange={updatePlanosRegente}
+        onSelect={(plano, conteudo) => {
+          // Pre-fill the field with the extracted regente content
+          setFieldValue(pickerField.key, conteudo);
+          setUsedPlanIds((prev) => new Set([...prev, plano.id]));
+
+          // Build focused context for Magis to adapt
+          const regenteCtxForField = [
+            `Plano do prof. regente (${plano.disciplina}${plano.professor ? ` — ${plano.professor}` : ""}):\n${conteudo}`,
+          ].join("\n\n");
+
+          // Trigger AI suggestions so Magis adapts the imported content for the student
+          void fetchSuggestionsForField(pickerField, metadata, regenteCtxForField, true);
+          setActiveFieldKey(pickerField.key);
+        }}
+        onClose={() => setPickerField(null)}
+      />
+    )}
     </>
   );
 });
+
+// ─── DisciplineBlocksSection — SEÇÃO 3 do PEI, um card por disciplina ────────
+
+interface DisciplineBlockCardProps {
+  block: DisciplinaBlock;
+  index: number;
+  values: Record<string, string>;
+  setDiscValue: (key: string, value: string) => void;
+  templateId: string;
+  estudante?: EstudanteRecord;
+  estudanteNome?: string;
+  estudanteContexto?: string;
+}
+
+function DisciplineBlockCard({ block, index, values, setDiscValue, templateId, estudante, estudanteNome, estudanteContexto }: DisciplineBlockCardProps) {
+  const [expanded, setExpanded] = useState(true);
+  const [loadingAdapt, setLoadingAdapt] = useState(false);
+
+  const habilEstudante = values[`disc_${index}_habilidades_estudante`] ?? "";
+  const objetoEstudante = values[`disc_${index}_objeto_conhecimento_estudante`] ?? "";
+  const avaliacaoEstudante = values[`disc_${index}_avaliacao_estudante`] ?? "";
+
+  async function generateAdaptations() {
+    setLoadingAdapt(true);
+    try {
+      const regenteCtx = [
+        block.habilidades_turma && `Habilidades da turma:\n${block.habilidades_turma}`,
+        block.objeto_conhecimento_turma && `Objeto de conhecimento da turma:\n${block.objeto_conhecimento_turma}`,
+        block.competencias_turma && `Competências:\n${block.competencias_turma}`,
+        block.avaliacao_turma && `Avaliação proposta pela turma:\n${block.avaliacao_turma}`,
+        block.objetivos_turma && `Objetivos:\n${block.objetivos_turma}`,
+      ].filter(Boolean).join("\n\n");
+
+      const extraCtx = [
+        `Componente curricular: ${block.disciplina}`,
+        block.professor && `Professor regente: ${block.professor}`,
+        "",
+        "Planejamento do professor regente para a turma:",
+        regenteCtx,
+        estudanteContexto ? `\nPerfil do estudante:\n${estudanteContexto}` : "",
+      ].filter((x) => x !== undefined).join("\n");
+
+      const fields: Array<{ key: string; label: string; group: string }> = [
+        { key: `disc_${index}_habilidades_estudante`, label: `Habilidades adaptadas — ${block.disciplina}`, group: "habilidades" },
+        { key: `disc_${index}_objeto_conhecimento_estudante`, label: `Objeto de conhecimento adaptado — ${block.disciplina}`, group: "conteudos" },
+        { key: `disc_${index}_avaliacao_estudante`, label: `Avaliação adaptada — ${block.disciplina}`, group: "avaliacao" },
+      ];
+
+      for (const f of fields) {
+        const res = await fetch("/api/ia/campo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            templateId,
+            fieldKey: f.key,
+            fieldLabel: f.label,
+            fieldGroup: f.group,
+            metadata: { disciplina: block.disciplina, ...(estudanteNome ? { estudante: estudanteNome } : {}) },
+            extraContext: extraCtx,
+            isPeiTemplate: true,
+            stream: false,
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { sugestoes?: Array<{ texto: string }> };
+          if (data.sugestoes?.[0]?.texto) {
+            setDiscValue(f.key, data.sugestoes[0].texto);
+          }
+        }
+      }
+    } catch {
+      // silent
+    } finally {
+      setLoadingAdapt(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition"
+      >
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100">
+          <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-slate-900">{block.disciplina}</p>
+          {block.professor && <p className="text-xs text-slate-400">Prof. {block.professor}</p>}
+        </div>
+        <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{block.arquivo_nome}</span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-100 px-4 pb-4 space-y-4">
+          {/* TURMA — read-only from regente */}
+          <div className="mt-3 space-y-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Da turma — plano do regente</p>
+            {block.habilidades_turma && (
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-slate-400 mb-1">Habilidades</p>
+                <p className="text-xs text-slate-700 whitespace-pre-line">{block.habilidades_turma}</p>
+              </div>
+            )}
+            {block.objeto_conhecimento_turma && (
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-slate-400 mb-1">Objeto de conhecimento</p>
+                <p className="text-xs text-slate-700 whitespace-pre-line">{block.objeto_conhecimento_turma}</p>
+              </div>
+            )}
+            {block.competencias_turma && (
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-slate-400 mb-1">Competências</p>
+                <p className="text-xs text-slate-700 whitespace-pre-line">{block.competencias_turma}</p>
+              </div>
+            )}
+          </div>
+
+          {/* ESTUDANTE — editable + AI */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Para o estudante — adaptar</p>
+              <button
+                type="button"
+                onClick={() => void generateAdaptations()}
+                disabled={loadingAdapt}
+                className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-700 disabled:opacity-50"
+              >
+                {loadingAdapt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                Sugerir adaptações
+              </button>
+            </div>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase text-slate-400">Habilidades adaptadas</span>
+              <textarea
+                rows={3}
+                value={habilEstudante}
+                onChange={(e) => setDiscValue(`disc_${index}_habilidades_estudante`, e.target.value)}
+                placeholder="Habilidades adaptadas para o estudante nesta disciplina…"
+                className="mt-1 w-full resize-y rounded-xl border border-slate-300 px-3 py-2 text-xs outline-none focus:border-indigo-500"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase text-slate-400">Objeto de conhecimento adaptado</span>
+              <textarea
+                rows={2}
+                value={objetoEstudante}
+                onChange={(e) => setDiscValue(`disc_${index}_objeto_conhecimento_estudante`, e.target.value)}
+                placeholder="Objeto de conhecimento para o estudante…"
+                className="mt-1 w-full resize-y rounded-xl border border-slate-300 px-3 py-2 text-xs outline-none focus:border-indigo-500"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase text-slate-400">Avaliação adaptada</span>
+              <textarea
+                rows={2}
+                value={avaliacaoEstudante}
+                onChange={(e) => setDiscValue(`disc_${index}_avaliacao_estudante`, e.target.value)}
+                placeholder="Critérios e instrumentos avaliativos para o estudante…"
+                className="mt-1 w-full resize-y rounded-xl border border-slate-300 px-3 py-2 text-xs outline-none focus:border-indigo-500"
+              />
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface DisciplineBlocksSectionProps {
+  blocks: DisciplinaBlock[];
+  values: Record<string, string>;
+  setDiscValue: (key: string, value: string) => void;
+  templateId: string;
+  estudante?: EstudanteRecord;
+  estudanteNome?: string;
+  estudanteContexto?: string;
+}
+
+function DisciplineBlocksSection({ blocks, values, setDiscValue, templateId, estudante, estudanteNome, estudanteContexto }: DisciplineBlocksSectionProps) {
+  return (
+    <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 space-y-3">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 shadow-sm">
+          <BookOpen className="h-4 w-4 text-white" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-900">Seção 3 — Planos de Ensino por Disciplina</p>
+          <p className="text-xs text-indigo-600">
+            {blocks.length} disciplina{blocks.length !== 1 ? "s" : ""} importada{blocks.length !== 1 ? "s" : ""} — blocos pré-preenchidos do regente · adapte para o estudante
+          </p>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {blocks.map((block, i) => (
+          <DisciplineBlockCard
+            key={`${block.disciplina}-${i}`}
+            block={block}
+            index={i}
+            values={values}
+            setDiscValue={setDiscValue}
+            templateId={templateId}
+            estudante={estudante}
+            estudanteNome={estudanteNome}
+            estudanteContexto={estudanteContexto}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ─── FormView (fallback when no DOCX) ─────────────────────────────────────────
 
@@ -1486,6 +1809,7 @@ interface FormViewProps {
   setActiveFieldKey: (key: string) => void;
   setFieldValue: (key: string, value: string) => void;
   fetchSuggestions: (field: TemplateFieldSchema, bypass?: boolean) => void;
+  onImportFromRegente?: (field: TemplateFieldSchema) => void;
   hideManualFields?: boolean;
   first2profFieldKey?: string;
 }
@@ -1494,6 +1818,7 @@ function FormView({
   schema, manualFields, groupedIA, values, activeFieldKey,
   loadingField, metadataComplete, suggestions,
   setActiveFieldKey, setFieldValue, fetchSuggestions,
+  onImportFromRegente,
   hideManualFields = false,
   first2profFieldKey,
 }: FormViewProps) {
@@ -1557,6 +1882,7 @@ function FormView({
                   onChange={(v) => setFieldValue(field.key, v)}
                   onFocus={() => setActiveFieldKey(field.key)}
                   onSuggest={(bypass) => fetchSuggestions(field, bypass)}
+                  onImportFromRegente={onImportFromRegente ? () => onImportFromRegente(field) : undefined}
                 />
               </div>
             ))}
@@ -1616,6 +1942,8 @@ interface AIChatPanelProps {
   onGenerateAll?: () => void;
   /** Extra class applied to the root element — used for mobile show/hide */
   panelClassName?: string;
+  /** When set, renders a 2º Professor student context bubble at the top of the panel. */
+  estudanteNome?: string;
 }
 
 // Keys whose values are not relevant for pedagogical content generation.
@@ -1642,6 +1970,7 @@ function AIChatPanel({
   onGenerateAll,
   panelClassName,
   quotaRemaining,
+  estudanteNome,
 }: AIChatPanelProps) {
   const [contextInput, setContextInput] = useState("");
   const [showGeneralCtx, setShowGeneralCtx] = useState(false);
@@ -1688,23 +2017,23 @@ function AIChatPanel({
   }
 
   return (
-    <div className={`flex w-full shrink-0 flex-col border-t border-slate-200 bg-slate-50 lg:w-80 lg:border-l lg:border-t-0 xl:w-96 ${panelClassName ?? ""}`}>
-      {/* Header */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-600">
+    <div className={`flex w-full shrink-0 flex-col border-t border-slate-200 lg:w-80 lg:border-l lg:border-t-0 xl:w-96 ${panelClassName ?? ""}`}>
+      {/* Header — WhatsApp style */}
+      <div className="flex shrink-0 items-center gap-3 bg-violet-700 px-4 py-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/20">
           <Sparkles className="h-4 w-4 text-white" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-slate-900">Magis — Assistente Pedagógica</p>
-          <p className="truncate text-xs text-slate-500">
-            {fieldLabel ? `Campo: ${fieldLabel}` : "Selecione um campo"}
+          <p className="text-sm font-semibold text-white">Magis</p>
+          <p className="truncate text-xs text-violet-200">
+            {fieldLabel ? fieldLabel : "Selecione um campo"}
           </p>
         </div>
-        {isLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-500" aria-label="Gerando sugestões" role="status" />}
+        {isLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-white/70" aria-label="Gerando sugestões" role="status" />}
       </div>
 
-      {/* Chat area */}
-      <div className="flex-1 space-y-3 overflow-y-auto p-4" aria-live="polite" aria-label="Painel de sugestões da Magis">
+      {/* Chat area — WhatsApp background */}
+      <div className="flex-1 space-y-3 overflow-y-auto bg-[#ece5dd] p-4" aria-live="polite" aria-label="Painel de sugestões da Magis">
         {/* Magis intro — always visible */}
         <ChatBubble>
           <p className="text-sm text-slate-700">
@@ -1722,6 +2051,21 @@ function AIChatPanel({
             </button>
           )}
         </ChatBubble>
+
+        {/* 2º Professor student context bubble */}
+        {estudanteNome && (
+          <ChatBubble>
+            <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-indigo-700">
+              <UserCheck className="h-3.5 w-3.5" />
+              Plano Educacional Individualizado
+            </p>
+            <p className="text-xs text-slate-700">
+              Estou adaptando este plano para o(a) estudante{" "}
+              <span className="font-semibold">{estudanteNome}</span>.
+              Minhas sugestões vão priorizar adaptações inclusivas e estratégias de Educação Especial.
+            </p>
+          </ChatBubble>
+        )}
 
         {/* Context bubble */}
         {(metaEntries.length > 0 || templateTipoPlano || templateEstado) && (
@@ -2091,9 +2435,10 @@ interface IaFieldInputProps extends FieldInputProps {
   isLoading: boolean;
   metadataComplete: boolean;
   onSuggest: (bypass?: boolean) => void;
+  onImportFromRegente?: () => void;
 }
 
-function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadataComplete, onChange, onFocus, onSuggest }: IaFieldInputProps) {
+function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadataComplete, onChange, onFocus, onSuggest, onImportFromRegente }: IaFieldInputProps) {
   useEffect(() => {
     if (active && !hasSuggestions && !isLoading && metadataComplete) onSuggest();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2103,15 +2448,29 @@ function IaFieldInput({ field, value, active, hasSuggestions, isLoading, metadat
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-slate-800">{field.label}</span>
-        <button
-          type="button"
-          onClick={() => { onFocus(); onSuggest(hasSuggestions); }}
-          disabled={isLoading || !metadataComplete}
-          className="flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />}
-          {hasSuggestions ? "Nova sugestão" : "Perguntar à Magis"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {field.importavel_de_regente && onImportFromRegente && (
+            <button
+              type="button"
+              onClick={() => { onFocus(); onImportFromRegente(); }}
+              disabled={isLoading}
+              title="Gerar sugestão com base nos planos dos professores de área"
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <BookOpen className="h-3 w-3" />}
+              Importar do regente
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => { onFocus(); onSuggest(hasSuggestions); }}
+            disabled={isLoading || !metadataComplete}
+            className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />}
+            {hasSuggestions ? "Nova sugestão" : "Perguntar à Magis"}
+          </button>
+        </div>
       </div>
       <RichTextEditor value={value} onChange={onChange} onFocus={onFocus} active={active} placeholder={metadataComplete ? 'Clique em "Perguntar à Magis" ou escreva aqui…' : "Preencha os dados fixos para habilitar a Magis…"} />
     </div>

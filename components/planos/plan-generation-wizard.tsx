@@ -21,7 +21,7 @@ import { PlanEditor, type PlanEditorHandle } from "./plan-editor";
 import { DocxPreview } from "./docx-preview";
 import { planosService } from "../../lib/services/firestore/planos.service";
 import { templatesService } from "../../lib/services/firestore/templates.service";
-import type { TemplateFieldSchema, TemplateOption, TemplateRecord, TurmaRecord } from "../../lib/types/firestore";
+import type { DisciplinaBlock, EstudanteRecord, PlanoRegenteRecord, TemplateFieldSchema, TemplateOption, TemplateRecord, TurmaRecord } from "../../lib/types/firestore";
 import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
 import {
   DownloadLimitDialog,
@@ -62,6 +62,16 @@ interface PlanGenerationWizardProps {
   initialEscolaId?: string;
   initialTurmaId?: string;
   initialDisciplina?: string;
+  initialEstudanteId?: string;
+  initialEstudanteNome?: string;
+  /** Full student record — used to build estudanteContexto for AI. */
+  initialEstudante?: EstudanteRecord;
+  /** Full list of students — enables the student shortcut in the metadata bar for PEI templates. */
+  estudantes?: EstudanteRecord[];
+  /** Structured regente plans extracted from PDFs — available for field-level import in PEI editor (library picker). */
+  initialPlanosRegente?: PlanoRegenteRecord[];
+  /** Discipline blocks extracted directly from uploaded PDFs in the wizard flow — pre-fills SEÇÃO 3 in PEI editor. */
+  disciplinaBlocks?: DisciplinaBlock[];
   /** When false, hides turma shortcut bar (Explorador/Educador). Default true. */
   canAssociateEscola?: boolean;
   /** When false, hides "Gerar tudo" bulk IA banner (Explorador/Educador). Default true. */
@@ -129,6 +139,12 @@ export function PlanGenerationWizard({
   initialEscolaId,
   initialTurmaId,
   initialDisciplina,
+  initialEstudanteId,
+  initialEstudanteNome,
+  initialEstudante,
+  estudantes = [],
+  initialPlanosRegente,
+  disciplinaBlocks,
   canAssociateEscola = true,
   canUseBulkIa = true,
 }: PlanGenerationWizardProps) {
@@ -166,6 +182,10 @@ export function PlanGenerationWizard({
   const [downloadLimitInfo, setDownloadLimitInfo] = useState<DownloadLimitInfo | null>(null);
   const [selectedTurmaId, setSelectedTurmaId] = useState(initialTurmaId ?? "");
   const [selectedEscolaId, setSelectedEscolaId] = useState(initialEscolaId ?? "");
+  const [selectedEstudanteId, setSelectedEstudanteId] = useState(initialEstudanteId ?? "");
+  const [selectedEstudanteNome, setSelectedEstudanteNome] = useState(initialEstudanteNome ?? "");
+  const [selectedEstudante, setSelectedEstudante] = useState<EstudanteRecord | undefined>(initialEstudante);
+  const [planosRegente, setPlanosRegente] = useState<PlanoRegenteRecord[]>(initialPlanosRegente ?? []);
   const [turmaFilterEscolaId, setTurmaFilterEscolaId] = useState("");
 
   const [editingField, setEditingField] = useState<{ key: string; label: string; type: string } | null>(null);
@@ -351,6 +371,9 @@ export function PlanGenerationWizard({
             schema_campos: selectedTemplate.schema_campos,
             turma_id: selectedTurmaId || undefined,
             escola_id: selectedEscolaId || undefined,
+            estudante_id: selectedEstudanteId || undefined,
+            estudante_nome: selectedEstudanteNome || undefined,
+            planos_regentes_contexto: planosRegente.length > 0 ? planosRegente.map((p) => p.id).join(",") : undefined,
           });
       void doSave
         .then((id) => { if (typeof id === "string") setSavedPlanoId(id); })
@@ -387,6 +410,9 @@ export function PlanGenerationWizard({
           schema_campos: selectedTemplate.schema_campos,
           turma_id: selectedTurmaId || undefined,
           escola_id: selectedEscolaId || undefined,
+          estudante_id: selectedEstudanteId || undefined,
+          estudante_nome: selectedEstudanteNome || undefined,
+          planos_regentes_contexto: planosRegente.length > 0 ? planosRegente.map((p) => p.id).join(",") : undefined,
         });
     void doSave
       .then((id) => { if (typeof id === "string") setSavedPlanoId(id); })
@@ -756,6 +782,43 @@ export function PlanGenerationWizard({
               </div>
             )}
 
+            {/* Atalho estudante — só em templates PEI quando há estudantes carregados */}
+            {selectedTemplate?.template_type === "plano_educacional_individualizado" && estudantes.length > 0 && (
+              <div className="border-b border-slate-100 bg-white px-4 py-3">
+                <p className="mb-2 text-xs font-semibold text-indigo-600">⚡ Atalho — selecionar estudante</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <select
+                      value={selectedEstudanteId}
+                      onChange={(e) => {
+                        const est = estudantes.find((s) => s.id === e.target.value);
+                        setSelectedEstudanteId(e.target.value);
+                        setSelectedEstudanteNome(est?.nome ?? "");
+                        setSelectedEstudante(est);
+                      }}
+                      aria-label="Selecionar estudante"
+                      className="appearance-none rounded-xl border border-indigo-300 bg-white py-1.5 pl-3 pr-7 text-sm text-slate-700 outline-none focus:border-indigo-500"
+                    >
+                      <option value="">Selecione o estudante…</option>
+                      {estudantes.map((s) => (
+                        <option key={s.id} value={s.id}>{s.nome}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-indigo-400" />
+                  </div>
+                  {selectedEstudanteId && (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedEstudanteId(""); setSelectedEstudanteNome(""); setSelectedEstudante(undefined); }}
+                      className="text-xs text-indigo-500 hover:text-indigo-700"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Chat area — campos preenchidos em um único balão */}
             {(() => {
               const filledFields = chatFields.filter((f) => (committedValues[f.key] ?? "").trim());
@@ -886,6 +949,11 @@ export function PlanGenerationWizard({
             onProgressChange={(filled, total) => setIaProgress({ filled, total })}
             canUseBulkIa={canUseBulkIa}
             has2prof={has2prof}
+            planosRegente={planosRegente.length > 0 ? planosRegente : undefined}
+            onPlanosRegenteChange={setPlanosRegente}
+            disciplinaBlocks={disciplinaBlocks}
+            estudanteNome={selectedEstudanteNome || undefined}
+            estudante={selectedEstudante}
           />
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">

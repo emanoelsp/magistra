@@ -9,7 +9,51 @@ import { getUserPlanosComNome, getUserTemplateOptions } from "../../../lib/servi
 import { getUserEscolas, getUserTurmas } from "../../../lib/services/firestore/escolas.server";
 import { getLimitsStatus } from "../../../lib/services/limits";
 import { getPlanCapabilities } from "../../../lib/services/plan-capabilities";
+import type { EstudanteRecord, PlanoRegenteConteudo, PlanoRegenteRecord } from "../../../lib/types/firestore";
+
+async function getUserEstudantes(uid: string): Promise<EstudanteRecord[]> {
+  const db = getAdminDb();
+  const snap = await db.collection("magis_estudantes").where("user_id", "==", uid).get();
+  return snap.docs
+    .map((doc) => {
+      const d = doc.data();
+      return {
+        id: doc.id,
+        user_id: uid,
+        nome: typeof d.nome === "string" ? d.nome : "",
+        nivel_suporte: typeof d.nivel_suporte === "string" ? d.nivel_suporte as EstudanteRecord["nivel_suporte"] : undefined,
+        cid: typeof d.cid === "string" ? d.cid : undefined,
+        diagnostico: typeof d.diagnostico === "string" ? d.diagnostico : undefined,
+        necessidades: typeof d.necessidades === "string" ? d.necessidades : undefined,
+        escola_nome: typeof d.escola_nome === "string" ? d.escola_nome : undefined,
+        turma_nome: typeof d.turma_nome === "string" ? d.turma_nome : undefined,
+        observacoes: typeof d.observacoes === "string" ? d.observacoes : undefined,
+        criado_em: typeof d.criado_em === "string" ? d.criado_em : new Date().toISOString(),
+      } satisfies EstudanteRecord;
+    })
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
 import { LimitActions } from "../../../components/dashboard/limit-actions";
+
+async function getUserPlanosRegente(uid: string): Promise<PlanoRegenteRecord[]> {
+  const db = getAdminDb();
+  const snap = await db.collection("magis_planos_regente").where("user_id", "==", uid).get();
+  return snap.docs
+    .map((doc) => {
+      const d = doc.data();
+      return {
+        id: doc.id,
+        user_id: uid,
+        disciplina: typeof d.disciplina === "string" ? d.disciplina : "Não identificado",
+        professor: typeof d.professor === "string" ? d.professor : undefined,
+        arquivo_nome: typeof d.arquivo_nome === "string" ? d.arquivo_nome : "",
+        conteudo: (typeof d.conteudo === "object" && d.conteudo !== null ? d.conteudo : {}) as PlanoRegenteConteudo,
+        criado_em: typeof d.criado_em === "string" ? d.criado_em : "",
+        usado_por_pei: Array.isArray(d.usado_por_pei) ? (d.usado_por_pei as string[]) : [],
+      } satisfies PlanoRegenteRecord;
+    })
+    .sort((a, b) => a.disciplina.localeCompare(b.disciplina, "pt-BR"));
+}
 
 export const dynamic = "force-dynamic";
 
@@ -25,22 +69,27 @@ const PLAN_LABELS: Record<string, string> = {
 
 
 interface GerarPlanoPageProps {
-  searchParams: Promise<{ template?: string; resume?: string }>;
+  searchParams: Promise<{ template?: string; resume?: string; estudante_id?: string; estudante_nome?: string }>;
 }
 
 export default async function GerarPlanoPage({ searchParams }: GerarPlanoPageProps) {
   const user = await requireCurrentUserProfile();
 
-  const [templates, params, limits, planosResult, turmas, escolas] = await Promise.all([
+  const userPlanoRaw = (user.plano ?? "free").trim().toLowerCase();
+  const caps = getPlanCapabilities(userPlanoRaw);
+
+  const [templates, params, limits, planosResult, turmas, escolas, estudantes, planosRegente] = await Promise.all([
     getUserTemplateOptions(user.uid),
     searchParams,
     getLimitsStatus(user.uid, user.plano),
     getUserPlanosComNome(user.uid, 5, 1),
     getUserTurmas(user.uid),
     getUserEscolas(user.uid),
+    caps.canManageEstudantes ? getUserEstudantes(user.uid) : Promise.resolve([]),
+    caps.canManageEstudantes ? getUserPlanosRegente(user.uid) : Promise.resolve([]),
   ]);
 
-  const { template: preSelectedId, resume: resumeId } = params;
+  const { template: preSelectedId, resume: resumeId, estudante_id: peiEstudanteId, estudante_nome: peiEstudanteNome } = params;
 
   let resumeData: ResumeData | undefined;
   if (resumeId) {
@@ -69,8 +118,6 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
   const planoLabel = PLAN_LABELS[limits.plano] ?? limits.plano;
   const canCreatePlano = limits.canCreatePlano;
   const planos = planosResult.items;
-  const userPlano = (user.plano ?? "free").trim().toLowerCase();
-  const caps = getPlanCapabilities(userPlano);
 
   return (
     <div className="space-y-6">
@@ -147,10 +194,15 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
           templates={templates}
           escolas={caps.canAssociateEscola ? escolas : []}
           turmas={caps.canAssociateEscola ? turmas : []}
+          estudantes={estudantes}
+          canManageEstudantes={caps.canManageEstudantes}
+          planosRegente={planosRegente}
           limitsStatus={limits}
           recentPlanos={planos}
           resumeData={resumeData}
           preSelectedTemplateId={resumeData ? undefined : preSelectedId}
+          peiEstudanteId={peiEstudanteId}
+          peiEstudanteNome={peiEstudanteNome}
           hasTemplates={templates.length > 0}
           hasPlanos={planos.length > 0}
           canAssociateEscola={caps.canAssociateEscola}

@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     const data: Record<string, unknown> = { user_id: user.uid, nome, criado_em };
     if (Array.isArray(body.cursos) && body.cursos.length > 0) data.cursos = body.cursos;
     await ref.set(data);
+
     return NextResponse.json({ ok: true, id: ref.id, nome, cursos: data.cursos ?? [], criado_em });
   } catch {
     return NextResponse.json({ error: "Falha ao criar escola." }, { status: 500 });

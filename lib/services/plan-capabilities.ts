@@ -18,6 +18,8 @@ export interface PlanCapabilities {
   canAccessBiblioteca: boolean;
   /** Relatórios de uso (Regente only) */
   canAccessRelatorios: boolean;
+  /** Meus estudantes page — Plano Educacional Individualizado CRUD (Mestre+) */
+  canManageEstudantes: boolean;
 }
 
 function normalizePlan(plano: string): string {
@@ -37,6 +39,7 @@ export function getPlanCapabilities(plano: string): PlanCapabilities {
       canAssociateEscola: false,
       canAccessBiblioteca: false,
       canAccessRelatorios: false,
+      canManageEstudantes: false,
     };
   }
 
@@ -50,6 +53,7 @@ export function getPlanCapabilities(plano: string): PlanCapabilities {
       canAssociateEscola: false,
       canAccessBiblioteca: false,
       canAccessRelatorios: false,
+      canManageEstudantes: false,
     };
   }
 
@@ -63,6 +67,7 @@ export function getPlanCapabilities(plano: string): PlanCapabilities {
       canAssociateEscola: true,
       canAccessBiblioteca: false,
       canAccessRelatorios: false,
+      canManageEstudantes: true,
     };
   }
 
@@ -75,6 +80,7 @@ export function getPlanCapabilities(plano: string): PlanCapabilities {
     canAssociateEscola: true,
     canAccessBiblioteca: true,
     canAccessRelatorios: true,
+    canManageEstudantes: true,
   };
 }
 

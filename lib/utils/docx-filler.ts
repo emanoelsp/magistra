@@ -2891,19 +2891,41 @@ export function fillDocx(
   }
 
   // Item 3 — Boolean flags for conditional blocks (orphan node elimination).
-  // For every schema field X, auto-generates has_X = true/false based on whether
-  // the field has content. Use {{#has_X}}...{{/has_X}} in the Word template to
-  // conditionally show/hide entire sections (e.g. a heading + its value block),
-  // and {{^has_X}}...{{/has_X}} for the empty case. This prevents orphaned
-  // section headings when the field is not filled in.
-  //
-  // Example Word markup:
-  //   {{#has_adaptacao}}
-  //   Adaptações necessárias: {{adaptacao}}
-  //   {{/has_adaptacao}}
   for (const field of schema) {
     const val = data[field.key];
     data[`has_${field.key}`] = typeof val === "string" ? val.trim().length > 0 : !!val;
+  }
+
+  // PEI discipline blocks — collect disc_{i}_* keys into a `disciplinas` array for
+  // {{#disciplinas}} loop syntax in manually-prepared fillable templates.
+  // Each entry exposes: disciplina, professor, habilidades_turma, objeto_conhecimento_turma,
+  // competencias_turma, avaliacao_turma, habilidades_estudante, objeto_conhecimento_estudante,
+  // avaliacao_estudante.
+  const discKeys = Object.keys(values).filter((k) => /^disc_\d+_/.test(k));
+  if (discKeys.length > 0) {
+    const maxIdx = discKeys.reduce((m, k) => {
+      const n = Number(/^disc_(\d+)_/.exec(k)?.[1] ?? -1);
+      return n > m ? n : m;
+    }, -1);
+    const disciplinas: Record<string, string>[] = [];
+    for (let i = 0; i <= maxIdx; i++) {
+      const prefix = `disc_${i}_`;
+      const entry: Record<string, string> = {};
+      for (const k of discKeys) {
+        if (k.startsWith(prefix)) {
+          entry[k.slice(prefix.length)] = (values[k] ?? "").trim();
+        }
+      }
+      if (Object.keys(entry).length > 0) disciplinas.push(entry);
+    }
+    if (disciplinas.length > 0) {
+      (data as Record<string, unknown>).disciplinas = disciplinas;
+    }
+    // Also expose each disc_* key as a flat placeholder so templates can use
+    // {{disc_0_habilidades}} directly without needing the {{#disciplinas}} loop.
+    for (const k of discKeys) {
+      (data as Record<string, unknown>)[k] = (values[k] ?? "").trim();
+    }
   }
 
   doc.render(data);

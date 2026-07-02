@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Building2, ChevronDown, GraduationCap, Loader2, Search, SlidersHorizontal, Users, X } from "lucide-react";
+import { Building2, ChevronDown, GraduationCap, Loader2, Search, SlidersHorizontal, UserCheck, Users, X } from "lucide-react";
 
 interface EscolaOption {
   id: string;
@@ -23,13 +23,21 @@ interface TurmaOption {
   tipo_curso?: string;
 }
 
+interface EstudanteOption {
+  id: string;
+  nome: string;
+}
+
 interface HistoricoFiltersProps {
   tab: "planos" | "templates";
   templates: TemplateOption[];
   turmas?: TurmaOption[];
   escolas?: EscolaOption[];
+  estudantes?: EstudanteOption[];
   /** When false, hides escola/curso/turma filters (Educador plan has no org access). */
   canShowOrgFilters?: boolean;
+  /** When true, shows the estudante filter (Mestre+ plans). */
+  canShowEstudanteFilter?: boolean;
 }
 
 const STATUS_OPTIONS = [
@@ -58,7 +66,9 @@ export function HistoricoFilters({
   templates,
   turmas = [],
   escolas = [],
+  estudantes = [],
   canShowOrgFilters = true,
+  canShowEstudanteFilter = false,
 }: HistoricoFiltersProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -72,6 +82,7 @@ export function HistoricoFilters({
   const [turmaId, setTurmaId] = useState(searchParams.get("turmaId") ?? "");
   const [escolaId, setEscolaId] = useState(searchParams.get("escolaId") ?? "");
   const [cursoTipo, setCursoTipo] = useState(searchParams.get("cursoTipo") ?? "");
+  const [estudanteId, setEstudanteId] = useState(searchParams.get("estudanteId") ?? "");
 
   // Escola selecionada e seus cursos
   const selectedEscola = escolas.find((e) => e.id === escolaId);
@@ -93,6 +104,7 @@ export function HistoricoFilters({
       turmaId: string;
       escolaId: string;
       cursoTipo: string;
+      estudanteId: string;
     }) => {
       const sp = new URLSearchParams();
       sp.set("tab", tab);
@@ -104,6 +116,7 @@ export function HistoricoFilters({
       if (next.turmaId) sp.set("turmaId", next.turmaId);
       if (next.escolaId) sp.set("escolaId", next.escolaId);
       if (next.cursoTipo) sp.set("cursoTipo", next.cursoTipo);
+      if (next.estudanteId) sp.set("estudanteId", next.estudanteId);
       startTransition(() => { router.push(`/dashboard/historico?${sp.toString()}`); });
     },
     [router, tab],
@@ -113,30 +126,30 @@ export function HistoricoFilters({
     setQ(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      pushUrl({ q: value, status, fillableStatus, templateId, turmaId, escolaId, cursoTipo });
+      pushUrl({ q: value, status, fillableStatus, templateId, turmaId, escolaId, cursoTipo, estudanteId });
     }, 350);
   }
 
   function handleStatusChange(value: string) {
     setStatus(value);
-    pushUrl({ q, status: value, fillableStatus, templateId, turmaId, escolaId, cursoTipo });
+    pushUrl({ q, status: value, fillableStatus, templateId, turmaId, escolaId, cursoTipo, estudanteId });
   }
 
   function handleFillableStatusChange(value: string) {
     setFillableStatus(value);
-    pushUrl({ q, status, fillableStatus: value, templateId, turmaId, escolaId, cursoTipo });
+    pushUrl({ q, status, fillableStatus: value, templateId, turmaId, escolaId, cursoTipo, estudanteId });
   }
 
   function handleTemplateChange(value: string) {
     setTemplateId(value);
-    pushUrl({ q, status, fillableStatus, templateId: value, turmaId, escolaId, cursoTipo });
+    pushUrl({ q, status, fillableStatus, templateId: value, turmaId, escolaId, cursoTipo, estudanteId });
   }
 
   function handleEscolaChange(value: string) {
     setEscolaId(value);
     setCursoTipo("");
     setTurmaId("");
-    pushUrl({ q, status, fillableStatus, templateId, turmaId: "", escolaId: value, cursoTipo: "" });
+    pushUrl({ q, status, fillableStatus, templateId, turmaId: "", escolaId: value, cursoTipo: "", estudanteId });
   }
 
   function handleCursoChange(value: string) {
@@ -144,12 +157,17 @@ export function HistoricoFilters({
     const turmaStillValid = !value || turmas.some((t) => t.id === turmaId && t.tipo_curso === value);
     const nextTurmaId = turmaStillValid ? turmaId : "";
     if (!turmaStillValid) setTurmaId("");
-    pushUrl({ q, status, fillableStatus, templateId, turmaId: nextTurmaId, escolaId, cursoTipo: value });
+    pushUrl({ q, status, fillableStatus, templateId, turmaId: nextTurmaId, escolaId, cursoTipo: value, estudanteId });
   }
 
   function handleTurmaChange(value: string) {
     setTurmaId(value);
-    pushUrl({ q, status, fillableStatus, templateId, turmaId: value, escolaId, cursoTipo });
+    pushUrl({ q, status, fillableStatus, templateId, turmaId: value, escolaId, cursoTipo, estudanteId });
+  }
+
+  function handleEstudanteChange(value: string) {
+    setEstudanteId(value);
+    pushUrl({ q, status, fillableStatus, templateId, turmaId, escolaId, cursoTipo, estudanteId: value });
   }
 
   function clearAll() {
@@ -160,10 +178,11 @@ export function HistoricoFilters({
     setTurmaId("");
     setEscolaId("");
     setCursoTipo("");
+    setEstudanteId("");
     startTransition(() => { router.push(`/dashboard/historico?tab=${tab}&page=1`); });
   }
 
-  const hasFilters = !!(q || status || fillableStatus || templateId || turmaId || escolaId || cursoTipo);
+  const hasFilters = !!(q || status || fillableStatus || templateId || turmaId || escolaId || cursoTipo || estudanteId);
 
   useEffect(() => {
     setQ(searchParams.get("q") ?? "");
@@ -173,6 +192,7 @@ export function HistoricoFilters({
     setTurmaId(searchParams.get("turmaId") ?? "");
     setEscolaId(searchParams.get("escolaId") ?? "");
     setCursoTipo(searchParams.get("cursoTipo") ?? "");
+    setEstudanteId(searchParams.get("estudanteId") ?? "");
   }, [searchParams]);
 
   return (
@@ -300,6 +320,25 @@ export function HistoricoFilters({
             <option value="">Todos os templates</option>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>{t.nome}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        </div>
+      )}
+
+      {/* Estudante — Mestre+ planos only */}
+      {tab === "planos" && canShowEstudanteFilter && estudantes.length > 0 && (
+        <div className="relative max-w-52">
+          <UserCheck className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <select
+            value={estudanteId}
+            onChange={(e) => handleEstudanteChange(e.target.value)}
+            aria-label="Filtrar por estudante"
+            className={SELECT_ICON_CLS}
+          >
+            <option value="">Todos os estudantes</option>
+            {estudantes.map((e) => (
+              <option key={e.id} value={e.id}>{e.nome}</option>
             ))}
           </select>
           <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />

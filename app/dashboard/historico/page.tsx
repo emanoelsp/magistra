@@ -11,6 +11,7 @@ import {
   Lock,
   Pencil,
   Sparkles,
+  UserCheck,
 } from "lucide-react";
 
 import { redirect } from "next/navigation";
@@ -21,6 +22,8 @@ import {
 } from "../../../lib/services/firestore/dashboard.server";
 import { getUserEscolas, getUserTurmas } from "../../../lib/services/firestore/escolas.server";
 import { getPlanCapabilities } from "../../../lib/services/plan-capabilities";
+import { getAdminDb } from "../../../lib/firebase/admin";
+import type { EstudanteRecord } from "../../../lib/types/firestore";
 import { HistoricoTabs } from "./historico-tabs";
 import { HistoricoFilters } from "./historico-filters";
 import { DownloadPlanButton } from "../../../components/planos/download-plan-button";
@@ -48,7 +51,7 @@ function formatDate(iso: string) {
 function pageUrl(
   tab: string,
   page: number,
-  filters: { q?: string; status?: string; templateId?: string; turmaId?: string; escolaId?: string; cursoTipo?: string; fillableStatus?: string },
+  filters: { q?: string; status?: string; templateId?: string; turmaId?: string; escolaId?: string; cursoTipo?: string; fillableStatus?: string; estudanteId?: string },
 ) {
   const sp = new URLSearchParams({ tab, page: String(page) });
   if (filters.q) sp.set("q", filters.q);
@@ -58,7 +61,14 @@ function pageUrl(
   if (filters.escolaId) sp.set("escolaId", filters.escolaId);
   if (filters.cursoTipo) sp.set("cursoTipo", filters.cursoTipo);
   if (filters.fillableStatus) sp.set("fillableStatus", filters.fillableStatus);
+  if (filters.estudanteId) sp.set("estudanteId", filters.estudanteId);
   return `/dashboard/historico?${sp.toString()}`;
+}
+
+async function getUserEstudantes(uid: string): Promise<EstudanteRecord[]> {
+  const db = getAdminDb();
+  const snap = await db.collection("magis_estudantes").where("user_id", "==", uid).orderBy("nome").get();
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as EstudanteRecord));
 }
 
 interface PageProps {
@@ -72,6 +82,7 @@ interface PageProps {
     escolaId?: string;
     cursoTipo?: string;
     fillableStatus?: string;
+    estudanteId?: string;
   }>;
 }
 
@@ -120,17 +131,19 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
     escolaId,
     cursoTipo,
     fillableStatus,
+    estudanteId,
   } = await searchParams;
 
   const tab = tabParam === "templates" ? "templates" : "planos";
   const page = Math.max(1, Number(pageParam) || 1);
-  const filters = { q, status: statusParam, templateId, turmaId, escolaId }; // cursoTipo é UI-only
+  const filters = { q, status: statusParam, templateId, turmaId, escolaId, estudanteId }; // cursoTipo é UI-only
 
-  const [planosResult, templates, turmas, escolas] = await Promise.all([
+  const [planosResult, templates, turmas, escolas, estudantes] = await Promise.all([
     getUserPlanosComNome(user.uid, PAGE_SIZE, page, filters),
     getUserTemplateOptions(user.uid),
     caps.historicoWithOrg ? getUserTurmas(user.uid) : Promise.resolve([]),
     caps.historicoWithOrg ? getUserEscolas(user.uid) : Promise.resolve([]),
+    caps.canManageEstudantes ? getUserEstudantes(user.uid) : Promise.resolve([]),
   ]);
 
   const planos = planosResult.items;
@@ -153,8 +166,8 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
     ? planos
     : filteredTemplates.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const filtersWithCurso = { ...filters, cursoTipo, fillableStatus };
-  const hasFilters = !!(q || statusParam || templateId || turmaId || escolaId || cursoTipo || fillableStatus);
+  const filtersWithCurso = { ...filters, cursoTipo, fillableStatus, estudanteId };
+  const hasFilters = !!(q || statusParam || templateId || turmaId || escolaId || cursoTipo || fillableStatus || estudanteId);
 
   return (
     <div className="space-y-6">
@@ -200,7 +213,9 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
             nome: e.nome,
             cursos: e.cursos?.map((c) => ({ tipo: c.tipo, label: c.nome ?? c.tipo })),
           }))}
+          estudantes={estudantes.map((e) => ({ id: e.id, nome: e.nome }))}
           canShowOrgFilters={caps.historicoWithOrg}
+          canShowEstudanteFilter={caps.canManageEstudantes}
         />
       </Suspense>
 
@@ -275,6 +290,12 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                           <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${status.cls}`}>
                             {status.label}
                           </span>
+                          {plano.estudante_nome && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+                              <UserCheck className="h-3 w-3" />
+                              {plano.estudante_nome}
+                            </span>
+                          )}
                           {previousYear && planoYear && (
                             <span className="inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-700">
                               Ano {planoYear}

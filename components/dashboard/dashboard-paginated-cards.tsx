@@ -201,6 +201,7 @@ export interface PlanoDashboardItem {
   data_geracao: string;
   template_nome: string;
   template_deletado: boolean;
+  estudante_nome?: string;
 }
 
 export function PlanosPaginatedList({ items, pageSize = DEFAULT_PAGE_SIZE }: { items: PlanoDashboardItem[]; pageSize?: number }) {
@@ -238,6 +239,11 @@ export function PlanosPaginatedList({ items, pageSize = DEFAULT_PAGE_SIZE }: { i
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${status.cls}`}>
                       {status.label}
                     </span>
+                    {plano.estudante_nome && (
+                      <span className="inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                        PEI · {plano.estudante_nome}
+                      </span>
+                    )}
                     {plano.template_deletado && (
                       <span className="inline-block rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-500">
                         template excluído

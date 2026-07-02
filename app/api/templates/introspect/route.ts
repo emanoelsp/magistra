@@ -71,6 +71,42 @@ async function extractFileText(file: File): Promise<string> {
   return data.text;
 }
 
+// ── Template type detection ──────────────────────────────────────────────────
+// Deterministic vocabulary scan — no AI call needed. Each pattern scores 1 point.
+// ≥3 → plano_educacional_individualizado (high confidence)
+// 1–2 → plano_educacional_individualizado (tipo_incerto = true, UI will confirm)
+// 0 → regente
+
+const PEI_SIGNALS: RegExp[] = [
+  /segundo\s+professor/i,
+  /plano\s+educacional\s+individualizado/i,
+  /\bPEI\b/,
+  /habilidades\s+preditoras/i,
+  /p[úu]blico[\s-]alvo\s+da\s+educa[çc][ãa]o\s+especial/i,
+  /\bPAEE\b/,
+  /adequa[çc][õo]es?\s+curriculares/i,
+  /necessidades\s+educacionais\s+especiais/i,
+  /\bNEE\b/,
+  /\bCID[-\s]?10\b|\bCID[-\s]?[A-Z]\d{2}/i,
+  /apoio\s+especializado/i,
+  /adequa[çc][ãa]o\s+de\s+acessibilidade/i,
+  /transtorno\s+do\s+espectro\s+autista|\bTEA\b/,
+  /\blaudo\s+m[eé]dico\b/i,
+  /defici[êe]ncia\s+(visual|auditiva|intelectual|f[íi]sica)/i,
+];
+
+function detectTemplateType(text: string): {
+  template_type: import("../../../../lib/types/firestore").TemplateType;
+  tipo_incerto: boolean;
+} {
+  const score = PEI_SIGNALS.filter((re) => re.test(text)).length;
+  if (score === 0) return { template_type: "regente", tipo_incerto: false };
+  return {
+    template_type: "plano_educacional_individualizado",
+    tipo_incerto: score < 3,
+  };
+}
+
 // ── Response schema — restringe role, group e type aos valores válidos ─────
 const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
   type: SchemaType.OBJECT,
@@ -526,6 +562,10 @@ export async function POST(request: Request) {
     promptParts.push(`<documento>`, pdfText, `</documento>`);
     const promptStr = promptParts.join("\n");
 
+    // Detect template type before the AI call (deterministic, free)
+    const { template_type, tipo_incerto } = detectTemplateType(pdfText);
+    console.info(`[introspect] template_type="${template_type}" tipo_incerto=${tipo_incerto}`);
+
     const { text: raw, provider: aiProvider, format: aiFormat } = await generateSchema(promptStr);
 
     let schema: import("../../../../lib/types/firestore").TemplateFieldSchema[];
@@ -584,6 +624,8 @@ export async function POST(request: Request) {
       schema_campos: schemaSanitized,
       fillable_status: "processando",
       campos_baixa_confianca: camposBaixaConfianca,
+      template_type,
+      tipo_incerto,
     });
 
     console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: schema.length, provider: aiProvider, format: aiFormat });
@@ -625,7 +667,7 @@ export async function POST(request: Request) {
       await db.collection("magis_templates").doc(templateId).update({ fillable_status: "erro" }).catch(() => {});
     }
 
-    return NextResponse.json({ ok: true, schema, campos_baixa_confianca: camposBaixaConfianca });
+    return NextResponse.json({ ok: true, schema, campos_baixa_confianca: camposBaixaConfianca, template_type, tipo_incerto });
   } catch (error) {
     console.error("Erro na rota /api/templates/introspect:", error);
     const msg = (error as Error)?.message ?? "";

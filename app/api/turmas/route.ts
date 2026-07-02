@@ -11,6 +11,7 @@ export async function POST(request: Request) {
       escola_nome?: string;
       nome?: string;
       ano_letivo?: number;
+      tipo_professor?: string;
       disciplina?: string;
       tipo_curso?: string;
       curso_nome?: string;
@@ -23,7 +24,12 @@ export async function POST(request: Request) {
     const nome = body.nome?.trim() ?? "";
     const ano_letivo =
       typeof body.ano_letivo === "number" ? body.ano_letivo : new Date().getFullYear();
-    const disciplina = body.disciplina?.trim() || undefined;
+    const tipo_professor =
+      body.tipo_professor === "segundo_professor" || body.tipo_professor === "professor_area"
+        ? body.tipo_professor
+        : undefined;
+    const disciplina =
+      tipo_professor === "segundo_professor" ? undefined : body.disciplina?.trim() || undefined;
 
     if (!escola_id || !nome) {
       return NextResponse.json(
@@ -48,12 +54,17 @@ export async function POST(request: Request) {
       ano_letivo,
       criado_em,
     };
+    if (tipo_professor) data.tipo_professor = tipo_professor;
     if (disciplina) data.disciplina = disciplina;
     if (body.tipo_curso) data.tipo_curso = body.tipo_curso;
     if (body.curso_nome) data.curso_nome = body.curso_nome;
     if (body.grupo_id) data.grupo_id = body.grupo_id;
     if (body.tem_aluno_especial) data.tem_aluno_especial = true;
     await ref.set(data);
+
+    if (tipo_professor === "segundo_professor") {
+      await db.collection("magis_users").doc(user.uid).update({ is_segundo_professor: true });
+    }
 
     return NextResponse.json({ ok: true, id: ref.id, ...data });
   } catch {

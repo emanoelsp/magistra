@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpen, Building2, Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2, LogOut } from "lucide-react";
+import { BarChart3, BookOpen, Building2, Clock, FileText, LayoutDashboard, LifeBuoy, Sparkles, User2, LogOut, UserCheck } from "lucide-react";
 
 interface SidebarProps {
   profileIncomplete?: boolean;
@@ -10,6 +10,7 @@ interface SidebarProps {
   canAccessHistorico?: boolean;
   canAccessBiblioteca?: boolean;
   canAccessRelatorios?: boolean;
+  canManageEstudantes?: boolean;
 }
 
 export function Sidebar({
@@ -18,19 +19,21 @@ export function Sidebar({
   canAccessHistorico = true,
   canAccessBiblioteca = false,
   canAccessRelatorios = false,
+  canManageEstudantes = false,
 }: SidebarProps) {
   const pathname = usePathname();
 
   const links = [
-    { href: "/dashboard",              label: "Visão geral",         icon: LayoutDashboard, show: true },
-    { href: "/dashboard/escolas",      label: "Minhas escolas",      icon: Building2,       show: canAccessEscolas },
-    { href: "/dashboard/templates",    label: "Meus templates",      icon: FileText,        show: true },
-    { href: "/dashboard/gerar",        label: "Gerar plano de aula", icon: Sparkles,        show: true },
-    { href: "/dashboard/historico",    label: "Histórico",           icon: Clock,           show: canAccessHistorico },
-    { href: "/dashboard/biblioteca",   label: "Biblioteca",          icon: BookOpen,        show: canAccessBiblioteca },
-    { href: "/dashboard/relatorios",   label: "Relatórios",          icon: BarChart3,       show: canAccessRelatorios },
-    { href: "/dashboard/suporte",      label: "Suporte",             icon: LifeBuoy,        show: true },
-    { href: "/dashboard/perfil",       label: "Perfil & assinatura", icon: User2,           show: true },
+    { href: "/dashboard",               label: "Visão geral",          icon: LayoutDashboard,  show: true },
+    { href: "/dashboard/escolas",       label: "Minhas escolas",       icon: Building2,        show: canAccessEscolas },
+    { href: "/dashboard/estudantes",    label: "Meus estudantes",      icon: UserCheck,        show: canManageEstudantes },
+    { href: "/dashboard/templates",     label: "Meus templates",       icon: FileText,         show: true },
+    { href: "/dashboard/gerar",         label: "Gerar plano de aula",  icon: Sparkles,         show: true },
+    { href: "/dashboard/historico",     label: "Histórico",            icon: Clock,            show: canAccessHistorico },
+    { href: "/dashboard/biblioteca",    label: "Biblioteca",           icon: BookOpen,         show: canAccessBiblioteca },
+    { href: "/dashboard/relatorios",    label: "Relatórios",           icon: BarChart3,        show: canAccessRelatorios },
+    { href: "/dashboard/suporte",       label: "Suporte",              icon: LifeBuoy,         show: true },
+    { href: "/dashboard/perfil",        label: "Perfil & assinatura",  icon: User2,            show: true },
   ].filter((l) => l.show);
 
   async function handleLogout() {

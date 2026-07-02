@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Copy, Edit2, Eye, FileText, FilePen, Plus, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Copy, Edit2, Eye, FileText, FilePen, Plus, Sparkles, Trash2, UserCheck } from "lucide-react";
 
 import { templatesService } from "../../lib/services/firestore/templates.service";
 import type { TemplateOption } from "../../lib/types/firestore";
@@ -31,6 +31,8 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
   const router = useRouter();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmingTypeId, setConfirmingTypeId] = useState<string | null>(null);
+  const [changingTypeId, setChangingTypeId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   // Modal Magis para confirmar nome antes de duplicar
   const [duplicateModal, setDuplicateModal] = useState<{ id: string; nome: string } | null>(null);
@@ -74,6 +76,21 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
       showMagisToast(err instanceof Error ? err.message : "Não foi possível duplicar o template.", "error");
     } finally {
       setDuplicatingId(null);
+    }
+  }
+
+  async function handleConfirmType(templateId: string, type: "regente" | "plano_educacional_individualizado") {
+    setConfirmingTypeId(templateId);
+    setChangingTypeId(null);
+    try {
+      await fetch(`/api/templates/${templateId}/confirm-type`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template_type: type }),
+      });
+      router.refresh();
+    } finally {
+      setConfirmingTypeId(null);
     }
   }
 
@@ -298,7 +315,80 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
                           Sem campos
                         </span>
                       )}
+                      {/* B-05: badge when confirmed as PEI */}
+                      {!isDeleted && template.template_type === "plano_educacional_individualizado" && !template.tipo_incerto && (
+                        <span className="flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                          <UserCheck className="h-3 w-3" /> 2º Prof
+                        </span>
+                      )}
                     </div>
+
+                    {/* B-04: confirmation banner when tipo_incerto */}
+                    {!isDeleted && template.tipo_incerto && (
+                      <div className="mt-2 flex flex-col gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                        <p className="text-xs font-medium text-amber-800">
+                          Detectei que este pode ser um Plano Educacional Individualizado (2º Professor). Confirmar?
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={confirmingTypeId === template.id}
+                            onClick={() => void handleConfirmType(template.id, "plano_educacional_individualizado")}
+                            className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+                          >
+                            Sim, é 2º Professor
+                          </button>
+                          <button
+                            type="button"
+                            disabled={confirmingTypeId === template.id}
+                            onClick={() => void handleConfirmType(template.id, "regente")}
+                            className="rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-medium text-amber-800 transition hover:border-amber-500 disabled:opacity-50"
+                          >
+                            Não, é plano regular
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Manual type change panel */}
+                    {!isDeleted && changingTypeId === template.id && (
+                      <div className="mt-2 flex flex-col gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-xs font-medium text-slate-700">Escolha o tipo deste template:</p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={confirmingTypeId === template.id}
+                            onClick={() => void handleConfirmType(template.id, "regente")}
+                            className={`rounded-lg border px-3 py-1 text-xs font-medium transition disabled:opacity-50 ${
+                              template.template_type === "regente" && !template.tipo_incerto
+                                ? "border-slate-950 bg-slate-950 text-white"
+                                : "border-slate-300 bg-white text-slate-700 hover:border-slate-950"
+                            }`}
+                          >
+                            Plano regular
+                          </button>
+                          <button
+                            type="button"
+                            disabled={confirmingTypeId === template.id}
+                            onClick={() => void handleConfirmType(template.id, "plano_educacional_individualizado")}
+                            className={`rounded-lg border px-3 py-1 text-xs font-medium transition disabled:opacity-50 ${
+                              template.template_type === "plano_educacional_individualizado" && !template.tipo_incerto
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-slate-300 bg-white text-slate-700 hover:border-indigo-600 hover:text-indigo-600"
+                            }`}
+                          >
+                            2º Professor (PEI)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setChangingTypeId(null)}
+                            className="ml-auto text-xs text-slate-400 underline hover:text-slate-600"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <p className="mt-0.5 text-xs text-slate-500">
                       {template.escolaNome ?? "Escola não informada"}
                       {template.tipoPlano && (
@@ -367,6 +457,16 @@ export function TemplatesList({ templates, canCreatePlano }: TemplatesListProps)
                     <Edit2 className="h-3.5 w-3.5" />
                     Editar
                   </Link>
+
+                  <button
+                    type="button"
+                    onClick={() => setChangingTypeId(changingTypeId === template.id ? null : template.id)}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+                    title="Mudar tipo do template"
+                  >
+                    <UserCheck className="h-3.5 w-3.5" />
+                    Tipo
+                  </button>
 
                   <button
                     type="button"

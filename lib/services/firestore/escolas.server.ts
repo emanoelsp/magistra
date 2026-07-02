@@ -1,6 +1,6 @@
 import "server-only";
 import { getAdminDb } from "../../firebase/admin";
-import type { CursoEntry, CursoTipo, EscolaRecord, TurmaRecord } from "../../types/firestore";
+import type { CursoEntry, CursoTipo, EscolaRecord, TipoProfessor, TurmaRecord } from "../../types/firestore";
 
 export async function getUserEscolas(uid: string): Promise<EscolaRecord[]> {
   const db = getAdminDb();
@@ -32,6 +32,9 @@ export async function getUserTurmas(uid: string): Promise<TurmaRecord[]> {
         escola_nome: typeof d.escola_nome === "string" ? d.escola_nome : "",
         nome: typeof d.nome === "string" ? d.nome : "",
         ano_letivo: typeof d.ano_letivo === "number" ? d.ano_letivo : new Date().getFullYear(),
+        tipo_professor: (d.tipo_professor === "segundo_professor" || d.tipo_professor === "professor_area")
+          ? (d.tipo_professor as TipoProfessor)
+          : undefined,
         disciplina: typeof d.disciplina === "string" && d.disciplina ? d.disciplina : undefined,
         tipo_curso: typeof d.tipo_curso === "string" ? (d.tipo_curso as CursoTipo) : undefined,
         curso_nome: typeof d.curso_nome === "string" && d.curso_nome ? d.curso_nome : undefined,

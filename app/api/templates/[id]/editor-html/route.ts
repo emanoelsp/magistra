@@ -803,8 +803,39 @@ export async function GET(
     const withImageSizes = injectImageSizes(withRowStyles, layout.imageDims);
     const annotated = annotateFields(withImageSizes, schema);
 
+    // Append any ia_sugerida fields that couldn't be matched to a cell in the document.
+    // These "orphan" fields would otherwise appear in the right-panel list but have no
+    // clickable/editable cell in the document view — causing user confusion.
+    const matchedKeys = new Set(
+      [...annotated.matchAll(/data-field-key="([^"]+)"/g)].map((m) => m[1])
+    );
+    const orphanFields = schema.filter(
+      (f) => f.role === "ia_sugerida" && !matchedKeys.has(f.key)
+    );
+
+    let bodyHtml = annotated;
+    if (orphanFields.length > 0) {
+      const orphanRows = orphanFields
+        .map(
+          (f) =>
+            `<tr>` +
+            `<td style="font-weight:700;padding:6px 8px;width:35%;border:1px solid #ccc;font-size:12px;">${f.label}</td>` +
+            `<td data-field-key="${f.key}" data-field-label="${f.label}" data-field-role="${f.role ?? ""}" ` +
+            `style="padding:6px 8px;border:1px solid #ccc;min-height:2em;"></td>` +
+            `</tr>`
+        )
+        .join("");
+      const orphanBlock =
+        `<div style="margin-top:24px;border-top:2px solid #e2e8f0;padding-top:16px;">` +
+        `<p style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">` +
+        `Campos adicionais</p>` +
+        `<table style="width:100%;border-collapse:collapse;table-layout:fixed;">${orphanRows}</table>` +
+        `</div>`;
+      bodyHtml = annotated + orphanBlock;
+    }
+
     // Prepend header region (non-interactive, read-only) before body
-    const fullHtml = headerHtml ? headerHtml + annotated : annotated;
+    const fullHtml = headerHtml ? headerHtml + bodyHtml : bodyHtml;
 
     return NextResponse.json({ html: fullHtml });
   } catch (err) {

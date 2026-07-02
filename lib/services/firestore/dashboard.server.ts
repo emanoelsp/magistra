@@ -160,6 +160,11 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
           templateData.fillable_status === "erro"
             ? (templateData.fillable_status as import("../../types/firestore").TemplateFillableStatus)
             : undefined,
+        template_type:
+          templateData.template_type === "regente" || templateData.template_type === "plano_educacional_individualizado"
+            ? (templateData.template_type as import("../../types/firestore").TemplateType)
+            : undefined,
+        tipo_incerto: Boolean(templateData.tipo_incerto),
         deletado: Boolean(templateData.deleted_at),
       };
     })
@@ -201,6 +206,7 @@ export interface PlanoFilters {
   templateId?: string;
   turmaId?: string;
   escolaId?: string;
+  estudanteId?: string;
 }
 
 export async function getUserPlanosComNome(
@@ -228,6 +234,8 @@ export async function getUserPlanosComNome(
         status: (typeof d.status === "string" ? d.status : "rascunho") as PlanoStatus,
         turma_id: typeof d.turma_id === "string" ? d.turma_id : undefined,
         escola_id: typeof d.escola_id === "string" ? d.escola_id : undefined,
+        estudante_id: typeof d.estudante_id === "string" ? d.estudante_id : undefined,
+        estudante_nome: typeof d.estudante_nome === "string" ? d.estudante_nome : undefined,
       };
     })
     .sort((a, b) => b.data_geracao.localeCompare(a.data_geracao));
@@ -244,6 +252,9 @@ export async function getUserPlanosComNome(
   }
   if (filters?.escolaId) {
     allPlanos = allPlanos.filter((p) => p.escola_id === filters.escolaId);
+  }
+  if (filters?.estudanteId) {
+    allPlanos = allPlanos.filter((p) => p.estudante_id === filters.estudanteId);
   }
   if (filters?.q) {
     const qLower = filters.q.toLowerCase().trim();

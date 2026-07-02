@@ -192,6 +192,10 @@ export async function POST(request: Request) {
       fieldGroup?: string;
       metadata?: Record<string, string>;
       extraContext?: string;
+      /** For PEI plans: name of the linked special-needs student. */
+      estudanteNome?: string;
+      /** For PEI plans: free-text student profile (diagnostico, necessidades, nivel_suporte, etc.). */
+      estudanteContexto?: string;
       bypassCache?: boolean;
       stream?: boolean;
       currentValues?: Record<string, string>;
@@ -204,6 +208,8 @@ export async function POST(request: Request) {
       fieldGroup,
       metadata = {},
       extraContext: extraContextRaw,
+      estudanteNome: estudanteNomeRaw,
+      estudanteContexto: estudanteContextoRaw,
       bypassCache = false,
       stream = false,
       currentValues = {},
@@ -211,7 +217,14 @@ export async function POST(request: Request) {
 
     // Sanitize user-controlled values before prompt interpolation
     const fieldLabel = sanitizeForPrompt(fieldLabelRaw ?? "");
-    const extraContext = extraContextRaw ? sanitizeForPrompt(extraContextRaw) : undefined;
+    // Truncate very long regente context to avoid bloating prompts (e.g. full DOCX text)
+    const EXTRA_CONTEXT_MAX = 3000;
+    const extraContextTruncated = extraContextRaw && extraContextRaw.length > EXTRA_CONTEXT_MAX
+      ? extraContextRaw.slice(0, EXTRA_CONTEXT_MAX) + "\n[…contexto truncado]"
+      : extraContextRaw;
+    const extraContext = extraContextTruncated ? sanitizeForPrompt(extraContextTruncated) : undefined;
+    const estudanteNome = estudanteNomeRaw ? sanitizeForPrompt(estudanteNomeRaw) : undefined;
+    const estudanteContexto = estudanteContextoRaw ? sanitizeForPrompt(estudanteContextoRaw) : undefined;
     const sanitizedMetadata = Object.fromEntries(
       Object.entries(metadata).map(([k, v]) => [sanitizeForPrompt(k), sanitizeForPrompt(v)])
     );
@@ -230,6 +243,7 @@ export async function POST(request: Request) {
     }
 
     const template = snap.data() as TemplateRecord;
+    const isPeiTemplate = template.template_type === "plano_educacional_individualizado";
 
     // Verify template ownership
     if (template.user_id !== user.uid) {
@@ -309,39 +323,76 @@ export async function POST(request: Request) {
           "REGRAS: apenas livros que você conhece com certeza que existem; não invente títulos, autores ou editoras; prefira edições a partir de 2015."
 
       : fieldGroup === "objetivos"
-        ? `O campo "${fieldLabel}" é de OBJETIVOS DE APRENDIZAGEM. ` +
-          "Gere objetivos pedagógicos específicos e mensuráveis para a turma e disciplina descritas. " +
-          "label = objetivo completo iniciando com verbo de ação no infinitivo (Identificar, Analisar, Resolver, Produzir, Comparar, Aplicar, Criar, Explicar); máx. 1 frase; " +
-          "descricao = como este objetivo se conecta às habilidades BNCC e ao cotidiano do aluno; " +
-          "fonte = 'BNCC [código]' ou 'Objetivo pedagógico'."
+        ? isPeiTemplate
+          ? `O campo "${fieldLabel}" é de OBJETIVOS DO PEI (Plano Educacional Individualizado). ` +
+            "Gere objetivos funcionais e pedagógicos adaptados ao perfil de suporte do estudante, respeitando suas potencialidades. " +
+            "label = objetivo iniciando com verbo de ação no infinitivo, mensurável e realista para o estudante (ex: 'Ampliar autonomia na leitura de textos curtos com apoio de figuras'); " +
+            "descricao = como verificar o alcance do objetivo, que estratégia de suporte será usada e como isso se alinha ao currículo da turma; " +
+            "fonte = 'PEI', 'AEE' ou 'BNCC adaptada'."
+          : `O campo "${fieldLabel}" é de OBJETIVOS DE APRENDIZAGEM. ` +
+            "Gere objetivos pedagógicos específicos e mensuráveis para a turma e disciplina descritas. " +
+            "label = objetivo completo iniciando com verbo de ação no infinitivo (Identificar, Analisar, Resolver, Produzir, Comparar, Aplicar, Criar, Explicar); máx. 1 frase; " +
+            "descricao = como este objetivo se conecta às habilidades BNCC e ao cotidiano do aluno; " +
+            "fonte = 'BNCC [código]' ou 'Objetivo pedagógico'."
 
       : fieldGroup === "competencias"
-        ? `O campo "${fieldLabel}" é de COMPETÊNCIAS. ` +
-          "Sugira competências gerais da BNCC ou competências específicas do componente curricular, sempre parafraseadas. " +
-          "label = competência iniciando com verbo de ação no infinitivo, parafraseada de forma objetiva e aplicada à disciplina — ex: 'Analisar criticamente fontes diversas, identificando contexto e intencionalidade' (nunca cópia literal); " +
-          "descricao = como essa competência se manifesta nas atividades e no cotidiano dos alunos desta turma; " +
-          "fonte = 'Competência Geral BNCC N°X' ou 'Competência Específica [componente curricular]'."
+        ? isPeiTemplate
+          ? `O campo "${fieldLabel}" é de COMPETÊNCIAS DO PEI. ` +
+            "Sugira competências funcionais e socioemocionais relevantes para o estudante, sempre adaptadas ao seu perfil de suporte. " +
+            "label = competência iniciando com verbo de ação no infinitivo, concreta e observável (ex: 'Comunicar necessidades básicas usando PECS ou dispositivo de CAA'); " +
+            "descricao = como desenvolver essa competência no contexto da sala de aula inclusiva e do AEE; " +
+            "fonte = 'Competência PEI', 'AEE' ou 'BNCC adaptada'."
+          : `O campo "${fieldLabel}" é de COMPETÊNCIAS. ` +
+            "Sugira competências gerais da BNCC ou competências específicas do componente curricular, sempre parafraseadas. " +
+            "label = competência iniciando com verbo de ação no infinitivo, parafraseada de forma objetiva e aplicada à disciplina — ex: 'Analisar criticamente fontes diversas, identificando contexto e intencionalidade' (nunca cópia literal); " +
+            "descricao = como essa competência se manifesta nas atividades e no cotidiano dos alunos desta turma; " +
+            "fonte = 'Competência Geral BNCC N°X' ou 'Competência Específica [componente curricular]'."
 
       : fieldGroup === "habilidades"
-        ? `O campo "${fieldLabel}" é de HABILIDADES BNCC. ` +
-          "Use EXCLUSIVAMENTE os códigos listados em habilidadesBNCC (se disponíveis). " +
-          "label = 'CÓDIGO — descrição parafraseada em linguagem simples e direta' (ex: 'EF09MA06 — Resolver situações-problema envolvendo conjuntos numéricos'); " +
-          "descricao = como desenvolver esta habilidade com a turma, incluindo conexão com SAEB quando pertinente; " +
-          "fonte = 'BNCC [código]'."
+        ? isPeiTemplate
+          ? `O campo "${fieldLabel}" é de HABILIDADES DO PEI. ` +
+            "Sugira habilidades adaptadas ao nível de funcionalidade do estudante, alinhadas à BNCC quando possível. " +
+            "label = habilidade iniciando com verbo de ação, adaptada ao nível do estudante (ex: 'Reconhecer numerais de 1 a 10 com apoio de material concreto'); " +
+            "descricao = estratégia pedagógica ou recurso de acessibilidade para desenvolver esta habilidade; " +
+            "fonte = 'BNCC adaptada', 'AEE' ou 'Currículo funcional'."
+          : `O campo "${fieldLabel}" é de HABILIDADES BNCC. ` +
+            "Use EXCLUSIVAMENTE os códigos listados em habilidadesBNCC (se disponíveis). " +
+            "label = 'CÓDIGO — descrição parafraseada em linguagem simples e direta' (ex: 'EF09MA06 — Resolver situações-problema envolvendo conjuntos numéricos'); " +
+            "descricao = como desenvolver esta habilidade com a turma, incluindo conexão com SAEB quando pertinente; " +
+            "fonte = 'BNCC [código]'."
 
       : fieldGroup === "conteudos"
-        ? `O campo "${fieldLabel}" é de CONTEÚDOS PROGRAMÁTICOS. ` +
-          "Sugira tópicos específicos do componente curricular adequados ao ano/série informados, do mais básico ao mais complexo. " +
-          "label = tópico de conteúdo iniciando com verbo de ação no infinitivo — ex: 'Explorar equações do 2° grau pelo discriminante e fórmula de Bhaskara', 'Identificar variações linguísticas e norma culta em diferentes contextos'; " +
-          "descricao = o que será trabalhado, como se conecta ao cotidiano e à vida do aluno, e link com currículo territorial quando aplicável; " +
-          "fonte = 'Currículo [componente]' ou 'currículo territorial'."
+        ? isPeiTemplate
+          ? `O campo "${fieldLabel}" é de CONTEÚDOS/ATIVIDADES DO PEI. ` +
+            "Sugira conteúdos adaptados e atividades funcionais que respeitem o perfil de suporte do estudante, mantendo conexão com o currículo da turma. " +
+            "label = atividade ou conteúdo adaptado iniciando com verbo no infinitivo (ex: 'Explorar a escrita do próprio nome com letras móveis e apoio físico'); " +
+            "descricao = como realizar a atividade, que recursos de acessibilidade usar e como conectar ao que a turma está trabalhando; " +
+            "fonte = 'Currículo adaptado', 'AEE' ou 'Tecnologia Assistiva'."
+          : `O campo "${fieldLabel}" é de CONTEÚDOS PROGRAMÁTICOS. ` +
+            "Sugira tópicos específicos do componente curricular adequados ao ano/série informados, do mais básico ao mais complexo. " +
+            "label = tópico de conteúdo iniciando com verbo de ação no infinitivo — ex: 'Explorar equações do 2° grau pelo discriminante e fórmula de Bhaskara', 'Identificar variações linguísticas e norma culta em diferentes contextos'; " +
+            "descricao = o que será trabalhado, como se conecta ao cotidiano e à vida do aluno, e link com currículo territorial quando aplicável; " +
+            "fonte = 'Currículo [componente]' ou 'currículo territorial'."
 
       : fieldGroup === "avaliacao"
-        ? `O campo "${fieldLabel}" é de AVALIAÇÃO. ` +
-          "Sugira instrumentos e critérios avaliativos variados, equilibrando avaliação formativa e somativa. " +
-          "label = ação de avaliação iniciando com verbo no infinitivo — ex: 'Observar o engajamento e registrar produções durante atividade experimental', 'Resolver questão de interpretação de gráfico com dados reais no modelo SAEB'; " +
-          "descricao = como aplicar o instrumento, o que observar e o que evidencia a aprendizagem; " +
-          "fonte = 'Avaliação formativa', 'Avaliação somativa' ou 'SAEB [descritor]'."
+        ? isPeiTemplate
+          ? `O campo "${fieldLabel}" é de AVALIAÇÃO DO PEI. ` +
+            "Sugira formas de avaliação adaptadas ao perfil do estudante: preferencialmente avaliação descritiva, portfólio, observação participante e registros anedóticos. Evite provas padronizadas como único critério. " +
+            "label = forma de avaliação iniciando com verbo no infinitivo (ex: 'Observar e registrar com fotos a participação em atividades de grupo'); " +
+            "descricao = o que observar, como registrar e o que indica progresso em relação ao objetivo do PEI; " +
+            "fonte = 'Avaliação descritiva', 'AEE' ou 'Portfólio'."
+          : `O campo "${fieldLabel}" é de AVALIAÇÃO. ` +
+            "Sugira instrumentos e critérios avaliativos variados, equilibrando avaliação formativa e somativa. " +
+            "label = ação de avaliação iniciando com verbo no infinitivo — ex: 'Observar o engajamento e registrar produções durante atividade experimental', 'Resolver questão de interpretação de gráfico com dados reais no modelo SAEB'; " +
+            "descricao = como aplicar o instrumento, o que observar e o que evidencia a aprendizagem; " +
+            "fonte = 'Avaliação formativa', 'Avaliação somativa' ou 'SAEB [descritor]'."
+
+      : isPeiTemplate
+        ? `O campo a ser preenchido no PEI é: "${fieldLabel}" (categoria: ${fieldGroup ?? "outros"}). ` +
+          "Gere sugestões individualizadas, respeitando o perfil de suporte, as necessidades e as potencialidades do estudante descritos no contexto. " +
+          "label = texto iniciando com verbo de ação no infinitivo, pronto para inserção neste campo PEI; " +
+          "descricao = justificativa pedagógica e como implementar na prática inclusiva; " +
+          "fonte = 'PEI', 'AEE', 'Tecnologia Assistiva' ou outra referência da Educação Especial."
 
       : `O campo a ser preenchido no plano de aula é: "${fieldLabel}" ` +
         `(categoria: ${fieldGroup ?? "outros"}). ` +
@@ -355,7 +406,8 @@ export async function POST(request: Request) {
     const fewShotExample = FEW_SHOT_EXAMPLES[exampleKey] ?? FEW_SHOT_EXAMPLES["outros"]!;
 
     const systemInstruction = `<persona>
-Você é um pedagogo sênior com 15 anos de experiência em planejamento de aulas para a educação básica brasileira. Domina a BNCC, o SAEB e o currículo territorial com profundidade técnica, conhece o vocabulário oficial do MEC e sabe como professores de escolas públicas e privadas aplicam esses referenciais na prática de sala de aula.
+Você é um pedagogo sênior com 15 anos de experiência em planejamento de aulas para a educação básica brasileira. Domina a BNCC, o SAEB e o currículo territorial com profundidade técnica, conhece o vocabulário oficial do MEC e sabe como professores de escolas públicas e privadas aplicam esses referenciais na prática de sala de aula.${isPeiTemplate ? `
+Além disso, você é especialista em Educação Especial e Inclusiva: domina a Política Nacional de Educação Especial na Perspectiva da Educação Inclusiva (PNEE), o Atendimento Educacional Especializado (AEE), técnicas de coensino, adaptações curriculares, Tecnologia Assistiva (TA), Comunicação Aumentativa e Alternativa (CAA) e estratégias pedagógicas baseadas em evidências para estudantes com deficiência, Transtornos Globais do Desenvolvimento (TGD) e Altas Habilidades/Superdotação. Quando o campo envolve planejamento para um estudante específico, suas sugestões devem priorizar adaptações individualizadas, respeitar o perfil de suporte do estudante e nunca inferir diagnósticos além do que foi informado.` : ""}
 </persona>
 <tarefa>
 Gere de 3 a 5 sugestões de preenchimento para o campo indicado em <campo>. Cada sugestão deve ser específica para a disciplina, ano/série e escola descritos em <contexto>.
@@ -504,6 +556,13 @@ Responda SOMENTE com JSON válido:
       `  <instrucao>${instrucaoEspecifica}</instrucao>`,
       ...(fieldAiInstructions ? [`  <instrucao_do_professor>${fieldAiInstructions}</instrucao_do_professor>`] : []),
       `</campo>`,
+      ...(isPeiTemplate && (estudanteNome || estudanteContexto) ? [
+        `<estudante_pei>`,
+        ...(estudanteNome ? [`  <nome>${estudanteNome}</nome>`] : []),
+        ...(estudanteContexto ? [`  <perfil>${estudanteContexto}</perfil>`] : []),
+        `  <instrucao_pei>Este é um Plano Educacional Individualizado (PEI). Todas as sugestões devem ser adaptadas ao perfil deste estudante, respeitando seu nível de suporte e necessidades educacionais especiais. Nunca infira diagnósticos além do informado.</instrucao_pei>`,
+        `</estudante_pei>`,
+      ] : []),
       `<contexto>`,
       `  <template>${template.nome}</template>`,
       `  <turma>${contexto}</turma>`,

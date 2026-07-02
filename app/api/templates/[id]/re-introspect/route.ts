@@ -17,8 +17,33 @@ import {
 } from "../../../../../lib/utils/docx-filler";
 import type { StructuralPair } from "../../../../../lib/utils/docx-filler";
 import { structuralPairsToSchema, keyToField } from "../../../../../lib/utils/docx-schema-mapper";
-import type { TemplateFieldSchema, TemplateRecord } from "../../../../../lib/types/firestore";
+import type { TemplateFieldSchema, TemplateRecord, TemplateType } from "../../../../../lib/types/firestore";
 
+// ── Template type detection ──────────────────────────────────────────────────
+// Deterministic vocabulary scan — no AI call. ≥3 signals → confirmed PEI; 1–2 → uncertain; 0 → regente.
+const PEI_SIGNALS: RegExp[] = [
+  /segundo\s+professor/i,
+  /plano\s+educacional\s+individualizado/i,
+  /\bPEI\b/,
+  /habilidades\s+preditoras/i,
+  /p[úu]blico[\s-]alvo\s+da\s+educa[çc][ãa]o\s+especial/i,
+  /\bPAEE\b/,
+  /adequa[çc][õo]es?\s+curriculares/i,
+  /necessidades\s+educacionais\s+especiais/i,
+  /\bNEE\b/,
+  /\bCID[-\s]?10\b|\bCID[-\s]?[A-Z]\d{2}/i,
+  /apoio\s+especializado/i,
+  /adequa[çc][ãa]o\s+de\s+acessibilidade/i,
+  /transtorno\s+do\s+espectro\s+autista|\bTEA\b/,
+  /\blaudo\s+m[eé]dico\b/i,
+  /defici[êe]ncia\s+(visual|auditiva|intelectual|f[íi]sica)/i,
+];
+
+function detectTemplateType(text: string): { template_type: TemplateType; tipo_incerto: boolean } {
+  const score = PEI_SIGNALS.filter((re) => re.test(text)).length;
+  if (score === 0) return { template_type: "regente", tipo_incerto: false };
+  return { template_type: "plano_educacional_individualizado", tipo_incerto: score < 3 };
+}
 
 // ── Extração de conteúdo ────────────────────────────────────────────────────
 
@@ -417,6 +442,10 @@ export async function POST(
 
     // ── AI extraction ────────────────────────────────────────────────────────
     const extracted = await extractContent(fileBuffer, arquivoUrl);
+
+    // Deterministic type detection — zero AI cost
+    const { template_type, tipo_incerto } = detectTemplateType(extracted.content);
+    console.info(`[re-introspect] template_type="${template_type}" tipo_incerto=${tipo_incerto}`);
     const prompt = buildPrompt(extracted, structuralPairs, draftSchema, confirmedFields, corrections);
     const { text: raw, provider: aiProvider } = await generateSchema(prompt);
 
@@ -458,6 +487,16 @@ export async function POST(
           return pn === fn || (fn.length >= 3 && pn.endsWith(fn)) || (fn.length >= 4 && fn.includes(pn)) || (pn.length >= 4 && pn.includes(fn));
         });
         if (match) (field as unknown as Record<string, unknown>).injection_pattern = match.pattern;
+      }
+    }
+
+    // For PEI templates, all ia_sugerida fields can benefit from regente plan context.
+    // Mark them so the editor renders the "Importar do regente" button.
+    if (template_type === "plano_educacional_individualizado") {
+      for (const field of schema as TemplateFieldSchema[]) {
+        if (field.role === "ia_sugerida") {
+          (field as unknown as Record<string, unknown>).importavel_de_regente = true;
+        }
       }
     }
 
@@ -503,16 +542,20 @@ export async function POST(
           fillable_status: "pronto",
           // Store structural pairs for use in future re-extractions (feature 3)
           estrutura_docx: structuralPairs,
+          template_type,
+          tipo_incerto,
         });
       } catch (e) {
         console.warn("[re-introspect] Falha ao regenerar DOCX preenchível:", e);
         await db.collection("magis_templates").doc(id).update({
           schema_campos: schema,
           estrutura_docx: structuralPairs,
+          template_type,
+          tipo_incerto,
         });
       }
     } else {
-      await db.collection("magis_templates").doc(id).update({ schema_campos: schema });
+      await db.collection("magis_templates").doc(id).update({ schema_campos: schema, template_type, tipo_incerto });
     }
 
     // ── Item 2: structural × AI cross-validation ────────────────────────────
@@ -543,6 +586,8 @@ export async function POST(
       schema,
       totalCampos: (schema as unknown[]).length,
       arquivo_fillable_url: fillableUrl,
+      template_type,
+      tipo_incerto,
       // Feature 2: surface which fields need manual placement to the UI
       campos_sem_placeholder: injectionReport?.missing ?? [],
       // Item 2: fields with no structural backing

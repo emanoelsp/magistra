@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Download, FileText, Sparkles } from "lucide-react";
 import { GerarPlanoFlow } from "./gerar-intro-modal";
 import type { RecentPlano, ResumeData } from "./plan-generation-wizard";
-import type { EscolaRecord, TemplateOption, TurmaRecord } from "../../lib/types/firestore";
+import type { EscolaRecord, EstudanteRecord, PlanoRegenteRecord, TemplateOption, TurmaRecord } from "../../lib/types/firestore";
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   gerado:               { label: "Gerado",            cls: "bg-emerald-100 text-emerald-800" },
@@ -22,6 +22,8 @@ interface GerarPlanoTriggerProps {
   templates: TemplateOption[];
   escolas: EscolaRecord[];
   turmas: TurmaRecord[];
+  estudantes?: EstudanteRecord[];
+  canManageEstudantes?: boolean;
   limitsStatus: {
     canCreatePlano: boolean;
     limits: { maxPlanosPerMonth: number };
@@ -31,6 +33,11 @@ interface GerarPlanoTriggerProps {
   recentPlanos: RecentPlano[];
   resumeData?: ResumeData;
   preSelectedTemplateId?: string;
+  /** Pre-selected student coming from "Criar PEI" button on the student card. */
+  peiEstudanteId?: string;
+  peiEstudanteNome?: string;
+  /** Library of regente plans extracted from PDFs — available in the PEI editor for field-level import. */
+  planosRegente?: PlanoRegenteRecord[];
   hasTemplates?: boolean;
   hasPlanos: boolean;
   canAssociateEscola?: boolean;
@@ -42,12 +49,17 @@ export function GerarPlanoTrigger({
   hasPlanos,
   resumeData,
   preSelectedTemplateId,
+  peiEstudanteId,
+  peiEstudanteNome,
+  planosRegente = [],
   recentPlanos,
   canAssociateEscola = true,
   canUseBulkIa = true,
+  estudantes = [],
+  canManageEstudantes = false,
   ...flowProps
 }: GerarPlanoTriggerProps) {
-  const [open, setOpen] = useState(hasTemplates && (!!resumeData || !!preSelectedTemplateId));
+  const [open, setOpen] = useState(hasTemplates && (!!resumeData || !!preSelectedTemplateId || !!peiEstudanteId));
 
   return (
     <>
@@ -183,8 +195,13 @@ export function GerarPlanoTrigger({
           recentPlanos={recentPlanos}
           resumeData={resumeData}
           preSelectedTemplateId={preSelectedTemplateId}
+          peiEstudanteId={peiEstudanteId}
+          peiEstudanteNome={peiEstudanteNome}
+          planosRegente={planosRegente}
           canAssociateEscola={canAssociateEscola}
           canUseBulkIa={canUseBulkIa}
+          estudantes={estudantes}
+          canManageEstudantes={canManageEstudantes}
         />
       )}
     </>

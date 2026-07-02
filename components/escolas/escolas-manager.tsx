@@ -12,8 +12,10 @@ import {
   Users,
   Unlink,
   AlertCircle,
+  UserCheck,
+  GraduationCap,
 } from "lucide-react";
-import type { CursoEntry, CursoTipo, EscolaRecord, TurmaRecord } from "../../lib/types/firestore";
+import type { CursoEntry, CursoTipo, EscolaRecord, TipoProfessor, TurmaRecord } from "../../lib/types/firestore";
 import { showMagisToast } from "../../lib/utils/magis-toast";
 
 // ---------------------------------------------------------------------------
@@ -139,6 +141,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
   const [cursos, setCursos] = useState<CursoEntry[]>(target?.cursos ?? []);
   const [cursoIdx, setCursoIdx] = useState(0);
   const [turmaInput, setTurmaInput] = useState("");
+  const [turmaRole, setTurmaRole] = useState<TipoProfessor>("professor_area");
   const [disciplinaInput, setDisciplinaInput] = useState("");
   const [turmasAdicionadas, setTurmasAdicionadas] = useState<Record<number, TurmaRecord[]>>({});
   const [createdEscola, setCreatedEscola] = useState<EscolaRecord | null>(null);
@@ -178,7 +181,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
     setError(null);
     try {
       if (target) {
-        // Edit: PATCH escola and done
+        // Edit: save nome+cursos and close
         const res = await fetch(`/api/escolas/${target.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -190,6 +193,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
         }
         onSaved({ ...target, nome: nome.trim(), cursos });
         onClose();
+        return;
       } else {
         // Create: POST escola
         const res = await fetch("/api/escolas", {
@@ -209,10 +213,9 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
         if (cursos.length > 0) {
           setCursoIdx(0);
           setStep("turmas");
-        } else if (!hasEscolaPadrao) {
-          setStep("confirm_default");
         } else {
-          onClose();
+          if (!hasEscolaPadrao) setStep("confirm_default");
+          else onClose();
         }
       }
     } catch (err) {
@@ -226,7 +229,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
   async function handleAddTurma(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = turmaInput.trim();
-    const disciplina = disciplinaInput.trim() || undefined;
+    const disciplina = turmaRole === "professor_area" ? disciplinaInput.trim() || undefined : undefined;
     if (!trimmed || !createdEscola) return;
     setAddingTurma(true);
     setError(null);
@@ -240,6 +243,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
           escola_id: createdEscola.id,
           escola_nome: createdEscola.nome,
           nome: trimmed,
+          tipo_professor: turmaRole,
           disciplina,
           tipo_curso: curso.tipo,
           curso_nome: curso.nome || undefined,
@@ -258,6 +262,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
         escola_id: createdEscola.id,
         escola_nome: createdEscola.nome,
         nome: trimmed,
+        tipo_professor: turmaRole,
         disciplina,
         ano_letivo: new Date().getFullYear(),
         tipo_curso: curso.tipo,
@@ -284,12 +289,10 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
       setCursoIdx((i) => i + 1);
       setTurmaInput("");
       setDisciplinaInput("");
+      setTurmaRole("professor_area");
     } else {
-      if (!hasEscolaPadrao && createdEscola) {
-        setStep("confirm_default");
-      } else {
-        onClose();
-      }
+      if (!hasEscolaPadrao) setStep("confirm_default");
+      else onClose();
     }
   }
 
@@ -371,7 +374,7 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
             </p>
           </MagisBubble>
           {jaAdicionadas.length > 0 && (
-            <MagisBubble text={`Adicionadas: ${jaAdicionadas.map((t) => t.disciplina ? `${t.nome} · ${t.disciplina}` : t.nome).join(", ")} 👍`} />
+            <MagisBubble text={`Adicionadas: ${jaAdicionadas.map((t) => t.disciplina ? `${t.nome} · ${t.disciplina}` : t.tipo_professor === "segundo_professor" ? `${t.nome} (2º prof.)` : t.nome).join(", ")} 👍`} />
           )}
           {confirmSemTurmas && (
             <MagisBubble variant="warning">
@@ -396,23 +399,47 @@ function EscolaModal({ target, hasEscolaPadrao, onClose, onSaved, onTurmaAdded, 
             </div>
           )}
           <form onSubmit={handleAddTurma} className="space-y-2">
+            {/* Role selection per turma */}
             <div className="flex gap-2">
-              <input
-                ref={turmaRef}
-                type="text"
-                value={turmaInput}
-                onChange={(e) => { setTurmaInput(e.target.value); setError(null); setConfirmSemTurmas(false); }}
-                placeholder="Turma · Ex: 1º A"
-                className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
-              />
+              <button
+                type="button"
+                onClick={() => { setTurmaRole("professor_area"); setError(null); }}
+                className={`flex flex-1 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs transition ${turmaRole === "professor_area" ? "border-violet-500 bg-violet-50 ring-1 ring-violet-300" : "border-slate-200 hover:bg-slate-50"}`}
+              >
+                <GraduationCap className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                <span className="font-medium text-slate-700">Prof. regente</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTurmaRole("segundo_professor"); setDisciplinaInput(""); setError(null); }}
+                className={`flex flex-1 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs transition ${turmaRole === "segundo_professor" ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-300" : "border-slate-200 hover:bg-slate-50"}`}
+              >
+                <UserCheck className="h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                <span className="font-medium text-slate-700">2º Professor</span>
+              </button>
+            </div>
+            <input
+              ref={turmaRef}
+              type="text"
+              value={turmaInput}
+              onChange={(e) => { setTurmaInput(e.target.value); setError(null); setConfirmSemTurmas(false); }}
+              placeholder="Turma · Ex: 1º A"
+              className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+            />
+            {turmaRole === "professor_area" && (
               <input
                 type="text"
                 value={disciplinaInput}
                 onChange={(e) => { setDisciplinaInput(e.target.value); setError(null); }}
                 placeholder="Disciplina · Ex: Matemática"
-                className="flex-1 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+                className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
               />
-            </div>
+            )}
+            {turmaRole === "segundo_professor" && (
+              <p className="rounded-xl bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
+                Como 2º professor você poderá cadastrar alunos com necessidades especiais nessa turma.
+              </p>
+            )}
             <button
               type="submit"
               disabled={addingTurma || !turmaInput.trim()}
@@ -762,6 +789,7 @@ interface AddTurmaModalProps {
 function AddTurmaModal({ escola, tipoCurso, onClose, onAdded }: AddTurmaModalProps) {
   const currentYear = new Date().getFullYear();
   const [nomeTurma, setNomeTurma] = useState("");
+  const [papel, setPapel] = useState<TipoProfessor>("professor_area");
   const [disciplina, setDisciplina] = useState("");
   const [anoLetivo, setAnoLetivo] = useState(currentYear);
   const [saving, setSaving] = useState(false);
@@ -776,6 +804,7 @@ function AddTurmaModal({ escola, tipoCurso, onClose, onAdded }: AddTurmaModalPro
     if (!trimmedNome) return;
     setSaving(true);
     setError(null);
+    const disc = papel === "professor_area" ? disciplina.trim() || undefined : undefined;
     try {
       const grupoId = tipoCurso
         ? computeGrupoId(escola.id, tipoCurso.tipo, trimmedNome)
@@ -787,7 +816,8 @@ function AddTurmaModal({ escola, tipoCurso, onClose, onAdded }: AddTurmaModalPro
           escola_id: escola.id,
           escola_nome: escola.nome,
           nome: trimmedNome,
-          disciplina: disciplina.trim() || undefined,
+          tipo_professor: papel,
+          disciplina: disc,
           ano_letivo: anoLetivo,
           tipo_curso: tipoCurso?.tipo,
           curso_nome: tipoCurso?.nome || undefined,
@@ -806,7 +836,8 @@ function AddTurmaModal({ escola, tipoCurso, onClose, onAdded }: AddTurmaModalPro
         escola_nome: escola.nome,
         nome: trimmedNome,
         ano_letivo: anoLetivo,
-        disciplina: disciplina.trim() || undefined,
+        tipo_professor: papel,
+        disciplina: disc,
         tipo_curso: tipoCurso?.tipo,
         curso_nome: tipoCurso?.nome || undefined,
         grupo_id: grupoId ?? null,
@@ -830,10 +861,35 @@ function AddTurmaModal({ escola, tipoCurso, onClose, onAdded }: AddTurmaModalPro
             </span>
           </div>
         )}
-        <MagisBubble text="Qual é o nome da turma? Ex: 1º A, 2º B Vespertino." />
+        <MagisBubble text="Qual é o nome da turma e qual é o seu papel nela?" />
       </div>
       <form onSubmit={handleSubmit} className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
         {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        {/* Role */}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setPapel("professor_area")}
+            className={`flex flex-1 items-center gap-2 rounded-2xl border px-3 py-2.5 text-left transition ${papel === "professor_area" ? "border-violet-500 bg-violet-50 ring-1 ring-violet-300" : "border-slate-200 hover:bg-slate-50"}`}
+          >
+            <GraduationCap className="h-4 w-4 shrink-0 text-slate-500" />
+            <div>
+              <p className="text-xs font-semibold text-slate-800">Prof. regente</p>
+              <p className="text-[10px] text-slate-400">Leciona a disciplina</p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPapel("segundo_professor"); setDisciplina(""); }}
+            className={`flex flex-1 items-center gap-2 rounded-2xl border px-3 py-2.5 text-left transition ${papel === "segundo_professor" ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-300" : "border-slate-200 hover:bg-slate-50"}`}
+          >
+            <UserCheck className="h-4 w-4 shrink-0 text-indigo-500" />
+            <div>
+              <p className="text-xs font-semibold text-slate-800">2º Professor</p>
+              <p className="text-[10px] text-slate-400">Atua com alunos especiais</p>
+            </div>
+          </button>
+        </div>
         <input
           ref={inputRef}
           type="text"
@@ -842,14 +898,19 @@ function AddTurmaModal({ escola, tipoCurso, onClose, onAdded }: AddTurmaModalPro
           placeholder="Ex: 1º A, 2º B Vespertino"
           className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-950"
         />
-        {!tipoCurso && (
+        {papel === "professor_area" && (
           <input
             type="text"
             value={disciplina}
             onChange={(e) => setDisciplina(e.target.value)}
-            placeholder="Disciplina (opcional)"
+            placeholder="Disciplina · Ex: Matemática"
             className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-950"
           />
+        )}
+        {papel === "segundo_professor" && (
+          <p className="rounded-xl bg-indigo-50 px-3 py-2.5 text-xs text-indigo-700">
+            Você poderá cadastrar alunos com necessidades especiais nessa turma em <strong>Meus estudantes</strong>.
+          </p>
         )}
         <div className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-2.5">
           <span className="text-sm text-slate-600">Ano letivo</span>
@@ -940,6 +1001,7 @@ interface EditTurmaModalProps {
 
 function EditTurmaModal({ turma, onClose, onUpdated }: EditTurmaModalProps) {
   const [nome, setNome] = useState(turma.nome);
+  const [papel, setPapel] = useState<TipoProfessor>(turma.tipo_professor ?? "professor_area");
   const [disciplina, setDisciplina] = useState(turma.disciplina ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -949,18 +1011,19 @@ function EditTurmaModal({ turma, onClose, onUpdated }: EditTurmaModalProps) {
     if (!nome.trim()) return;
     setSaving(true);
     setError(null);
+    const disc = papel === "professor_area" ? disciplina.trim() || "" : "";
     try {
       const res = await fetch(`/api/turmas/${turma.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nome: nome.trim(), disciplina: disciplina.trim() || "" }),
+        body: JSON.stringify({ nome: nome.trim(), tipo_professor: papel, disciplina: disc }),
       });
       if (!res.ok) {
         const d = (await res.json()) as { error?: string };
         throw new Error(d.error ?? "Falha ao atualizar.");
       }
       showMagisToast(`Turma "${nome.trim()}" atualizada.`, "success");
-      onUpdated({ ...turma, nome: nome.trim(), disciplina: disciplina.trim() || undefined });
+      onUpdated({ ...turma, nome: nome.trim(), tipo_professor: papel, disciplina: disc || undefined });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro desconhecido.");
       setSaving(false);
@@ -975,6 +1038,24 @@ function EditTurmaModal({ turma, onClose, onUpdated }: EditTurmaModalProps) {
       </div>
       <form onSubmit={(e) => void handleSave(e)} className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
         {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setPapel("professor_area")}
+            className={`flex flex-1 items-center gap-2 rounded-2xl border px-3 py-2.5 text-left transition ${papel === "professor_area" ? "border-violet-500 bg-violet-50 ring-1 ring-violet-300" : "border-slate-200 hover:bg-slate-50"}`}
+          >
+            <GraduationCap className="h-4 w-4 shrink-0 text-slate-500" />
+            <span className="text-xs font-semibold text-slate-800">Prof. regente</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPapel("segundo_professor"); setDisciplina(""); }}
+            className={`flex flex-1 items-center gap-2 rounded-2xl border px-3 py-2.5 text-left transition ${papel === "segundo_professor" ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-300" : "border-slate-200 hover:bg-slate-50"}`}
+          >
+            <UserCheck className="h-4 w-4 shrink-0 text-indigo-500" />
+            <span className="text-xs font-semibold text-slate-800">2º Professor</span>
+          </button>
+        </div>
         <input
           type="text"
           value={nome}
@@ -983,13 +1064,15 @@ function EditTurmaModal({ turma, onClose, onUpdated }: EditTurmaModalProps) {
           className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
           autoFocus
         />
-        <input
-          type="text"
-          value={disciplina}
-          onChange={(e) => setDisciplina(e.target.value)}
-          placeholder="Disciplina · Ex: Matemática"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
-        />
+        {papel === "professor_area" && (
+          <input
+            type="text"
+            value={disciplina}
+            onChange={(e) => setDisciplina(e.target.value)}
+            placeholder="Disciplina · Ex: Matemática"
+            className="w-full rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-slate-950"
+          />
+        )}
         <div className="flex gap-2">
           <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">
             Cancelar
@@ -1260,6 +1343,11 @@ function TurmaChip({ turma, compact = false, onEdit, onDelete, onDesagrupar }: T
           <AlertCircle className="h-3 w-3 text-amber-500 shrink-0" />
         </span>
       )}
+      {turma.tipo_professor === "segundo_professor" && (
+        <span title="2º Professor">
+          <UserCheck className="h-3 w-3 text-indigo-500 shrink-0" />
+        </span>
+      )}
       <span className="font-medium text-slate-800">{turma.nome}</span>
       {turma.disciplina && !compact && (
         <span className="text-slate-400">· {turma.disciplina}</span>
@@ -1322,18 +1410,16 @@ export function EscolasManager({ initialEscolas, initialTurmas, initialEscolaPad
   }
 
   function handleEscolaSaved(saved: EscolaRecord) {
-    if (editEscolaTarget) {
-      setEscolas((prev) =>
-        prev.map((e) => (e.id === saved.id ? saved : e)).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
-      );
-      setTurmas((prev) =>
-        prev.map((t) => (t.escola_id === saved.id ? { ...t, escola_nome: saved.nome } : t))
-      );
-    } else {
-      setEscolas((prev) =>
-        [...prev, saved].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
-      );
-    }
+    setEscolas((prev) => {
+      const exists = prev.some((e) => e.id === saved.id);
+      const next = exists
+        ? prev.map((e) => (e.id === saved.id ? saved : e))
+        : [...prev, saved];
+      return next.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    });
+    setTurmas((prev) =>
+      prev.map((t) => (t.escola_id === saved.id ? { ...t, escola_nome: saved.nome } : t))
+    );
   }
 
   function handleModalClose() {

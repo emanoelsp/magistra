@@ -45,8 +45,25 @@ export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null>
     return null;
   }
 
-  const userSnapshot = await getAdminDb().collection("magis_users").doc(session.uid).get();
+  const db = getAdminDb();
+  const userSnapshot = await db.collection("magis_users").doc(session.uid).get();
   const userData = userSnapshot.data() ?? {};
+
+  // Self-healing migration: users who became segundo_professor before the flag
+  // was stored on UserRecord can be recovered by scanning their turmas once.
+  let is_segundo_professor = userData.is_segundo_professor === true;
+  if (!is_segundo_professor) {
+    const turmasSnap = await db
+      .collection("magis_turmas")
+      .where("user_id", "==", session.uid)
+      .where("tipo_professor", "==", "segundo_professor")
+      .limit(1)
+      .get();
+    if (!turmasSnap.empty) {
+      is_segundo_professor = true;
+      void db.collection("magis_users").doc(session.uid).update({ is_segundo_professor: true });
+    }
+  }
 
   return {
     uid: session.uid,
@@ -63,6 +80,7 @@ export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null>
         ? userData.tokens_usados_mes
         : 0,
     role: userData.role === "admin" ? "admin" : "professor",
+    is_segundo_professor,
   };
 });
 
