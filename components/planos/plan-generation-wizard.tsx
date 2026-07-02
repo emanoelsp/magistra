@@ -51,6 +51,7 @@ export interface ResumeData {
 interface PlanGenerationWizardProps {
   userId: string;
   userName: string;
+  userEmail?: string;
   availableTemplates: TemplateOption[];
   preSelectedTemplateId?: string;
   recentPlanos?: RecentPlano[];
@@ -128,6 +129,7 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
 export function PlanGenerationWizard({
   userId,
   userName,
+  userEmail,
   availableTemplates,
   preSelectedTemplateId,
   recentPlanos = [],
@@ -943,6 +945,7 @@ export function PlanGenerationWizard({
             template={templateRecord}
             userId={userId}
             userName={userName}
+            userEmail={userEmail}
             wizardMode
             initialValues={editorInitialValues}
             resumeDraft={!!resumeData}

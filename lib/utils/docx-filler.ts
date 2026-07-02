@@ -1512,8 +1512,23 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
         } else if (bottomEmpty && !rightEmpty) {
           targetRowIdx = ri + 1;
           targetCellIdx = bottomCell!.cellIdx;
+        } else if (rightEmpty && bottomEmpty) {
+          // Both neighbours are empty — layout is ambiguous, but we can resolve it
+          // using the AI-provided injection_pattern hint for this cell's field.
+          // Default to adjacent_right (more common in school table templates).
+          const ambigField = matchField(cell.text, schema, used);
+          if (!ambigField) continue;
+          if (ambigField.injection_pattern === "adjacent_below" && bottomCell) {
+            targetRowIdx = ri + 1;
+            targetCellIdx = bottomCell.cellIdx;
+          } else if (rightCell) {
+            targetRowIdx = ri;
+            targetCellIdx = rightCell.cellIdx;
+          } else {
+            continue;
+          }
         } else {
-          continue; // ambiguous (both or neither) → fall through to specific passes
+          continue; // neither empty — no injection target
         }
 
         // Re-read from grRows (updated after each injection) to detect stale snapshot hits
@@ -1743,7 +1758,12 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
       // ALL CAPS + no colon: title by default, BUT if the next row is empty it is a
       // section field anchor (Rule 3 — e.g. "PROJETOS INTEGRADORES").
       // ALL CAPS + empty below falls through to the adjacent_below injection path below.
-      if (!hasMixedCase && !hasColon && !hasEmptyBelow) { continue; }
+      // Exception: if the AI detected this cell as a fillable field, inject inline
+      // even when there is no empty row below (value slot is within the label cell).
+      if (!hasMixedCase && !hasColon && !hasEmptyBelow) {
+        if (!matchField(singleCellText, schema, used)) continue;
+        // Matched schema field — fall through to inject inline (nextIsLabel will fire)
+      }
 
       // "City, " date footer — "Blumenau," "Porto Alegre," etc. → inject {{data_atual}} inline.
       // Must be checked BEFORE the mixed-case title skip, since "Blumenau," has mixed case

@@ -15,6 +15,7 @@ import { showMagisToast } from "../../lib/utils/magis-toast";
 interface GerarPlanoFlowProps {
   userId: string;
   userName: string;
+  userEmail?: string;
   templates: TemplateOption[];
   escolas: EscolaRecord[];
   turmas: TurmaRecord[];
@@ -112,6 +113,7 @@ type Phase = "intro" | "wizard";
 export function GerarPlanoFlow({
   userId,
   userName,
+  userEmail,
   templates,
   escolas,
   turmas,
@@ -201,6 +203,7 @@ export function GerarPlanoFlow({
       <PlanGenerationWizard
         userId={userId}
         userName={userName}
+        userEmail={userEmail}
         availableTemplates={templates}
         preSelectedTemplateId={selectedTemplateId || undefined}
         recentPlanos={recentPlanos}

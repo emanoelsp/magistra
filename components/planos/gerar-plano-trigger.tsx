@@ -19,6 +19,7 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
 interface GerarPlanoTriggerProps {
   userId: string;
   userName: string;
+  userEmail?: string;
   templates: TemplateOption[];
   escolas: EscolaRecord[];
   turmas: TurmaRecord[];

@@ -69,6 +69,7 @@ export default async function EditarPlanoPage({ params }: PageProps) {
       template={template}
       userId={user.uid}
       userName={user.nome || user.email}
+      userEmail={user.email}
       initialValues={initialValues}
       initialPlanoId={id}
       resumeDraft

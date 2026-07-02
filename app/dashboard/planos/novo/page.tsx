@@ -56,6 +56,7 @@ export default async function NovoPlanoPage({ searchParams }: PageProps) {
       template={template}
       userId={user.uid}
       userName={user.nome || user.email}
+      userEmail={user.email}
     />
   );
 }

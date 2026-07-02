@@ -191,6 +191,7 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
         <GerarPlanoTrigger
           userId={user.uid}
           userName={user.nome || user.email}
+          userEmail={user.email}
           templates={templates}
           escolas={caps.canAssociateEscola ? escolas : []}
           turmas={caps.canAssociateEscola ? turmas : []}

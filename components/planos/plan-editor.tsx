@@ -105,6 +105,8 @@ interface PlanEditorProps {
   template: TemplateRecord;
   userId: string;
   userName: string;
+  /** Logged-in user's email — auto-populates any schema field with key "email" on new plans. */
+  userEmail?: string;
   wizardMode?: boolean;
   initialValues?: Record<string, string>;
   /** When resuming an existing draft, pass its Firestore ID so saves update instead of creating a new plan. */
@@ -352,7 +354,7 @@ function is2profField(field: TemplateFieldSchema): boolean {
 }
 
 export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function PlanEditor(
-  { template, userId, userName, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange, canUseBulkIa = true, has2prof = false, planosRegente: initialPlanosRegente = [], onPlanosRegenteChange, estudanteNome, estudante, disciplinaBlocks: initialDisciplinaBlocks = [], onDisciplinaBlocksChange },
+  { template, userId, userName, userEmail, wizardMode = false, initialValues, initialPlanoId, resumeDraft = false, onProgressChange, canUseBulkIa = true, has2prof = false, planosRegente: initialPlanosRegente = [], onPlanosRegenteChange, estudanteNome, estudante, disciplinaBlocks: initialDisciplinaBlocks = [], onDisciplinaBlocksChange },
   ref,
 ) {
   const router = useRouter();
@@ -418,6 +420,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         (f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"),
       );
       if (ef) init[ef.key] = template.escola_nome;
+    }
+    // Auto-populate email from user profile so professors don't type their own email
+    if (userEmail) {
+      const emailField = manualFields.find(
+        (f) => f.key === "email" || f.label.toLowerCase() === "email" || f.label.toLowerCase() === "e-mail",
+      );
+      if (emailField) init[emailField.key] = userEmail;
     }
     if (!initialValues) return init;
     const merged = { ...init, ...initialValues };
