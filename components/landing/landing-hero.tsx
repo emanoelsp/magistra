@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, MapPin, Sparkles } from "lucide-react";
+import { ArrowRight, MapPin, Sparkles, UserCheck } from "lucide-react";
 import { EditorMockup } from "./editor-mockup";
 import { SIGNUP_URL } from "./constants";
 
@@ -44,13 +44,17 @@ export function LandingHero() {
 
             <p className="anim-up d-3 max-w-xl text-lg leading-relaxed text-slate-600">
               Suba o template da sua escola e a <strong className="text-slate-900">Magis</strong> — nossa assistente
-              pedagógica — aprende a estrutura e sugere conteúdos campo a campo: BNCC, SAEB, Currículo Digital e
-              currículos regionais alinhados a cada território.
+              pedagógica — aprende a estrutura e sugere conteúdos já alinhados ao currículo da sua rede, campo a campo.
             </p>
 
             <p className="anim-up d-4 mt-4 flex max-w-xl items-center gap-2 text-sm font-semibold text-violet-700">
               <MapPin className="h-4 w-4 shrink-0" aria-hidden />
               Currículos de todos os 27 estados brasileiros
+            </p>
+
+            <p className="anim-up d-4 mt-2 flex max-w-xl items-center gap-2 text-sm font-semibold text-indigo-600">
+              <UserCheck className="h-4 w-4 shrink-0" aria-hidden />
+              Também para 2º Professor — PEIs personalizados para alunos com necessidades especiais
             </p>
 
             <div className="anim-up d-4 mt-8 flex flex-wrap gap-3">
@@ -68,16 +72,6 @@ export function LandingHero() {
                 Quem é a Magis?
               </a>
             </div>
-
-            <div className="anim-up d-5 mt-9 inline-flex items-center gap-4 rounded-2xl bg-violet-600 px-6 py-4 shadow-lg shadow-violet-300/50">
-              <div className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl bg-white/20">
-                <ClockIcon />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-white">Seu plano de aula em minutos, não horas</p>
-                <p className="text-xs text-violet-200">Do template em branco ao PDF pronto em minutos.</p>
-              </div>
-            </div>
           </div>
 
           <div className="float hidden lg:block">
@@ -92,14 +86,5 @@ export function LandingHero() {
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white to-transparent" />
     </section>
-  );
-}
-
-function ClockIcon() {
-  return (
-    <>
-      <span className="text-2xl font-black leading-none text-white">⚡</span>
-      <span className="text-[9px] font-bold uppercase tracking-widest text-violet-200">rápido</span>
-    </>
   );
 }

@@ -408,64 +408,59 @@ export function EstudantesManager({ initialEstudantes, escolas, turmas }: Props)
       {deleteModal}
 
       {/* Magis bubble */}
-      <div className="flex items-start gap-3 max-w-2xl">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
-          <Sparkles className="h-5 w-5 text-white" />
-        </div>
-        <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
-          <div className="mb-1.5 flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3 text-violet-600" />
-            <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">Magis</span>
+      <div className="flex flex-col gap-6">
+        <div className="flex items-start gap-3 max-w-2xl">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
+            <Sparkles className="h-5 w-5 text-white" />
           </div>
-          {!hasEstudantes ? (
-            <p className="text-sm leading-relaxed text-slate-800">
-              Aqui você cadastra os alunos com necessidades especiais. Clique no botão abaixo para adicionar o primeiro estudante e começar a criar Planos Educacionais Individualizados personalizados!
-            </p>
-          ) : (
-            <p className="text-sm leading-relaxed text-slate-800">
-              Você tem <strong>{estudantes.length} aluno{estudantes.length !== 1 ? "s" : ""}</strong> cadastrado{estudantes.length !== 1 ? "s" : ""}. Clique em <strong>Criar PEI</strong> para iniciar um plano educacional individualizado, ou cadastre um novo aluno abaixo.
-            </p>
-          )}
+          <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-violet-600" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">Magis</span>
+            </div>
+            {!hasEstudantes ? (
+              <p className="text-sm leading-relaxed text-slate-800">
+                Você ainda não tem nenhum estudante cadastrado. Aqui ficam os alunos com necessidades especiais — cada um com diagnóstico, turma e nível de suporte, pronto para gerar PEIs. Clique abaixo para adicionar o primeiro!
+              </p>
+            ) : (
+              <p className="text-sm leading-relaxed text-slate-800">
+                Você tem <strong>{estudantes.length} aluno{estudantes.length !== 1 ? "s" : ""}</strong> cadastrado{estudantes.length !== 1 ? "s" : ""}. Clique em <strong>Criar PEI</strong> para iniciar um plano educacional individualizado, ou cadastre um novo aluno abaixo.
+              </p>
+            )}
+          </div>
         </div>
+
+        {!hasEstudantes ? (
+          <div className="flex w-full justify-center">
+            <button
+              type="button"
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
+            >
+              <Plus className="h-4 w-4" />
+              Cadastrar primeiro estudante
+              <span>→</span>
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-500">
+              {estudantes.length} estudante{estudantes.length !== 1 ? "s" : ""} cadastrado{estudantes.length !== 1 ? "s" : ""}
+            </p>
+            <button
+              type="button"
+              onClick={openCreate}
+              className="flex items-center gap-1.5 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+            >
+              <Plus className="h-4 w-4" />
+              Cadastrar estudante
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Action bar */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">
-          {estudantes.length} estudante{estudantes.length !== 1 ? "s" : ""} cadastrado{estudantes.length !== 1 ? "s" : ""}
-        </p>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="flex items-center gap-1.5 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
-        >
-          <Plus className="h-4 w-4" />
-          {hasEstudantes ? "Cadastrar estudante" : "Cadastrar primeiro estudante"}
-        </button>
-      </div>
-
-      {/* Student list / empty state */}
-      {!hasEstudantes ? (
-        <div className="rounded-3xl border border-slate-200 bg-white p-10 shadow-sm flex flex-col items-center gap-4 text-center">
-          <div className="rounded-2xl bg-indigo-50 p-4 text-indigo-500">
-            <UserCheck className="h-8 w-8" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-700">Nenhum estudante cadastrado ainda</p>
-            <p className="mt-1 text-xs text-slate-400 max-w-sm">
-              Cada aluno fica salvo aqui com seu diagnóstico, necessidades e escola — pronto para gerar PEIs de qualquer disciplina.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-indigo-500"
-          >
-            <Plus className="h-4 w-4" />
-            Cadastrar primeiro estudante
-          </button>
-        </div>
-      ) : (
+      {/* Student list */}
+      {hasEstudantes && (
         <ul className="space-y-3">
           {estudantes.map((est) => (
             <li key={est.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-slate-300 transition">

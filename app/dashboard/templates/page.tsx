@@ -104,6 +104,26 @@ export default async function TemplatesPage() {
         </div>
       )}
 
+      {/* Magis empty state */}
+      {templates.length === 0 && !templateLimitReached && (
+        <div className="flex flex-col gap-6">
+          <div className="flex items-start gap-3 max-w-2xl">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-md">
+              <Sparkles className="h-5 w-5 text-white" />
+            </div>
+            <div className="flex-1 rounded-2xl rounded-tl-none border border-violet-100 bg-violet-50 p-4 shadow-sm">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <Sparkles className="h-3 w-3 text-violet-600" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">Magis</span>
+              </div>
+              <p className="text-sm leading-relaxed text-slate-800">
+                Você ainda não tem nenhum template cadastrado. Suba o documento que a sua escola usa — a Magis aprende a estrutura e começa a sugerir os conteúdos campo a campo. Clique abaixo para começar!
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Upload section */}
       <section>
         {templateLimitReached ? (

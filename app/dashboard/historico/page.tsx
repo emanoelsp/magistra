@@ -221,7 +221,7 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
 
       {/* Lista ou empty state */}
       {pageItems.length === 0 ? (
-        <div className="py-4">
+        <div className="flex flex-col items-start gap-6 py-4">
           {tab === "planos" ? (
             hasFilters ? (
               <MagisBubble>
@@ -230,11 +230,22 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                 </p>
               </MagisBubble>
             ) : (
-              <MagisBubble>
-                <p className="text-sm leading-relaxed text-slate-800">
-                  Você ainda não gerou nenhum plano de aula. Quando criar o seu primeiro, ele vai aparecer aqui.
-                </p>
-              </MagisBubble>
+              <>
+                <MagisBubble>
+                  <p className="text-sm leading-relaxed text-slate-800">
+                    Você ainda não tem nenhum plano de aula gerado. Acesse seus templates, escolha um modelo e a Magis ajuda a preencher campo a campo. Clique abaixo para começar!
+                  </p>
+                </MagisBubble>
+                <div className="flex w-full justify-center">
+                  <Link
+                    href="/dashboard/templates"
+                    className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Ir para meus templates →
+                  </Link>
+                </div>
+              </>
             )
           ) : (
             hasFilters ? (
@@ -244,11 +255,22 @@ export default async function HistoricoPage({ searchParams }: PageProps) {
                 </p>
               </MagisBubble>
             ) : (
-              <MagisBubble>
-                <p className="text-sm leading-relaxed text-slate-800">
-                  Você ainda não tem nenhum template cadastrado. Quando adicionar o modelo da sua escola, ele vai aparecer aqui.
-                </p>
-              </MagisBubble>
+              <>
+                <MagisBubble>
+                  <p className="text-sm leading-relaxed text-slate-800">
+                    Você ainda não tem nenhum template cadastrado. Suba o documento que a sua escola usa e a Magis aprende a estrutura automaticamente. Clique abaixo para adicionar o primeiro!
+                  </p>
+                </MagisBubble>
+                <div className="flex w-full justify-center">
+                  <Link
+                    href="/dashboard/templates"
+                    className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500"
+                  >
+                    <FolderKanban className="h-4 w-4" />
+                    Adicionar meu primeiro template →
+                  </Link>
+                </div>
+              </>
             )
           )}
         </div>
