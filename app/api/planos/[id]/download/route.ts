@@ -527,10 +527,24 @@ export async function GET(
         { status: 403 },
       );
     }
-    // Fast path: serve pre-generated PDF from Vercel Blob (zero compute cost)
+    // Fast path: serve pre-generated PDF directly (private blob needs server-side auth)
     if (planoData.pdf_url && planoData.pdf_status === "pronto") {
-      void db.collection("magins_planos_aula").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
-      return NextResponse.redirect(planoData.pdf_url, { status: 302 });
+      try {
+        const pdfBuf = await downloadFile(planoData.pdf_url);
+        const titleRaw = planoData.conteudo_gerado?._plano_titulo;
+        const title = typeof titleRaw === "string" ? titleRaw.trim() : "";
+        const fastFilename = sanitizeFilename(title || "plano", "pdf");
+        void db.collection("magins_planos_aula").doc(id).update({ downloads: FieldValue.increment(1) }).catch(() => {});
+        return new NextResponse(new Uint8Array(pdfBuf), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="${fastFilename}"`,
+            "Content-Length": String(pdfBuf.length),
+          },
+        });
+      } catch {
+        // blob expired or unavailable — fall through to on-demand generation
+      }
     }
 
     const conteudo = normalizeConteudo(planoData.conteudo_gerado ?? {});

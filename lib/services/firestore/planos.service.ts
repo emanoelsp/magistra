@@ -1,7 +1,6 @@
 import {
   addDoc,
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -143,6 +142,8 @@ export const planosService = {
   },
 
   async deletePlano(planoId: string): Promise<void> {
-    await deleteDoc(doc(planosCollection, planoId));
+    await updateDoc(doc(planosCollection, planoId), {
+      deleted_at: new Date().toISOString(),
+    });
   },
 };

@@ -11,6 +11,7 @@ import {
   FileText,
   FolderKanban,
   Pencil,
+  Trash2,
 } from "lucide-react";
 import type { PlanoStatus } from "../../lib/types/firestore";
 
@@ -204,11 +205,28 @@ export interface PlanoDashboardItem {
   estudante_nome?: string;
 }
 
-export function PlanosPaginatedList({ items, pageSize = DEFAULT_PAGE_SIZE }: { items: PlanoDashboardItem[]; pageSize?: number }) {
+export function PlanosPaginatedList({ items: initialItems, pageSize = DEFAULT_PAGE_SIZE }: { items: PlanoDashboardItem[]; pageSize?: number }) {
+  const [items, setItems] = useState(initialItems);
   const [page, setPage] = useState(1);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const totalPages = Math.ceil(items.length / pageSize);
   const start = (page - 1) * pageSize;
   const visible = items.slice(start, start + pageSize);
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/planos/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setItems((prev) => prev.filter((p) => p.id !== id));
+        setPage((p) => Math.min(p, Math.ceil((items.length - 1) / pageSize) || 1));
+      }
+    } finally {
+      setDeletingId(null);
+      setConfirmingId(null);
+    }
+  }
 
   return (
     <div className="flex flex-1 flex-col">
@@ -263,6 +281,37 @@ export function PlanosPaginatedList({ items, pageSize = DEFAULT_PAGE_SIZE }: { i
                   >
                     <Download className="h-3.5 w-3.5" />
                   </a>
+                )}
+                {plano.status === "rascunho" && (
+                  confirmingId === plano.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingId(null)}
+                        disabled={deletingId === plano.id}
+                        className="rounded-xl border border-slate-200 px-2 py-1.5 text-xs text-slate-500 transition hover:border-slate-400 disabled:opacity-40"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(plano.id)}
+                        disabled={deletingId === plano.id}
+                        className="rounded-xl border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-medium text-rose-600 transition hover:bg-rose-100 disabled:opacity-40"
+                      >
+                        {deletingId === plano.id ? "Excluindo…" : "Confirmar"}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(plano.id)}
+                      className="rounded-xl border border-slate-200 p-1.5 text-slate-400 transition hover:border-rose-300 hover:text-rose-500"
+                      title="Excluir rascunho"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )
                 )}
                 {(plano.status === "rascunho" || plano.status === "aguardando_geracao") && (
                   <Link

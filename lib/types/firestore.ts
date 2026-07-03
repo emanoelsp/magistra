@@ -187,6 +187,7 @@ export interface PlanoRecord {
   conteudo_gerado: Record<string, unknown>;
   data_geracao: string;
   status: PlanoStatus;
+  deleted_at?: string;
   schema_campos?: TemplateFieldSchema[];
   downloads?: number;
   /** Snapshotted at finalization so download survives template deletion or file replacement. */

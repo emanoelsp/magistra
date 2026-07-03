@@ -108,6 +108,7 @@ export async function getRelatorioData(
 
   for (const doc of planosSnap.docs) {
     const d = doc.data();
+    if (d.deleted_at) continue;
     const status = (typeof d.status === "string" ? d.status : "rascunho") as PlanoStatus;
     const dataGeracao = toDate(d.data_geracao ?? d.data_criacao);
     const templateId = typeof d.template_id === "string" ? d.template_id : "";
@@ -149,7 +150,7 @@ export async function getRelatorioData(
     }
   }
 
-  const total = planosSnap.size;
+  const total = planosSnap.docs.filter((d) => !d.data().deleted_at).length;
 
   const planosPorMes: PlanoPorMes[] = monthKeys.map((k) => ({
     key: k,

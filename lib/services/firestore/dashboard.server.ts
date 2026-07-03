@@ -76,7 +76,8 @@ export async function getDashboardStats(user: UserProfile): Promise<DashboardSta
   let planosGeradosMes = 0;
   let planosPendentes = 0;
 
-  for (const documentSnapshot of planosSnapshot.docs) {
+  const activePlanosDocs = planosSnapshot.docs.filter((d) => !d.data().deleted_at);
+  for (const documentSnapshot of activePlanosDocs) {
     const planoData = documentSnapshot.data();
     const status = typeof planoData.status === "string" ? (planoData.status as PlanoStatus) : "rascunho";
     const generatedAt = toDate(planoData.data_geracao);
@@ -92,7 +93,7 @@ export async function getDashboardStats(user: UserProfile): Promise<DashboardSta
 
   return {
     totalTemplates: templatesSnapshot.size,
-    totalPlanos: planosSnapshot.size,
+    totalPlanos: activePlanosDocs.length,
     planosGeradosMes,
     planosPendentes,
     tokensUsadosMes: user.tokens_usados_mes,
@@ -177,6 +178,7 @@ export async function getUserPlanos(userId: string): Promise<PlanoRecord[]> {
   const snapshot = await adminDb.collection("magins_planos_aula").where("user_id", "==", userId).get();
 
   return snapshot.docs
+    .filter((doc) => !doc.data().deleted_at)
     .map((doc) => {
       const d = doc.data();
       return {
@@ -220,6 +222,7 @@ export async function getUserPlanosComNome(
 
   // Sort all in memory (Firestore orderBy needs composite index; this is safe at current scale)
   let allPlanos = snapshot.docs
+    .filter((doc) => !doc.data().deleted_at)
     .map((doc) => {
       const d = doc.data();
       return {

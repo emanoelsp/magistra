@@ -282,6 +282,12 @@ export function PlanGenerationWizard({
       const df = manualFields.find((f) => f.key.includes("disciplina") || f.key.includes("componente") || f.label.toLowerCase().includes("disciplina") || f.label.toLowerCase().includes("componente"));
       if (df && !initial[df.key]) initial[df.key] = initialDisciplina;
     }
+    if (userName && !userName.includes("@")) {
+      const pf = manualFields.find(
+        (f) => f.key === "professor" || f.key === "nome_prof" || f.label.toLowerCase().includes("professor"),
+      );
+      if (pf && !initial[pf.key]) initial[pf.key] = userName;
+    }
     setMetadataValues(initial);
     setCommittedValues(initial);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1075,15 +1081,19 @@ export function PlanGenerationWizard({
                     </div>
                   )}
 
-                  {pdfStatus === "pronto" && pdfUrl && (
-                    <a
-                      href={pdfUrl}
-                      download
+                  {pdfStatus === "pronto" && savedPlanoId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void triggerDownload(`/api/planos/${savedPlanoId}/download?format=pdf`)
+                          .then((info) => { if (info) setDownloadLimitInfo(info); })
+                          .catch(() => { window.open(`/api/planos/${savedPlanoId}/download?format=pdf`, "_blank"); });
+                      }}
                       className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
                     >
                       <Download className="h-3.5 w-3.5" />
                       Baixar PDF
-                    </a>
+                    </button>
                   )}
 
                   {(pdfStatus === "erro" || pdfStatus === "timeout") && (

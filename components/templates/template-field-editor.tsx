@@ -804,6 +804,41 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         continue;
       }
 
+      // If any chip is embedded in the MIDDLE of text (has non-token text both
+      // before and after it), send the full currentText so the server uses
+      // clearAndSetCellText and places the chip at the correct position.
+      // safeAppendToken always appends to the last paragraph, which is wrong
+      // when the chip belongs in the middle of the cell content.
+      const hasChipInMiddle = matches.some((m) => {
+        const before = currentText
+          .slice(0, m.index!)
+          .replace(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        const after = currentText
+          .slice((m.index ?? 0) + m[0].length)
+          .replace(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        return before.length > 0 && after.length > 0;
+      });
+
+      if (hasChipInMiddle) {
+        const alreadyQueued = cellEdits.some(
+          (ce) => ce.replaceContent && ce.coord === coord && ce.ordinal === effectiveOrdinal,
+        );
+        if (!alreadyQueued) {
+          cellEdits.push({
+            cellText: originalText,
+            ordinal: effectiveOrdinal,
+            newContent: currentText,
+            coord,
+            replaceContent: true,
+          });
+        }
+        continue;
+      }
+
       // Normal path: per-token injection (non-token text unchanged, only chips added/moved).
       // contextBefore = text on the same visual line immediately before the token.
       for (const match of matches) {

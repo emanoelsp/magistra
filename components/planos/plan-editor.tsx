@@ -39,6 +39,7 @@ import {
 } from "./download-plan-button";
 import { PlanVersionsButton } from "./plan-versions-button";
 import { showMagisToast } from "../../lib/utils/magis-toast";
+import { fixDocxAnchorImages } from "../../lib/utils/docx-anchor-fix";
 
 // ── Telemetria de feedback implícito ─────────────────────────────────────────
 
@@ -176,18 +177,22 @@ interface DocViewProps {
   activeFieldKey: string | null;
   onFieldFocus: (key: string, label: string, role: string) => void;
   onFieldChange: (key: string, value: string) => void;
+  docxBuf?: ArrayBuffer | null;
 }
 
-function DocView({ html, values, activeFieldKey, onFieldFocus, onFieldChange }: DocViewProps) {
+function DocView({ html, values, activeFieldKey, onFieldFocus, onFieldChange, docxBuf }: DocViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const prevValues = useRef<Record<string, string>>({});
   const isComposing = useRef(false);
 
-  // Set HTML once on mount / when html prop changes
+  // Set HTML once on mount / when html prop changes; apply anchor image fix when buffer arrives
   useEffect(() => {
     if (!containerRef.current) return;
     containerRef.current.innerHTML = html;
-  }, [html]);
+    if (docxBuf) {
+      fixDocxAnchorImages(docxBuf, containerRef.current).catch(() => {});
+    }
+  }, [html, docxBuf]);
 
   // Wire up editable cells after HTML is painted
   useEffect(() => {
@@ -305,9 +310,10 @@ function DocView({ html, values, activeFieldKey, onFieldFocus, onFieldChange }: 
 interface PreviewDocViewProps {
   html: string;
   values: Record<string, string>;
+  docxBuf?: ArrayBuffer | null;
 }
 
-function PreviewDocView({ html, values }: PreviewDocViewProps) {
+function PreviewDocView({ html, values, docxBuf }: PreviewDocViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -326,8 +332,11 @@ function PreviewDocView({ html, values }: PreviewDocViewProps) {
       cell.contentEditable = "false";
       cell.style.cssText = "cursor:default;";
     });
+    if (docxBuf) {
+      fixDocxAnchorImages(docxBuf, container).catch(() => {});
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, values]);
+  }, [html, values, docxBuf]);
 
   return (
     <div className="doc-page">
@@ -428,6 +437,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       );
       if (emailField) init[emailField.key] = userEmail;
     }
+    // Auto-populate professor name from user profile
+    if (userName && !userName.includes("@")) {
+      const pf = manualFields.find(
+        (f) => f.key === "professor" || f.key === "nome_prof" || f.label.toLowerCase().includes("professor"),
+      );
+      if (pf && !init[pf.key]) init[pf.key] = userName;
+    }
     if (!initialValues) return init;
     const merged = { ...init, ...initialValues };
     // When resuming a draft, keep all existing values (including ia_sugerida).
@@ -443,6 +459,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       if (ef) {
         merged[ef.key] = initialValues[ef.key] || template.escola_nome || "";
       }
+    }
+    // Auto-populate professor name from user profile (fallback when empty after merge)
+    if (userName && !userName.includes("@")) {
+      const pf = manualFields.find(
+        (f) => f.key === "professor" || f.key === "nome_prof" || f.label.toLowerCase().includes("professor"),
+      );
+      if (pf && !merged[pf.key]) merged[pf.key] = userName;
     }
     // Discipline block student fields — initialize from passed blocks (empty by default)
     for (let i = 0; i < initialDisciplinaBlocks.length; i++) {
@@ -486,9 +509,11 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
 
   // Document HTML state
   const [docHtml, setDocHtml] = useState<string | null>(null);
+  const [docxBuf, setDocxBuf] = useState<ArrayBuffer | null>(null);
   const [docLoading, setDocLoading] = useState(false);
   const docContainerRef = useRef<HTMLDivElement>(null);
   const docScrolledRef = useRef(false);
+  const leftPanelRef = useRef<HTMLDivElement>(null);
 
   // Preview mode: read-only view of filled doc
   const [previewMode, setPreviewMode] = useState(false);
@@ -526,17 +551,20 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const metadata = extractMetadata(values, schema);
   const metadataComplete = isMetadataComplete(metadata);
 
-  // Fetch annotated HTML from template DOCX
+  // Fetch annotated HTML and raw DOCX buffer together (for anchor image fix)
   useEffect(() => {
     const url = template.arquivo_url ?? "";
     const ext = url.split(".").pop()?.toLowerCase() ?? "";
     if ((ext !== "docx" && ext !== "doc") || !url) return;
 
     setDocLoading(true);
-    fetch(`/api/templates/${template.id}/editor-html`)
-      .then((r) => r.json())
-      .then((data: { html?: string | null }) => {
+    Promise.all([
+      fetch(`/api/templates/${template.id}/editor-html`).then((r) => r.json() as Promise<{ html?: string | null }>),
+      fetch(`/api/templates/${template.id}/arquivo`).then((r) => r.arrayBuffer()),
+    ])
+      .then(([data, buf]) => {
         if (data.html) setDocHtml(data.html);
+        setDocxBuf(buf);
       })
       .catch(() => {/* fall back to form view */})
       .finally(() => setDocLoading(false));
@@ -548,22 +576,31 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
     if (!wizardMode) return;
 
     if (docHtml) {
-      // DOCX view: scroll the doc container to the first IA cell
+      // DOCX view: scroll the left panel to the first IA cell
       if (docScrolledRef.current) return;
       docScrolledRef.current = true;
       const timer = setTimeout(() => {
         const firstIaCell = docContainerRef.current?.querySelector<HTMLElement>(
           '[data-field-role="ia_sugerida"]',
         );
-        firstIaCell?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const panel = leftPanelRef.current;
+        if (firstIaCell && panel) {
+          const rect = firstIaCell.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          panel.scrollTop += rect.top - panelRect.top - 40;
+        }
       }, 300);
       return () => clearTimeout(timer);
     } else if (!docLoading) {
-      // Form fallback: scroll to the ia-section anchor
+      // Form fallback: scroll only the left panel to the first IA section
       const timer = setTimeout(() => {
-        document
-          .getElementById("ia-section-first")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        const el = document.getElementById("ia-section-first");
+        const panel = leftPanelRef.current;
+        if (el && panel) {
+          const rect = el.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          panel.scrollTop += rect.top - panelRect.top - 20;
+        }
       }, 300);
       return () => clearTimeout(timer);
     }
@@ -1108,7 +1145,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         }`}
       >
         {/* ── Left: Document view or form fallback ── */}
-        <div className={`flex-1 overflow-y-auto overflow-x-auto ${!wizardMode && !previewMode && mobileTab !== "documento" ? "hidden lg:flex lg:flex-col" : ""}`}>
+        <div ref={leftPanelRef} className={`flex-1 overflow-y-auto overflow-x-auto ${!wizardMode && !previewMode && mobileTab !== "documento" ? "hidden lg:flex lg:flex-col" : ""}`}>
           {docLoading ? (
             <div className="flex h-full items-center justify-center gap-3 text-slate-500">
               <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
@@ -1150,6 +1187,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 .doc-view em { font-style:italic; }
                 .doc-view u { text-decoration:underline; }
                 .doc-view img { max-width:100%; height:auto; display:block; margin:0 auto 8px; }
+                .doc-view td img, .doc-view th img { margin:0; display:inline-block; }
                 .doc-view ul, .doc-view ol { padding-left:18px; margin:2px 0; }
                 .doc-view li { margin:1px 0; }
 
@@ -1283,12 +1321,13 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
               )}
               <div ref={docContainerRef}>
                 {previewMode ? (
-                  <PreviewDocView html={docHtml} values={values} />
+                  <PreviewDocView html={docHtml} values={values} docxBuf={docxBuf} />
                 ) : (
                   <DocView
                     html={docHtml}
                     values={values}
                     activeFieldKey={activeFieldKey}
+                    docxBuf={docxBuf}
                     onFieldFocus={(key, label, role) => {
                       setActiveFieldKey(key);
                       setActiveFieldMeta({ label, role });

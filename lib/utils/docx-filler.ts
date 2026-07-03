@@ -1295,11 +1295,10 @@ export function injectAtCoord(
           return clearAndSetCellText(tcXml, content.trim());
         }
 
-        // Soft-return cell with a label hint: inject at the specific <w:t> segment
-        // that contains the label rather than appending to the last </w:p>.
-        // Without this, all tokens in a soft-break cell (where every visual line
-        // lives in one <w:r> with <w:br/> separators) pile up at paragraph end.
-        if (isSimpleToken && labelHint && tcXml.includes("<w:br")) {
+        // Use labelHint to inject at the specific paragraph/segment that matches —
+        // works for both soft-return cells (<w:br> segments) and multi-paragraph cells.
+        // Without this, tokens in multi-paragraph cells always pile up at the last </w:p>.
+        if (isSimpleToken && labelHint) {
           const key = content.trim().replace(/^\{\{|\}\}$/g, "");
           const patched = appendToParagraph(tcXml, normText(labelHint), key);
           if (patched !== tcXml) return patched;
