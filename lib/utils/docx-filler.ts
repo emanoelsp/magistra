@@ -744,7 +744,7 @@ function resolveLabelNormFromCell(
  *      (handles cells where the paragraph has brief preceding content)
  *   3. Soft-return line match: tries lines within paragraphs that use <w:br/>
  */
-function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string): string {
+function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string, contextIsExact = false): string {
   const placeholder = `{{${fieldKey}}}`;
   const paras = [...cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
 
@@ -848,9 +848,10 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
           }
         }
 
-        if (hasSubItems) {
-          // Sub-items present → inject as new run at end of paragraph so the field
-          // value slot appears after all sub-item labels (e.g. "- Carga horária:", "- Período:").
+        if (hasSubItems && !contextIsExact) {
+          // Sub-items present and labelHint is a heuristic field label (not user-supplied
+          // contextBefore) → inject at end of paragraph so the field value slot appears
+          // after all sub-item labels (e.g. "- Carga horária:", "- Período:").
           const pCloseIdx = paraXml.lastIndexOf("</w:p>");
           if (pCloseIdx < 0) continue;
           const newRun = `<w:r><w:t xml:space="preserve"> ${placeholder}</w:t></w:r>`;
@@ -858,6 +859,8 @@ function appendToParagraph(cellXml: string, labelNorm: string, fieldKey: string)
           console.info(`[appendToParagraph ALL-CAPS+sub-items] ${fieldKey} → end-of-para after "${segText.slice(0, 40)}"`);
           return cellXml.replace(paraXml, newParaXml);
         }
+        // contextIsExact=true: user placed chip RIGHT AFTER this header → fall through to
+        // the "inject right after header break" path below, ignoring sub-items.
 
         // No sub-items: inject right after the header break (Seg 1).
         // We must stay within the existing <w:r> because:
@@ -1257,6 +1260,7 @@ export function injectAtCoord(
   content: string,
   labelHint = "",
   replaceContent = false,
+  contextIsExact = false,
 ): Buffer {
   const m = coord.match(/^T(\d+)R(\d+)C(\d+)$/);
   if (!m) return docxBuffer;
@@ -1300,7 +1304,7 @@ export function injectAtCoord(
         // Without this, tokens in multi-paragraph cells always pile up at the last </w:p>.
         if (isSimpleToken && labelHint) {
           const key = content.trim().replace(/^\{\{|\}\}$/g, "");
-          const patched = appendToParagraph(tcXml, normText(labelHint), key);
+          const patched = appendToParagraph(tcXml, normText(labelHint), key, contextIsExact);
           if (patched !== tcXml) return patched;
         }
 

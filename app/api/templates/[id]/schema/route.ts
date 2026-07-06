@@ -207,8 +207,11 @@ export async function PATCH(
           (keysInEdit.length === 1
             ? (newSchema.find((f) => f.key === keysInEdit[0])?.label ?? "")
             : "");
+        // contextIsExact=true when labelHint comes from the user's DOM context (contextBefore),
+        // meaning the chip is placed right after that text — override ALL CAPS heuristics.
+        const contextIsExact = !!edit.contextBefore;
         const prevBuf = buffer;
-        buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint, edit.replaceContent);
+        buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint, edit.replaceContent, contextIsExact);
         const coordWorked = buffer !== prevBuf;
         console.info(`[schema/cell_edit] coord=${edit.coord} newContent=${edit.newContent.slice(0, 60)} coordWorked=${coordWorked}`);
         // If coord lookup failed (returned same buffer), fall back to text-based injection
