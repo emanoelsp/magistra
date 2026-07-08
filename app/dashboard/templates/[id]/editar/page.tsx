@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, Eye } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 import { TemplateFieldEditor } from "../../../../../components/templates/template-field-editor";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
@@ -72,13 +72,6 @@ export default async function EditarTemplatePage({ params }: PageProps) {
 
         <div className="flex shrink-0 items-center gap-2">
           <div id="template-header-actions" className="flex items-center gap-1.5" />
-          <Link
-            href={`/dashboard/templates/${template.id}/visualizar`}
-            className="flex shrink-0 items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-          >
-            <Eye className="h-4 w-4" />
-            Visualizar
-          </Link>
         </div>
       </header>
 

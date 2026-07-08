@@ -15,6 +15,7 @@ import {
   ChevronUp,
   Clock,
   Crosshair,
+  Eye,
   GripVertical,
   HelpCircle,
   Italic,
@@ -3098,6 +3099,34 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
       {headerActionsEl && createPortal(
         <>
+          {/* Primary action button in header — swaps between Verificar and Confirmar */}
+          {reviewMode ? (
+            <button
+              type="button"
+              onClick={handleConfirmTemplate}
+              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Confirmar template
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleAdvanceToReview()}
+              disabled={isAdvancing}
+              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {isAdvancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Verificar template
+            </button>
+          )}
+          <a
+            href={`/dashboard/templates/${template.id}/visualizar`}
+            className="flex shrink-0 items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+          >
+            <Eye className="h-4 w-4" />
+            Visualizar
+          </a>
           <button
             type="button"
             onClick={() => { setShowVersions(true); void loadVersions(); }}
