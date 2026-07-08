@@ -1362,6 +1362,33 @@ export function injectRawCell(
     }
   }
 
+  // Pass 3: header/footer XML files.
+  // Cells inside word/header*.xml and word/footer*.xml are rendered inside
+  // <header>/<footer> HTML elements by docx-preview and are therefore excluded
+  // from coord assignment (mainDocumentTables filters them). When the user edits
+  // a header cell, cell_edit arrives with no coord and document.xml passes above
+  // find nothing. Try all header/footer files as a last resort.
+  const normCellText = normText(cellText);
+  for (const path of Object.keys(zip.files)) {
+    if (!/^word\/(header|footer)\d+\.xml$/.test(path)) continue;
+    let hXml = normalizeDocxXml(zip.files[path].asText());
+    const hTcRe = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
+    let hMatch: RegExpExecArray | null;
+    let hHits = 0;
+    while ((hMatch = hTcRe.exec(hXml)) !== null) {
+      const text = normText(extractText(hMatch[0]).trim());
+      if (text === normCellText) {
+        if (hHits === ordinal) {
+          const newTc = applyContent(hMatch[0]);
+          hXml = hXml.slice(0, hMatch.index) + newTc + hXml.slice(hMatch.index + hMatch[0].length);
+          zip.file(path, hXml);
+          return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+        }
+        hHits++;
+      }
+    }
+  }
+
   return docxBuffer;
 }
 
@@ -2976,6 +3003,21 @@ export function stripNonSchemaTokens(docxBuffer: Buffer, validKeys: Set<string>)
   });
 
   zip.file(xmlPath, xml);
+
+  // Apply Pass 1 (simple regex) to header/footer XML files so stale tokens
+  // (e.g. {{email}} in word/header1.xml) are stripped when the field is deleted
+  // from the schema.  Pass 2 (fragmented-token defragmentation) is omitted for
+  // headers — fragmented tokens there are extremely rare and the full pass would
+  // require duplicating significant logic.
+  for (const path of Object.keys(zip.files)) {
+    if (!/^word\/(header|footer)\d+\.xml$/.test(path)) continue;
+    const hXml = zip.files[path].asText().replace(
+      /\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g,
+      (match, key: string) => (validKeys.has(key) ? match : ""),
+    );
+    zip.file(path, hXml);
+  }
+
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
