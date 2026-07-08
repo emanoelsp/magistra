@@ -124,6 +124,7 @@ export default async function VisualizarTemplatePage({ params }: PageProps) {
         schema={template.schema_campos}
         isDocx={isDocx}
         hasFillable={hasFillable}
+        fillableUrl={template.arquivo_fillable_url}
       />
     </div>
   );

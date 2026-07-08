@@ -968,7 +968,15 @@ function safeAppendToken(cellXml: string, token: string): string {
     return cellXml;
   }
 
-  // NON-EMPTY cell (has label text): append token as a new run at the end of
+  // NON-EMPTY cell: only inject if it looks like a label (ends with ":", ALL-CAPS)
+  // or a fill-in-the-blank placeholder (underscores/dashes only).
+  // If the cell already has real value content (e.g. "escola@email.com", "João Silva"),
+  // skip injection — we must not append a chip to a cell the user has already filled.
+  const isPlaceholderContent = /^[_\-\.\/\s]+$/.test(allText);
+  const isLabelCell = looksLikeLabel(allText);
+  if (!isPlaceholderContent && !isLabelCell) return cellXml;
+
+  // NON-EMPTY label cell: append token as a new run at the end of
   // the last <w:p> — never overwrites label text, never destroys structure.
   const lastParaClose = cellXml.lastIndexOf("</w:p>");
   if (lastParaClose !== -1) {
@@ -989,19 +997,47 @@ function safeAppendToken(cellXml: string, token: string): string {
 }
 
 /**
- * Replaces ALL <w:t> text in a cell with `content`.
- * Sets the first <w:t> to the new content and empties every subsequent one.
- * ONLY use for simple single-paragraph cells where full replacement is correct.
- * For multi-paragraph cells, use safeAppendToken instead.
+ * Replaces ALL <w:t> text in a cell with `content`, targeting the first
+ * paragraph that has actual text content.
+ *
+ * Word templates commonly have cells with an empty leading paragraph
+ * (paragraph-formatting block only) followed by the real content paragraph.
+ * Writing to the absolute first <w:t> would land in the wrong paragraph,
+ * adding phantom height that pushes subsequent tables to a new page.
+ *
+ * Algorithm:
+ *   1. Find the first <w:p> whose extractText().trim() is non-empty (the
+ *      "target" paragraph).
+ *   2. In the target paragraph: set first <w:t> to `content`, empty the rest.
+ *   3. Empty paragraphs (no text): keep completely unchanged (preserve spacing).
+ *   4. Other paragraphs with text: empty all <w:t> (stale content cleared).
  */
 function clearAndSetCellText(cellXml: string, content: string): string {
-  let first = true;
-  return cellXml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, (match) => {
-    if (first) {
-      first = false;
-      return `<w:t xml:space="preserve">${content}</w:t>`;
-    }
-    return "<w:t/>";
+  const paraMatches = [...cellXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+  const targetIdx = paraMatches.findIndex((m) => extractText(m[0]).trim());
+
+  if (targetIdx < 0) {
+    // No paragraph with text — fall back to absolute first <w:t>
+    let first = true;
+    return cellXml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, (match) => {
+      if (first) { first = false; return `<w:t xml:space="preserve">${content}</w:t>`; }
+      return "<w:t/>";
+    });
+  }
+
+  let paraCount = 0;
+  return cellXml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paraXml) => {
+    const isTarget = paraCount === targetIdx;
+    paraCount++;
+    if (!extractText(paraXml).trim()) return paraXml; // keep empty paragraphs intact
+    let firstWt = true;
+    return paraXml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, (match) => {
+      if (isTarget && firstWt) {
+        firstWt = false;
+        return `<w:t xml:space="preserve">${content}</w:t>`;
+      }
+      return "<w:t/>";
+    });
   });
 }
 

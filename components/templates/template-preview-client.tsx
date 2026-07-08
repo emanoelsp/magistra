@@ -9,6 +9,7 @@ interface TemplatePreviewClientProps {
   schema: TemplateFieldSchema[];
   isDocx: boolean;
   hasFillable?: boolean;
+  fillableUrl?: string;
 }
 
 export function TemplatePreviewClient({
@@ -16,9 +17,10 @@ export function TemplatePreviewClient({
   schema,
   isDocx,
   hasFillable = false,
+  fillableUrl,
 }: TemplatePreviewClientProps) {
   if (!isDocx) return <SchemaTable schema={schema} />;
-  return <DocxPreview templateId={templateId} schema={schema} hasFillable={hasFillable} />;
+  return <DocxPreview templateId={templateId} schema={schema} hasFillable={hasFillable} fillableUrl={fillableUrl} />;
 }
 
 // ─── DocxPreview ──────────────────────────────────────────────────────────────
@@ -27,10 +29,12 @@ function DocxPreview({
   templateId,
   schema,
   hasFillable,
+  fillableUrl,
 }: {
   templateId: string;
   schema: TemplateFieldSchema[];
   hasFillable: boolean;
+  fillableUrl?: string;
 }) {
   const [officeUrl, setOfficeUrl] = useState<string | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
@@ -92,8 +96,10 @@ function DocxPreview({
     );
   }
 
-  // Localhost fallback — docx-preview with chip overlays
-  return <DocxPreviewLocal templateId={templateId} schema={schema} />;
+  // Localhost fallback — docx-preview with chip overlays.
+  // key=fillableUrl forces remount (and re-fetch) whenever the template is saved,
+  // so Visualizar always shows the most recently generated fillable.
+  return <DocxPreviewLocal key={fillableUrl ?? templateId} templateId={templateId} schema={schema} />;
 }
 
 // ─── Variable reference panel ─────────────────────────────────────────────────
