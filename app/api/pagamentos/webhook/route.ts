@@ -1,22 +1,9 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { MercadoPagoConfig, PreApproval } from "mercadopago";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "../../../../lib/firebase/admin";
 
-function getMpClient() {
-  const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
-  if (!token) throw new Error("MERCADOPAGO_ACCESS_TOKEN não configurado.");
-  return new MercadoPagoConfig({ accessToken: token });
-}
-
-/**
- * Validates the x-signature header sent by MercadoPago.
- * Format: "ts=<timestamp>,v1=<hmac-sha256-hex>"
- * Signed string: "id:<dataId>;request-id:<xRequestId>;ts:<ts>;"
- * Returns true if valid, false if invalid, null if secret not configured (skip validation).
- */
 function validateMpSignature(
   xSignature: string | null,
   xRequestId: string | null,
@@ -53,6 +40,13 @@ const AVULSO_FIELD: Record<string, "avulso_templates" | "avulso_planos"> = {
   avulso_plano: "avulso_planos",
 };
 
+interface MpPayment {
+  id: string;
+  status: string;
+  external_reference?: string;
+  transaction_amount?: number;
+}
+
 export async function POST(request: Request) {
   try {
     const xSignature = request.headers.get("x-signature");
@@ -65,7 +59,6 @@ export async function POST(request: Request) {
       data?: { id?: string };
     };
 
-    // Valida assinatura HMAC-SHA256 quando MERCADOPAGO_WEBHOOK_SECRET está configurado
     if (body.data?.id) {
       const signatureValid = validateMpSignature(xSignature, xRequestId, body.data.id);
       if (signatureValid === false) {
@@ -73,35 +66,50 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Assinatura inválida." }, { status: 401 });
       }
       if (signatureValid === null) {
-        console.warn("[webhook/mp] MERCADOPAGO_WEBHOOK_SECRET não configurado — validação de assinatura ignorada.");
+        console.warn("[webhook/mp] MERCADOPAGO_WEBHOOK_SECRET não configurado — validação ignorada.");
       }
     }
 
-    // MP envia type = "subscription_preapproval" para eventos de assinatura
-    if (body.type !== "subscription_preapproval" || !body.data?.id) {
+    // Preference webhooks send type = "payment"
+    if (body.type !== "payment" || !body.data?.id) {
       return NextResponse.json({ ok: true });
     }
 
-    // Idempotência: cada notificação tem um id único enviado pelo MP
+    const paymentId = body.data.id;
+
+    // Idempotency check
     const notificationId = body.id != null ? String(body.id) : null;
+    const db = getAdminDb();
     if (notificationId) {
-      const db = getAdminDb();
       const eventRef = db.collection("magis_webhook_events").doc(notificationId);
       const eventSnap = await eventRef.get();
       if (eventSnap.exists) {
         console.log(`[webhook/mp] Notificação ${notificationId} já processada — ignorando.`);
         return NextResponse.json({ ok: true });
       }
-      // Reserva o slot antes de processar para evitar race condition
-      await eventRef.set({ processed_at: new Date().toISOString(), subscription_id: body.data.id });
+      await eventRef.set({ processed_at: new Date().toISOString(), payment_id: paymentId });
     }
 
-    const client = getMpClient();
-    const preApproval = new PreApproval(client);
-    const sub = await preApproval.get({ id: body.data.id });
+    // Fetch payment details from MP
+    const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
+    if (!token) {
+      console.error("[webhook/mp] MERCADOPAGO_ACCESS_TOKEN não configurado.");
+      return NextResponse.json({ ok: true });
+    }
 
-    // external_reference = "uid|plano" or "uid|avulso_template|qty" or "uid|avulso_plano|qty"
-    const ref = sub.external_reference ?? "";
+    const paymentRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!paymentRes.ok) {
+      console.error("[webhook/mp] Erro ao buscar pagamento:", await paymentRes.text());
+      return NextResponse.json({ error: "Erro ao buscar pagamento." }, { status: 500 });
+    }
+    const payment = (await paymentRes.json()) as MpPayment;
+
+    // external_reference = "uid|tipo|extra|timestamp"
+    // plano upgrade:  "uid|plano|cupom|timestamp"
+    // avulso:         "uid|avulso_template|qty|timestamp"
+    const ref = payment.external_reference ?? "";
     const parts = ref.split("|");
     const uid = parts[0];
     const tipo = parts[1];
@@ -111,78 +119,78 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    const db = getAdminDb();
     const now = new Date().toISOString();
-    const subDocRef = db.collection("magis_assinaturas").doc(body.data.id);
+    const pagDocRef = db.collection("magis_pagamentos").doc(paymentId);
 
-    // Avulso add-on handling
+    // Avulso add-on
     if (AVULSO_TIPOS.has(tipo)) {
       const field = AVULSO_FIELD[tipo];
       const qty = parseInt(parts[2] ?? "1", 10);
 
-      if (sub.status === "authorized") {
+      if (payment.status === "approved") {
         await db.collection("magis_users").doc(uid).update({
           [field]: FieldValue.increment(qty),
         });
-        await subDocRef.set({
+        await pagDocRef.set({
           user_id: uid,
-          mp_preapproval_id: body.data.id,
+          mp_payment_id: paymentId,
           tipo,
           qty,
           field,
-          status: "authorized",
-          valor_brl: sub.auto_recurring?.transaction_amount ?? 0,
+          status: "approved",
+          valor_brl: payment.transaction_amount ?? 0,
           created_at: now,
           updated_at: now,
         }, { merge: true });
         console.log(`[webhook/mp] Avulso ${tipo} +${qty} para uid=${uid}`);
-      }
-
-      if (sub.status === "cancelled" || sub.status === "paused") {
-        // Retrieve stored qty in case external_reference differs
-        const subSnap = await subDocRef.get();
-        const storedQty = (subSnap.data()?.qty as number | undefined) ?? qty;
-        await db.collection("magis_users").doc(uid).update({
-          [field]: FieldValue.increment(-storedQty),
-        });
-        await subDocRef.update({ status: sub.status, updated_at: now });
-        console.log(`[webhook/mp] Avulso ${tipo} -${storedQty} (${sub.status}) uid=${uid}`);
+      } else {
+        await pagDocRef.set({
+          user_id: uid,
+          mp_payment_id: paymentId,
+          tipo,
+          qty,
+          status: payment.status,
+          updated_at: now,
+        }, { merge: true });
+        console.log(`[webhook/mp] Avulso ${tipo} status=${payment.status} uid=${uid}`);
       }
 
       return NextResponse.json({ ok: true });
     }
 
-    // Plan subscription handling
+    // Plan upgrade
     const plano = tipo;
     const couponCode = (parts[2] ?? "").trim().toUpperCase() || null;
 
-    if (sub.status === "authorized") {
+    if (payment.status === "approved") {
       await db.collection("magis_users").doc(uid).update({ plano, onboarding_concluido: true });
-      await subDocRef.set({
+      await pagDocRef.set({
         user_id: uid,
-        mp_preapproval_id: body.data.id,
+        mp_payment_id: paymentId,
         plano,
-        status: "authorized",
-        valor_brl: sub.auto_recurring?.transaction_amount ?? 0,
         cupom: couponCode,
+        status: "approved",
+        valor_brl: payment.transaction_amount ?? 0,
         created_at: now,
         updated_at: now,
       }, { merge: true });
       console.log(`[webhook/mp] Plano ${plano} ativado para uid=${uid}`);
 
-      // Increment coupon usage
       if (couponCode) {
         const couponSnap = await db.collection("magis_cupons").where("code", "==", couponCode).limit(1).get();
         if (!couponSnap.empty) {
           await couponSnap.docs[0].ref.update({ uses: FieldValue.increment(1) });
         }
       }
-    }
-
-    if (sub.status === "cancelled" || sub.status === "paused") {
-      await db.collection("magis_users").doc(uid).update({ plano: "free" });
-      await subDocRef.update({ status: sub.status, updated_at: now });
-      console.log(`[webhook/mp] Assinatura ${sub.status} — uid=${uid} → plano free`);
+    } else {
+      await pagDocRef.set({
+        user_id: uid,
+        mp_payment_id: paymentId,
+        plano,
+        status: payment.status,
+        updated_at: now,
+      }, { merge: true });
+      console.log(`[webhook/mp] Pagamento ${payment.status} para uid=${uid} plano=${plano}`);
     }
 
     return NextResponse.json({ ok: true });

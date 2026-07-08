@@ -1006,6 +1006,77 @@ function clearAndSetCellText(cellXml: string, content: string): string {
 }
 
 /**
+ * Surgical mixed-content splice for the "user replaced text with token" case.
+ *
+ * Rationale: clearAndSetCellText always writes into the first <w:t> node —
+ * harmless for single-paragraph cells but destructive when the cell has an
+ * empty leading paragraph (very common in Word templates):
+ *
+ *   <w:p><w:pPr>…</w:pPr></w:p>                        ← empty, paragraph-props only
+ *   <w:p><w:r><w:t>Actual content</w:t></w:r></w:p>    ← real text lives here
+ *
+ * clearAndSetCellText would put the new text into the first (empty) <w:t>
+ * of the first paragraph and blank out the second, leaving a phantom empty
+ * paragraph that adds vertical height to the table row and pushes subsequent
+ * tables onto a new page.
+ *
+ * Algorithm:
+ *   1. Determine what text was REMOVED: longest common prefix/suffix between
+ *      originalCellText and the non-token portion of newContent.  The middle
+ *      segment is the removed text (e.g. "____/____/2026").
+ *   2. Walk <w:t> elements; replace the first one containing removedText with
+ *      the corresponding inserted segment (e.g. "{{data_atual}}").
+ *   3. Everything else (paragraphs, runs, rPr, spacing, other <w:t>) stays
+ *      intact — no blank lines, no layout regression.
+ *
+ * Returns the UNCHANGED cellXml if the removed text is empty or cannot be
+ * found in a single <w:t> node; the caller must then fall back to
+ * clearAndSetCellText.
+ */
+function spliceMixedContent(cellXml: string, newContent: string): string {
+  const originalText = extractText(cellXml);
+
+  // Strip tokens to get the plain-text portions of the new content
+  const plainNew = newContent.replace(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g, "");
+
+  // Longest common prefix between original and the new plain text
+  let prefixLen = 0;
+  while (
+    prefixLen < originalText.length &&
+    prefixLen < plainNew.length &&
+    originalText[prefixLen] === plainNew[prefixLen]
+  ) prefixLen++;
+
+  // Longest common suffix (working backwards, not past the prefix)
+  let suffixLen = 0;
+  while (
+    suffixLen < originalText.length - prefixLen &&
+    suffixLen < plainNew.length - prefixLen &&
+    originalText[originalText.length - 1 - suffixLen] === plainNew[plainNew.length - 1 - suffixLen]
+  ) suffixLen++;
+
+  const removedText = originalText.slice(prefixLen, originalText.length - (suffixLen || 0));
+  if (!removedText) return cellXml; // Nothing to remove — caller falls back
+
+  // The inserted segment: everything in newContent between the shared prefix and suffix
+  const insertedText = newContent.slice(prefixLen, newContent.length - (suffixLen || 0));
+
+  // Replace the first <w:t> whose text content includes removedText
+  let done = false;
+  const result = cellXml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g, (match, wt) => {
+    if (done || !wt.includes(removedText)) return match;
+    done = true;
+    const newWt = wt.replace(removedText, insertedText);
+    const needsPreserve = /^\s|\s$| {2}/.test(newWt);
+    const origPreserve = match.includes('xml:space="preserve"');
+    const attr = (origPreserve || needsPreserve) ? ' xml:space="preserve"' : "";
+    return `<w:t${attr}>${newWt}</w:t>`;
+  });
+
+  return done ? result : cellXml;
+}
+
+/**
  * Replaces only the text content inside the first <w:t> element with `content`,
  * preserving all paragraph (pPr), run (rPr), and cell (tcPr) formatting intact.
  * If no <w:t> exists, creates a minimal run inside the first paragraph.
@@ -1210,6 +1281,18 @@ export function injectRawCell(
     return docxBuffer;
   }
 
+  // For mixed content (text + token), prefer spliceMixedContent over clearAndSetCellText
+  // to avoid destroying multi-paragraph cell structure (see spliceMixedContent for rationale).
+  const isMixedContent = /\{\{[A-Za-z0-9_]+\}\}/.test(newContent) &&
+    !/^\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}$/.test(newContent.trim());
+  const applyContent = (tcXml: string): string => {
+    if (isMixedContent) {
+      const patched = spliceMixedContent(tcXml, newContent);
+      if (patched !== tcXml) return patched;
+    }
+    return clearAndSetCellText(tcXml, newContent);
+  };
+
   // Pass 1: exact text match (avoids false positives from normText collisions,
   // e.g. "__/__/ 2026" and "2026" both normalise to "2026").
   let hits = 0;
@@ -1217,7 +1300,7 @@ export function injectRawCell(
     const text = extractText(match[0]).trim();
     if (text === cellText) {
       if (hits === ordinal) {
-        const newTc = clearAndSetCellText(match[0], newContent);
+        const newTc = applyContent(match[0]);
         xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + match[0].length);
         zip.file(xmlPath, xml);
         return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
@@ -1234,7 +1317,7 @@ export function injectRawCell(
     const text = extractText(match[0]).trim();
     if (normText(text) === normText(cellText)) {
       if (hits === ordinal) {
-        const newTc = clearAndSetCellText(match[0], newContent);
+        const newTc = applyContent(match[0]);
         xml = xml.slice(0, match.index) + newTc + xml.slice(match.index + match[0].length);
         zip.file(xmlPath, xml);
         return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
@@ -1297,6 +1380,18 @@ export function injectAtCoord(
         // User cleared the cell and typed only the placeholder: replace existing content.
         if (replaceContent && isSimpleToken) {
           return clearAndSetCellText(tcXml, content.trim());
+        }
+
+        // User replaced part of the cell text with a token (e.g. replaced underscores
+        // with {{data_atual}}).  Use targeted splice to avoid clearAndSetCellText writing
+        // into the first <w:t> — a destructive approach that breaks multi-paragraph cells
+        // by landing content in the wrong paragraph and leaving extra blank lines that push
+        // subsequent tables onto a new page.
+        if (replaceContent && !isSimpleToken) {
+          const patched = spliceMixedContent(tcXml, content);
+          if (patched !== tcXml) return patched;
+          // Fall back to clearAndSetCellText if splice could not identify the change point
+          return clearAndSetCellText(tcXml, content);
         }
 
         // Use labelHint to inject at the specific paragraph/segment that matches —

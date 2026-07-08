@@ -646,7 +646,14 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         if (!res.ok) {
           const d = (await res.json().catch(() => null)) as { error?: string; quotaRemaining?: number } | null;
           if (typeof d?.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
-          throw new Error(d?.error ?? "Falha ao buscar sugestões.");
+          const rawErr = (d?.error ?? "").toLowerCase();
+          throw new Error(
+            res.status === 429 || /quota|rate.?limit|cota/.test(rawErr)
+              ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
+              : res.status === 403
+                ? "Sessão expirada. Recarregue a página."
+                : "Não consegui gerar sugestões. Tente novamente."
+          );
         }
 
         const contentType = res.headers.get("content-type") ?? "";
@@ -672,13 +679,26 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
               ? accumulated.slice(firstBrace, lastBrace + 1)
               : accumulated;
 
-          const parsed = JSON.parse(jsonStr) as {
-            sugestoes?: IaSugestao[];
-            error?: string;
-            _streamError?: string;
-          };
+          let parsed: { sugestoes?: IaSugestao[]; error?: string; _streamError?: string };
+          try {
+            parsed = JSON.parse(jsonStr) as typeof parsed;
+          } catch {
+            const isQuota = /quota|rate.?limit|cota|429/i.test(accumulated);
+            throw new Error(
+              isQuota
+                ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
+                : "A IA não retornou uma resposta válida. Tente novamente."
+            );
+          }
+
           if (parsed.error || parsed._streamError) {
-            throw new Error(parsed.error ?? parsed._streamError ?? "Erro no streaming.");
+            const rawMsg = (parsed.error ?? parsed._streamError ?? "").toLowerCase();
+            const isQuota = /quota|rate.?limit|cota|429/.test(rawMsg);
+            throw new Error(
+              isQuota
+                ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
+                : "Não consegui gerar sugestões agora. Tente novamente."
+            );
           }
           sugestoes = Array.isArray(parsed.sugestoes) ? parsed.sugestoes : [];
           const qh = res.headers.get("X-Quota-Remaining");
@@ -692,7 +712,14 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
 
         setSuggestions((prev) => ({ ...prev, [field.key]: sugestoes }));
       } catch (err) {
-        setSuggestError(err instanceof Error ? err.message : "Erro ao gerar sugestões.");
+        const raw = err instanceof Error ? err.message : "";
+        const isQuota = /quota|rate.?limit|cota|429/i.test(raw);
+        const isFetch = /fetch|network|failed to fetch/i.test(raw);
+        setSuggestError(
+          isQuota ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
+          : isFetch ? "Falha na conexão. Verifique sua internet e tente novamente."
+          : raw || "Não consegui gerar sugestões. Tente novamente."
+        );
       } finally {
         setLoadingField(null);
         setStreamingCharCount(0);
@@ -1481,7 +1508,12 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                         if (!res.ok) {
                           const errBody = (await res.json().catch(() => null)) as { error?: string; quotaRemaining?: number } | null;
                           if (typeof errBody?.quotaRemaining === "number") setQuotaRemaining(errBody.quotaRemaining);
-                          throw new Error(errBody?.error ?? "Falha na regeneração.");
+                          const rawErr = (errBody?.error ?? "").toLowerCase();
+                          throw new Error(
+                            /quota|rate.?limit|cota|429/.test(rawErr)
+                              ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
+                              : "Não consegui regenerar. Tente novamente."
+                          );
                         }
                         const d = (await res.json()) as { sugestoes?: IaSugestao[]; quotaRemaining?: number };
                         if (typeof d.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
@@ -2238,11 +2270,12 @@ function AIChatPanel({
         {/* Error */}
         {error && !isLoading && (
           <ChatBubble variant="error">
-            <p className="text-xs text-rose-700">{error}</p>
+            <p className="text-xs font-semibold text-rose-700">Não consegui gerar sugestões</p>
+            <p className="mt-0.5 text-xs text-rose-600">{error}</p>
             <button
               type="button"
               onClick={() => onGenerate()}
-              className="mt-1.5 text-xs font-medium text-rose-600 underline hover:text-rose-800"
+              className="mt-2 inline-flex items-center gap-1 rounded-lg bg-rose-100 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-200 transition"
             >
               Tentar novamente
             </button>
