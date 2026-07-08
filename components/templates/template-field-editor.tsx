@@ -516,6 +516,15 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         .trim();
       originalTextsRef.current.set(el, clean);
     }
+    // Also track header/footer table cells so extractDocEdits can capture their edits.
+    // Uses a separate pass so body-cell ordinal counters are unchanged.
+    for (const el of Array.from(container.querySelectorAll("header td, footer td")) as HTMLElement[]) {
+      const clean = (el.textContent ?? "")
+        .replace(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      originalTextsRef.current.set(el, clean);
+    }
     // Snapshot keys visible in the doc (chips + raw {{}} text).
     // Deps include fieldPositions and fields so this re-captures AFTER the chip
     // injection effect (line ~320) runs — that effect shares the same deps and is
@@ -554,8 +563,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
   useEffect(() => {
     if (phase !== "done" || !containerRef.current) return;
     const container = containerRef.current;
-    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[])
-      .filter((td) => !td.closest("header") && !td.closest("footer"));
+    // Include ALL table cells (body + header/footer) — users need to type chips into
+    // header cells (e.g. PLANEJAMENTO MENSAL PERÍODO). extractDocEdits captures
+    // header-cell edits separately; injectRawCell Pass 3 handles server-side injection.
+    const tds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
     const standaloneParagraphs = (Array.from(container.querySelectorAll("p")) as HTMLElement[])
       .filter((p) => !p.closest("td") && !p.closest("header") && !p.closest("footer"));
     const editableEls = [...tds, ...standaloneParagraphs];
@@ -866,6 +877,49 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       }
     }
 
+    // Header/footer cells — separate ordinal counter so body-cell ordinals are unchanged.
+    // No data-xml-coord on these cells; injectRawCell Pass 3 handles injection into
+    // word/header*.xml on the server side.
+    //
+    // Unlike body cells (where safeAppendToken appends the token), injectRawCell always
+    // replaces the full cell content. So we always send currentText (not just {{key}})
+    // to avoid discarding surrounding text like "PLANEJAMENTO MENSAL PERÍODO ".
+    {
+      const hfTds = Array.from(container.querySelectorAll("header td, footer td")) as HTMLElement[];
+      const hfOrdinalMap = new Map<string, number>();
+      for (const el of hfTds) {
+        const originalText = originalTextsRef.current.get(el) ??
+          (el.textContent ?? "").replace(/\{\{[A-Za-z0-9_][A-Za-z0-9_]*\}\}/g, "").replace(/\s+/g, " ").trim();
+        const ordinal = hfOrdinalMap.get(originalText) ?? 0;
+        hfOrdinalMap.set(originalText, ordinal + 1);
+
+        const currentText = el.textContent ?? "";
+        const matches = [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)];
+        if (matches.length === 0) continue;
+
+        for (const match of matches) {
+          const key = match[1];
+          if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
+          if (!existingKeys.has(key)) {
+            const label = originalText.replace(/:+$/, "").trim().slice(0, 80) || key.replace(/_/g, " ");
+            const role: "manual" | "ia_sugerida" =
+              /habilidade|competencia|objetivo|avaliacao|conteudo|tematica|metodologia|atividade/.test(key)
+                ? "ia_sugerida" : "manual";
+            edits.push({ text: originalText, ordinal, key, role, label, coord: undefined });
+          }
+        }
+
+        // Always send the full currentText so the server writes the complete cell content.
+        // (Sending just {{key}} would cause injectRawCell to wipe out surrounding text.)
+        const alreadyQueued = cellEdits.some(
+          (ce) => ce.replaceContent && ce.cellText === originalText && ce.ordinal === ordinal && !ce.coord,
+        );
+        if (!alreadyQueued) {
+          cellEdits.push({ cellText: originalText, ordinal, newContent: currentText, replaceContent: true });
+        }
+      }
+    }
+
     // Detect chips the user manually removed from cells (were in doc at render, gone now)
     const removedKeys = [...existingKeys].filter(
       (k) => !seenInScan.has(k) && initialDocKeysRef.current.has(k),
@@ -888,17 +942,20 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     const editables = Array.from(container.querySelectorAll<HTMLElement>("[contenteditable='true']"));
     for (const el of editables) el.contentEditable = "false";
 
-    const tds = (Array.from(container.querySelectorAll("td")) as HTMLElement[]).filter(
-      (td) => !td.closest("header") && !td.closest("footer"),
-    );
+    const tds = Array.from(container.querySelectorAll("td")) as HTMLElement[];
 
-    // Build per-cell ordinal mapping for placement
-    const textCounts = new Map<string, number>();
+    // Build per-cell ordinal mapping for placement.
+    // Body cells and header/footer cells use SEPARATE counters so the ordinals
+    // match those produced by injectRawCell (Pass 1-2 for body, Pass 3 for headers).
+    const bodyTextCounts = new Map<string, number>();
+    const hfTextCounts = new Map<string, number>();
     const cellInfo = new Map<HTMLElement, { text: string; ordinal: number }>();
     for (const td of tds) {
       const text = originalTextsRef.current.get(td) ?? "";
-      const ordinal = textCounts.get(text) ?? 0;
-      textCounts.set(text, ordinal + 1);
+      const isHf = !!(td.closest("header") || td.closest("footer"));
+      const countMap = isHf ? hfTextCounts : bodyTextCounts;
+      const ordinal = countMap.get(text) ?? 0;
+      countMap.set(text, ordinal + 1);
       cellInfo.set(td, { text, ordinal });
     }
 

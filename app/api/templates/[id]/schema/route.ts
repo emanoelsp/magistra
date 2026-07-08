@@ -262,7 +262,13 @@ export async function PATCH(
             buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
           }
         } else {
+          const prevBuf = buffer;
           buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
+          // injectAtCell only searches document.xml — if the cell lives in a header/footer
+          // file, fall back to injectRawCell which has a Pass 3 for those files.
+          if (buffer === prevBuf && cleanCellText) {
+            buffer = injectRawCell(buffer, cleanCellText, pos.ordinal, `{{${key}}}`);
+          }
         }
       }
     }
