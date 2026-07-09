@@ -906,7 +906,16 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         // cellText="" would trigger injectRawCell's empty-cell mode, which uses the
         // global body-cell index and writes to the wrong body cell, causing page breaks.
         // Re-injection happens via step 1b in the schema route using Firestore field_positions.
-        if (!originalText.trim()) continue;
+        // IMPORTANT: still mark keys as seen so removedKeys detection doesn't falsely
+        // flag this chip — initialDocKeysRef includes it (from the rendered {{key}} text),
+        // and without seenInScan.add the field would be deleted from the schema on the next save.
+        if (!originalText.trim()) {
+          for (const match of matches) {
+            const key = match[1];
+            if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
+          }
+          continue;
+        }
 
         for (const match of matches) {
           const key = match[1];

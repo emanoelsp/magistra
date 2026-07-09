@@ -9,6 +9,7 @@ import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { deleteFile, downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
   extractFieldCoords,
+  getHeaderFooterPlacedKeys,
   injectAtCell,
   injectAtCoord,
   injectRawCell,
@@ -283,7 +284,11 @@ export async function PATCH(
         .filter((f) => f.injection_pattern !== undefined || f.ai_confidence !== undefined)
         .map((f) => f.key),
     ]);
-    const schemaForAutoPlace = newSchema.filter((f) => autoPlaceKeys.has(f.key));
+    // Exclude keys already placed in header/footer files: injectPlaceholders only
+    // checks document.xml for idempotency, so it would re-inject those keys into
+    // the body, creating duplicate chips (one in header, one in body).
+    const hfPlaced = getHeaderFooterPlacedKeys(buffer, autoPlaceKeys);
+    const schemaForAutoPlace = newSchema.filter((f) => autoPlaceKeys.has(f.key) && !hfPlaced.has(f.key));
     buffer = injectPlaceholders(buffer, schemaForAutoPlace);
 
     // 3. Post-injection validation: report which fields got placed and which didn't

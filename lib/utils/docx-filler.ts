@@ -2909,14 +2909,45 @@ export function reportInjections(
  */
 export function scanPlaceholders(docxBuffer: Buffer): string[] {
   const zip = new PizZip(docxBuffer);
-  const xml = zip.files["word/document.xml"]?.asText() ?? "";
   const pattern = /\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g;
   const found = new Set<string>();
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(xml)) !== null) {
+
+  const bodyXml = zip.files["word/document.xml"]?.asText() ?? "";
+  while ((match = pattern.exec(bodyXml)) !== null) {
     found.add(match[1].toLowerCase());
   }
+
+  // Also scan header/footer files — chips placed there via injectRawCell Pass 3
+  // are valid placements and must not be reported as missing.
+  for (const path of Object.keys(zip.files)) {
+    if (!/^word\/(header|footer)\d+\.xml$/.test(path)) continue;
+    pattern.lastIndex = 0;
+    const hXml = zip.files[path].asText();
+    while ((match = pattern.exec(hXml)) !== null) {
+      found.add(match[1].toLowerCase());
+    }
+  }
+
   return [...found];
+}
+
+/**
+ * Returns the set of field keys already placed in header/footer XML files.
+ * Used by the schema route to exclude those keys from step-2 label injection
+ * so they are not duplicated into document.xml body cells.
+ */
+export function getHeaderFooterPlacedKeys(docxBuffer: Buffer, keys: Iterable<string>): Set<string> {
+  const zip = new PizZip(docxBuffer);
+  const placed = new Set<string>();
+  for (const path of Object.keys(zip.files)) {
+    if (!/^word\/(header|footer)\d+\.xml$/.test(path)) continue;
+    const hXml = zip.files[path].asText();
+    for (const k of keys) {
+      if (hXml.includes(`{{${k}}}`)) placed.add(k);
+    }
+  }
+  return placed;
 }
 
 /**
