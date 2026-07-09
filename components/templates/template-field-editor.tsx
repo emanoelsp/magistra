@@ -2692,66 +2692,49 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         )
       )}
 
-      <div className="flex justify-end gap-3">
-        {mode === "confirm" ? (
-          <>
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
-            >
-              Pular
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSave()}
-              disabled={isPending}
-              className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
-            >
-              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Confirmar template
-            </button>
-          </>
-        ) : reviewMode ? (
-          <>
-            <button
-              type="button"
-              onClick={() => { setReviewMode(false); setPanelCollapsed(false); }}
-              className="flex items-center gap-2 rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Editar campos
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirmTemplate}
-              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              Confirmar template
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleAdvanceToReview()}
-              disabled={isAdvancing}
-              className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
-            >
-              {isAdvancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Verificar template
-            </button>
-          </>
-        )}
-      </div>
+      {!reviewMode && (
+        <div className="flex justify-end gap-3">
+          {mode === "confirm" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
+              >
+                Pular
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSave()}
+                disabled={isPending}
+                className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+              >
+                {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Confirmar template
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-950"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleAdvanceToReview()}
+                disabled={isAdvancing}
+                className="flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+              >
+                {isAdvancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Verificar template
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 
