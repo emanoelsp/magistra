@@ -368,7 +368,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       if (container.querySelector(`[data-field-chip="${key}"]`)) continue;
       const field = fields.find((f) => f.key === key);
       if (!field) continue;
-      const matches = els.filter((el) => (el.textContent?.trim() ?? "") === pos.cellText);
+      // Normalize whitespace for comparison: stored cellText collapsed multiple spaces,
+      // but DOM textContent may have raw multi-space sequences (e.g. underline-formatted spaces).
+      const normPos = pos.cellText.replace(/\s+/g, " ").trim();
+      const matches = els.filter((el) => (el.textContent?.replace(/\s+/g, " ").trim() ?? "") === normPos);
       const targetEl = matches[pos.ordinal];
       if (!targetEl) continue;
       const isIa = field.role === "ia_sugerida";
@@ -897,6 +900,13 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const currentText = el.textContent ?? "";
         const matches = [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)];
         if (matches.length === 0) continue;
+
+        // Skip cells where originalText is empty: that means this cell was previously
+        // cleared (SAVE 1 wrote only the chip token there). Creating a cell edit with
+        // cellText="" would trigger injectRawCell's empty-cell mode, which uses the
+        // global body-cell index and writes to the wrong body cell, causing page breaks.
+        // Re-injection happens via step 1b in the schema route using Firestore field_positions.
+        if (!originalText.trim()) continue;
 
         for (const match of matches) {
           const key = match[1];

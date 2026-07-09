@@ -2345,13 +2345,27 @@ export function injectColoredPlaceholders(
 ): Buffer {
   if (schema.length === 0) return docxBuffer;
 
-  // Ensure {{key}} placeholders are in the right cells (idempotent if already present)
-  const withPlaceholders = injectPlaceholders(docxBuffer, schema);
-
   const colorMap: Record<string, string> = {};
   for (const field of schema) {
     colorMap[field.key] = field.role === "ia_sugerida" ? "6D28D9" : "B45309";
   }
+
+  // Keys already placed in header/footer files must be excluded from injectPlaceholders
+  // so they are not injected a second time into document.xml (body).
+  const checkZip = new PizZip(docxBuffer);
+  const hfPlacedKeys = new Set<string>();
+  for (const path of Object.keys(checkZip.files)) {
+    if (!/^word\/(header|footer)\d+\.xml$/.test(path)) continue;
+    const hXml = checkZip.files[path].asText();
+    for (const f of schema) {
+      if (hXml.includes(`{{${f.key}}}`)) hfPlacedKeys.add(f.key);
+    }
+  }
+  const bodySchema = schema.filter((f) => !hfPlacedKeys.has(f.key));
+
+  // Ensure {{key}} placeholders are in body cells (idempotent if already present).
+  // Only re-inject fields not already placed in header/footer files.
+  const withPlaceholders = bodySchema.length > 0 ? injectPlaceholders(docxBuffer, bodySchema) : docxBuffer;
 
   const zip = new PizZip(withPlaceholders);
   const xmlPath = "word/document.xml";
@@ -2450,6 +2464,51 @@ export function injectColoredPlaceholders(
   });
 
   zip.file(xmlPath, xml);
+
+  // Colorize {{key}} tokens in header/footer XML files (same logic as document.xml).
+  // Without this, tokens placed in word/header*.xml appear as plain uncolored text
+  // in Office Online, making them invisible to the user.
+  for (const hfPath of Object.keys(zip.files)) {
+    if (!/^word\/(header|footer)\d+\.xml$/.test(hfPath)) continue;
+    let hXml = zip.files[hfPath].asText();
+    let hChanged = false;
+    hXml = hXml.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (runXml) => {
+      for (const field of schema) {
+        const placeholder = `{{${field.key}}}`;
+        if (!runXml.includes(placeholder)) continue;
+        const color = colorMap[field.key];
+        const tRegex = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
+        let tMatch: RegExpExecArray | null;
+        while ((tMatch = tRegex.exec(runXml)) !== null) {
+          if (tMatch[1].includes(placeholder)) break;
+        }
+        if (!tMatch) continue;
+        const tText = tMatch[1];
+        hChanged = true;
+        if (tText.trim() === placeholder) {
+          if (runXml.includes("<w:color ")) {
+            return runXml.replace(/<w:color[^/]*\/>/g, `<w:color w:val="${color}"/>`);
+          }
+          if (runXml.includes("<w:rPr>")) {
+            return runXml.replace("<w:rPr>", `<w:rPr><w:color w:val="${color}"/>`);
+          }
+          return runXml.replace(/<w:t(?=\s|>)/, `<w:rPr><w:color w:val="${color}"/></w:rPr><w:t`);
+        }
+        const pIdx = tText.indexOf(placeholder);
+        const before = tText.slice(0, pIdx);
+        const after = tText.slice(pIdx + placeholder.length);
+        const origRPr = runXml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
+        const beforeT = before ? `<w:t xml:space="preserve">${before}</w:t>` : `<w:t/>`;
+        let result = runXml.replace(tMatch[0], beforeT);
+        result += `<w:r><w:rPr><w:color w:val="${color}"/></w:rPr><w:t xml:space="preserve">${placeholder}</w:t></w:r>`;
+        if (after) result += `<w:r>${origRPr}<w:t xml:space="preserve">${after}</w:t></w:r>`;
+        return result;
+      }
+      return runXml;
+    });
+    if (hChanged) zip.file(hfPath, hXml);
+  }
+
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
