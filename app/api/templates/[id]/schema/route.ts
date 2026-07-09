@@ -14,6 +14,7 @@ import {
   injectAtCoord,
   injectRawCell,
   injectPlaceholders,
+  isCoordValid,
   reportInjections,
   stripNonSchemaTokens,
 } from "../../../../../lib/utils/docx-filler";
@@ -255,13 +256,29 @@ export async function PATCH(
           .replace(/\s+/g, " ")
           .trim();
         if (pos.coord) {
+          // Validate the stored coord before using it: check that the cell at that
+          // position in the ORIGINAL document contains text matching the stored cellText.
+          // A stale coord (e.g. from a previous bad injection into a wrong body cell)
+          // would point to a body cell whose text doesn't match — using it would corrupt
+          // that cell and cause page-break artifacts. In that case, fall through to the
+          // text-based path which includes injectRawCell Pass 3 for header/footer files.
+          const coordOk = cleanCellText
+            ? isCoordValid(buffer, pos.coord, cleanCellText)
+            : true; // bare placement (no original text) — trust the coord
           const fieldLabel = newSchema.find((f) => f.key === key)?.label ?? "";
           const prevBuf = buffer;
-          buffer = injectAtCoord(buffer, pos.coord, `{{${key}}}`, fieldLabel);
-          // Coord lookup failed — fall back to text-based injection
+          if (coordOk) {
+            buffer = injectAtCoord(buffer, pos.coord, `{{${key}}}`, fieldLabel);
+          }
+          // Coord lookup failed OR coord was stale — fall back to text-based injection
+          // which includes injectRawCell Pass 3 for header/footer cells.
           if (buffer === prevBuf) {
             buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
+            if (buffer === prevBuf && cleanCellText) {
+              buffer = injectRawCell(buffer, cleanCellText, pos.ordinal, `{{${key}}}`);
+            }
           }
+          console.info(`[schema/1b] key=${key} coord=${pos.coord} coordOk=${coordOk} changed=${buffer !== prevBuf}`);
         } else {
           const prevBuf = buffer;
           buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
@@ -270,6 +287,7 @@ export async function PATCH(
           if (buffer === prevBuf && cleanCellText) {
             buffer = injectRawCell(buffer, cleanCellText, pos.ordinal, `{{${key}}}`);
           }
+          console.info(`[schema/1b] key=${key} no-coord changed=${buffer !== prevBuf}`);
         }
       }
     }

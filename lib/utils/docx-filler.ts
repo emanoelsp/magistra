@@ -2933,6 +2933,60 @@ export function scanPlaceholders(docxBuffer: Buffer): string[] {
 }
 
 /**
+ * Checks whether the cell at `coord` ("T{ti}R{ri}C{ci}") in document.xml has
+ * text that normText-matches `expectedCellText`. Returns false if the coord is
+ * out of range or the text doesn't match — signalling a stale coord that should
+ * NOT be used for injection (it would write into the wrong body cell).
+ *
+ * A coord becomes stale when a previous bad save injected a chip into a wrong
+ * body cell and extractFieldCoords then persisted that wrong coord to Firestore.
+ * On the next save the original DOCX is used as base (chip-free), so the cell
+ * at that coord now contains its ORIGINAL text — which won't match the stored
+ * cellText for a header/footer chip (header text never appears in the body).
+ */
+export function isCoordValid(docxBuffer: Buffer, coord: string, expectedCellText: string): boolean {
+  const m = coord.match(/^T(\d+)R(\d+)C(\d+)$/);
+  if (!m) return false;
+  const targetTi = parseInt(m[1], 10);
+  const targetRi = parseInt(m[2], 10);
+  const targetCi = parseInt(m[3], 10);
+
+  const zip = new PizZip(docxBuffer);
+  const xml = zip.files["word/document.xml"]?.asText() ?? "";
+
+  const norm = (s: string) =>
+    s.toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const expectedNorm = norm(expectedCellText);
+
+  let ti = 0;
+  for (const tblM of xml.matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)) {
+    if (ti !== targetTi) { ti++; continue; }
+    let ri = 0;
+    for (const trM of tblM[0].matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)) {
+      if (ri !== targetRi) { ri++; continue; }
+      let ci = 0;
+      for (const tcM of trM[0].matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)) {
+        if (ci !== targetCi) { ci++; continue; }
+        const cellText = extractText(tcM[0]);
+        // Accept if the cell already has the chip (idempotent) OR text matches
+        if (cellText.includes(`{{`) || norm(cellText) === expectedNorm) return true;
+        // If expectedCellText is empty the chip was a bare placement; allow any cell
+        if (!expectedCellText.trim()) return true;
+        return false;
+      }
+      ri++;
+    }
+    ti++;
+  }
+  return false; // coord out of range
+}
+
+/**
  * Returns the set of field keys already placed in header/footer XML files.
  * Used by the schema route to exclude those keys from step-2 label injection
  * so they are not duplicated into document.xml body cells.
