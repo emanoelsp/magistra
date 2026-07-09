@@ -56,6 +56,24 @@ function domRows(table: HTMLTableElement): HTMLTableRowElement[] {
 }
 
 /**
+ * Assigns `data-hf-coord="HF:{n}"` to header/footer table cells in the DOM.
+ *
+ * n is a sequential 0-based index across all cells in all header/footer XML
+ * files (sorted alphabetically), matching the order scanned by injectAtHFCoord
+ * and extractHFFieldCoords. This enables precise server-side injection into
+ * header/footer cells without text-matching (which is fragile for header cells
+ * that often contain all-caps labels with no distinguishing adjacent text).
+ *
+ * Must be called after docx-preview has finished rendering.
+ */
+export function assignHFCellCoords(container: HTMLElement): void {
+  const domHfCells = Array.from(
+    container.querySelectorAll("header td, footer td"),
+  ) as HTMLElement[];
+  domHfCells.forEach((td, i) => td.setAttribute("data-hf-coord", `HF:${i}`));
+}
+
+/**
  * Parses the DOCX buffer, extracts table/row/cell structure from
  * word/document.xml, and assigns `data-xml-coord` attributes to the
  * matching DOM <td>/<th> elements inside `container`.

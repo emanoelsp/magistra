@@ -2975,8 +2975,12 @@ export function isCoordValid(docxBuffer: Buffer, coord: string, expectedCellText
         const cellText = extractText(tcM[0]);
         // Accept if the cell already has the chip (idempotent) OR text matches
         if (cellText.includes(`{{`) || norm(cellText) === expectedNorm) return true;
-        // If expectedCellText is empty the chip was a bare placement; allow any cell
-        if (!expectedCellText.trim()) return true;
+        // For empty expectedCellText (bare placement in an empty cell): only trust this
+        // coord if the target cell is also empty. A non-empty cell means the coord is
+        // stale — it points to a body label/value cell, NOT the intended empty slot.
+        // Stale coords arise when a previous empty-cell-mode injection wrote the chip to
+        // a wrong body cell; extractFieldCoords then persisted that wrong coord.
+        if (!expectedCellText.trim()) return !cellText.trim();
         return false;
       }
       ri++;
@@ -2984,6 +2988,50 @@ export function isCoordValid(docxBuffer: Buffer, coord: string, expectedCellText
     ti++;
   }
   return false; // coord out of range
+}
+
+/**
+ * Injects `content` into the N-th `<w:tc>` cell across all header/footer XML
+ * files (sorted alphabetically: header1.xml, header2.xml, …, footer1.xml, …).
+ *
+ * `hfCoord` format: "HF:{n}" where n is the 0-based sequential cell index.
+ * The same indexing is assigned to DOM cells by `assignHFCellCoords` so that
+ * client placements (placement mode or direct typing) map to exact XML cells.
+ *
+ * Always uses clearAndSetCellText — the caller sends the complete desired cell
+ * content (original text + chip tokens) so a full replace is always correct.
+ */
+export function injectAtHFCoord(
+  docxBuffer: Buffer,
+  hfCoord: string,
+  content: string,
+): Buffer {
+  const m = hfCoord.match(/^HF:(\d+)$/);
+  if (!m) return docxBuffer;
+  const targetIdx = parseInt(m[1], 10);
+
+  const zip = new PizZip(docxBuffer);
+  const hfPaths = Object.keys(zip.files)
+    .filter((p) => /^word\/(header|footer)\d+\.xml$/.test(p))
+    .sort();
+
+  let globalIdx = 0;
+  for (const path of hfPaths) {
+    let hXml = normalizeDocxXml(zip.files[path].asText());
+    const tcRe = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
+    let tcMatch: RegExpExecArray | null;
+    while ((tcMatch = tcRe.exec(hXml)) !== null) {
+      if (globalIdx === targetIdx) {
+        const newTc = clearAndSetCellText(tcMatch[0], content);
+        hXml = hXml.slice(0, tcMatch.index) + newTc + hXml.slice(tcMatch.index + tcMatch[0].length);
+        zip.file(path, hXml);
+        return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+      }
+      globalIdx++;
+    }
+  }
+
+  return docxBuffer; // coord out of range
 }
 
 /**
@@ -3037,6 +3085,46 @@ export function extractFieldCoords(docxBuffer: Buffer): Record<string, string> {
       ri++;
     }
     ti++;
+  }
+
+  return coords;
+}
+
+/**
+ * Same as extractFieldCoords but for header/footer XML files.
+ * Returns key → "HF:{n}" where n is the sequential cell index across all
+ * header/footer files (sorted alphabetically), matching assignHFCellCoords.
+ *
+ * Called in step 5b so header chips get a persistent HF coord stored in
+ * Firestore; subsequent saves use injectAtHFCoord instead of text matching.
+ */
+export function extractHFFieldCoords(docxBuffer: Buffer): Record<string, string> {
+  const zip = new PizZip(docxBuffer);
+  const coords: Record<string, string> = {};
+
+  const hfPaths = Object.keys(zip.files)
+    .filter((p) => /^word\/(header|footer)\d+\.xml$/.test(p))
+    .sort();
+
+  const tokenRe = /\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g;
+  const tcRe = /<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g;
+  let globalIdx = 0;
+
+  for (const path of hfPaths) {
+    const hXml = zip.files[path].asText();
+    let tcMatch: RegExpExecArray | null;
+    while ((tcMatch = tcRe.exec(hXml)) !== null) {
+      const tcXml = tcMatch[0];
+      tokenRe.lastIndex = 0;
+      let tokenMatch: RegExpExecArray | null;
+      while ((tokenMatch = tokenRe.exec(tcXml)) !== null) {
+        const key = tokenMatch[1].toLowerCase();
+        if (!(key in coords)) {
+          coords[key] = `HF:${globalIdx}`;
+        }
+      }
+      globalIdx++;
+    }
   }
 
   return coords;

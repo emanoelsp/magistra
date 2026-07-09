@@ -495,8 +495,11 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     const buf = bufferRef.current;
     const cont = containerRef.current;
     import("../../lib/utils/docx-coord")
-      .then(({ assignDocxCellCoords }) => {
-        if (!cancelled) return assignDocxCellCoords(buf, cont);
+      .then(({ assignDocxCellCoords, assignHFCellCoords }) => {
+        if (!cancelled) {
+          assignHFCellCoords(cont);
+          return assignDocxCellCoords(buf, cont);
+        }
       })
       .catch(() => {/* non-fatal */});
     return () => { cancelled = true; };
@@ -901,15 +904,19 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
         const matches = [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)];
         if (matches.length === 0) continue;
 
-        // Skip cells where originalText is empty: that means this cell was previously
-        // cleared (SAVE 1 wrote only the chip token there). Creating a cell edit with
-        // cellText="" would trigger injectRawCell's empty-cell mode, which uses the
-        // global body-cell index and writes to the wrong body cell, causing page breaks.
-        // Re-injection happens via step 1b in the schema route using Firestore field_positions.
-        // IMPORTANT: still mark keys as seen so removedKeys detection doesn't falsely
-        // flag this chip — initialDocKeysRef includes it (from the rendered {{key}} text),
-        // and without seenInScan.add the field would be deleted from the schema on the next save.
-        if (!originalText.trim()) {
+        // data-hf-coord is assigned by assignHFCellCoords after rendering.
+        // When present it uniquely identifies the XML cell so we can always send
+        // a precise cellEdit — even for cells that were originally empty.
+        const hfCoord = el.getAttribute("data-hf-coord") ?? undefined;
+
+        // Skip cells where originalText is empty AND we have no HF coord.
+        // Without a coord we'd have to use injectRawCell empty-cell mode, which
+        // uses the global body-cell ordinal and writes into the wrong body cell
+        // (causing page breaks). With an HF coord we can inject precisely.
+        // IMPORTANT: always mark keys as seen so removedKeys detection doesn't
+        // falsely flag them — initialDocKeysRef includes them and without
+        // seenInScan.add the field would be deleted from the schema on next save.
+        if (!originalText.trim() && !hfCoord) {
           for (const match of matches) {
             const key = match[1];
             if (!seenInScan.has(key)) { seenInScan.add(key); scanOrder.push(key); }
@@ -931,11 +938,20 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
 
         // Always send the full currentText so the server writes the complete cell content.
         // (Sending just {{key}} would cause injectRawCell to wipe out surrounding text.)
+        // Include hfCoord so the server can use injectAtHFCoord for precise injection
+        // instead of text-matching (which is fragile for header/footer cells).
         const alreadyQueued = cellEdits.some(
-          (ce) => ce.replaceContent && ce.cellText === originalText && ce.ordinal === ordinal && !ce.coord,
+          (ce) => ce.replaceContent && ce.cellText === originalText && ce.ordinal === ordinal &&
+            (hfCoord ? ce.coord === hfCoord : !ce.coord),
         );
         if (!alreadyQueued) {
-          cellEdits.push({ cellText: originalText, ordinal, newContent: currentText, replaceContent: true });
+          cellEdits.push({
+            cellText: originalText,
+            ordinal,
+            newContent: currentText,
+            replaceContent: true,
+            ...(hfCoord ? { coord: hfCoord } : {}),
+          });
         }
       }
     }
@@ -983,7 +999,8 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
       e.stopPropagation();
       const td = e.currentTarget as HTMLElement;
       const { text, ordinal } = cellInfo.get(td) ?? { text: "", ordinal: 0 };
-      const coord = td.getAttribute("data-xml-coord") ?? undefined;
+      // Body cells have data-xml-coord; header/footer cells have data-hf-coord.
+      const coord = td.getAttribute("data-xml-coord") ?? td.getAttribute("data-hf-coord") ?? undefined;
       onPlace?.(placementKey!, coord, text, ordinal);
     }
 
@@ -1057,7 +1074,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
               <code className="rounded bg-violet-100 px-1 font-mono text-[10px] text-violet-700">{`{{chave}}`}</code>{" "}
               para criar um chip &bull; selecione texto e clique em{" "}
               <span className="font-semibold text-violet-700">Converter</span>{" "}
-              para Campo IA
+              para chip editável
             </p>
             <div className="flex shrink-0 items-center gap-2 text-[10px]">
               <span className="flex items-center gap-1">
@@ -1197,7 +1214,7 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
             style={{ whiteSpace: "nowrap" }}
           >
             <Sparkles className="h-3 w-3" />
-            Converter em Campo IA
+            Converter para chip editável
           </button>
           {/* Arrow pointing down to the selection */}
           <div style={{

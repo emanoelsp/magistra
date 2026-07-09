@@ -9,9 +9,11 @@ import { getAdminDb } from "../../../../../lib/firebase/admin";
 import { deleteFile, downloadFile, uploadFile } from "../../../../../lib/storage/blob";
 import {
   extractFieldCoords,
+  extractHFFieldCoords,
   getHeaderFooterPlacedKeys,
   injectAtCell,
   injectAtCoord,
+  injectAtHFCoord,
   injectRawCell,
   injectPlaceholders,
   isCoordValid,
@@ -202,42 +204,66 @@ export async function PATCH(
       const keysInEdit = [...edit.newContent.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]);
       const prevBufBeforeEdit = buffer;
       if (edit.coord) {
-        // contextBefore (text on the same line before {{key}} in the DOM) is a more
-        // precise anchor than the field label: it matches exactly the segment where
-        // the user typed. Fall back to field label for placement-mode clicks (no context).
-        const labelHint = edit.contextBefore ??
-          (keysInEdit.length === 1
-            ? (newSchema.find((f) => f.key === keysInEdit[0])?.label ?? "")
-            : "");
-        // contextIsExact=true when labelHint comes from the user's DOM context (contextBefore),
-        // meaning the chip is placed right after that text — override ALL CAPS heuristics.
-        const contextIsExact = !!edit.contextBefore;
-        const prevBuf = buffer;
-        buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint, edit.replaceContent, contextIsExact);
-        const coordWorked = buffer !== prevBuf;
-        console.info(`[schema/cell_edit] coord=${edit.coord} newContent=${edit.newContent.slice(0, 60)} coordWorked=${coordWorked}`);
-        // If coord lookup failed (returned same buffer), fall back to text-based injection
-        if (!coordWorked && edit.cellText) {
-          const cleanCellText = (edit.cellText)
-            .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-          const prevBuf2 = buffer;
-          buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
-          console.info(`[schema/cell_edit] rawCell cellText="${cleanCellText.slice(0, 60)}" ordinal=${edit.ordinal ?? 0} worked=${buffer !== prevBuf2}`);
+        if (edit.coord.startsWith("HF:")) {
+          // Header/footer structural coord — inject directly into the HF XML file.
+          // Precise and immune to text-matching ambiguity in header areas.
+          const prevBuf = buffer;
+          buffer = injectAtHFCoord(buffer, edit.coord, edit.newContent);
+          const coordWorked = buffer !== prevBuf;
+          console.info(`[schema/cell_edit] hf-coord=${edit.coord} newContent=${edit.newContent.slice(0, 60)} coordWorked=${coordWorked}`);
+          // Fallback: text-based (only if cell has text to match, never empty-cell mode)
+          if (!coordWorked) {
+            const cleanCellText = (edit.cellText ?? "")
+              .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (cleanCellText) {
+              buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+              console.info(`[schema/cell_edit] hf-coord-fallback cellText="${cleanCellText.slice(0, 60)}" worked=${buffer !== prevBuf}`);
+            }
+          }
+        } else {
+          // Body structural coord (T{ti}R{ri}C{ci}).
+          const labelHint = edit.contextBefore ??
+            (keysInEdit.length === 1
+              ? (newSchema.find((f) => f.key === keysInEdit[0])?.label ?? "")
+              : "");
+          const contextIsExact = !!edit.contextBefore;
+          const prevBuf = buffer;
+          buffer = injectAtCoord(buffer, edit.coord, edit.newContent, labelHint, edit.replaceContent, contextIsExact);
+          const coordWorked = buffer !== prevBuf;
+          console.info(`[schema/cell_edit] coord=${edit.coord} newContent=${edit.newContent.slice(0, 60)} coordWorked=${coordWorked}`);
+          // Fallback: text-based injection (guard: only when we have cell text)
+          if (!coordWorked && edit.cellText) {
+            const cleanCellText = (edit.cellText)
+              .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (cleanCellText) {
+              const prevBuf2 = buffer;
+              buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+              console.info(`[schema/cell_edit] rawCell cellText="${cleanCellText.slice(0, 60)}" ordinal=${edit.ordinal ?? 0} worked=${buffer !== prevBuf2}`);
+            }
+          }
         }
       } else {
         const cleanCellText = (edit.cellText ?? "")
           .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
           .replace(/\s+/g, " ")
           .trim();
-        const prevBuf2 = buffer;
-        buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
-        console.info(`[schema/cell_edit] no-coord rawCell cellText="${cleanCellText.slice(0, 60)}" ordinal=${edit.ordinal ?? 0} worked=${buffer !== prevBuf2}`);
+        if (cleanCellText) {
+          // Guard: skip when cleanCellText is empty — injectRawCell empty-cell mode
+          // uses the global <w:tc> ordinal from document.xml, which for header-cell
+          // placements writes into a random body cell (causing page breaks).
+          const prevBuf2 = buffer;
+          buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+          console.info(`[schema/cell_edit] no-coord rawCell cellText="${cleanCellText.slice(0, 60)}" ordinal=${edit.ordinal ?? 0} worked=${buffer !== prevBuf2}`);
+        } else {
+          console.info(`[schema/cell_edit] skip empty-cellText no-coord keys=${keysInEdit.join(",")}`);
+        }
       }
       // Only mark keys as placed if at least one injection actually modified the buffer.
-      // If both injectAtCoord and injectRawCell returned the same buffer, the cell was
-      // not found (e.g. it lives in a header file or normText collision). Leaving those
+      // If all paths returned the same buffer, the cell was not found. Leaving those
       // keys out of placedByCellEdits lets injectPlaceholders attempt them as a fallback.
       if (buffer !== prevBufBeforeEdit) {
         for (const k of keysInEdit) placedByCellEdits.add(k);
@@ -256,36 +282,52 @@ export async function PATCH(
           .replace(/\s+/g, " ")
           .trim();
         if (pos.coord) {
-          // Validate the stored coord before using it: check that the cell at that
-          // position in the ORIGINAL document contains text matching the stored cellText.
-          // A stale coord (e.g. from a previous bad injection into a wrong body cell)
-          // would point to a body cell whose text doesn't match — using it would corrupt
-          // that cell and cause page-break artifacts. In that case, fall through to the
-          // text-based path which includes injectRawCell Pass 3 for header/footer files.
-          const coordOk = cleanCellText
-            ? isCoordValid(buffer, pos.coord, cleanCellText)
-            : true; // bare placement (no original text) — trust the coord
-          const fieldLabel = newSchema.find((f) => f.key === key)?.label ?? "";
-          const prevBuf = buffer;
-          if (coordOk) {
-            buffer = injectAtCoord(buffer, pos.coord, `{{${key}}}`, fieldLabel);
-          }
-          // Coord lookup failed OR coord was stale — fall back to text-based injection
-          // which includes injectRawCell Pass 3 for header/footer cells.
-          if (buffer === prevBuf) {
-            buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
-            if (buffer === prevBuf && cleanCellText) {
+          if (pos.coord.startsWith("HF:")) {
+            // Header/footer structural coord.
+            // • Empty original cell → inject just the chip via HF coord (precise).
+            // • Non-empty original cell → use injectRawCell Pass 3 which appends the
+            //   token while preserving surrounding text (title + chip side by side).
+            //   injectAtHFCoord would wipe the surrounding text with clearAndSetCellText.
+            const prevBuf = buffer;
+            if (!cleanCellText) {
+              buffer = injectAtHFCoord(buffer, pos.coord, `{{${key}}}`);
+            } else {
               buffer = injectRawCell(buffer, cleanCellText, pos.ordinal, `{{${key}}}`);
             }
+            console.info(`[schema/1b] key=${key} hf-coord=${pos.coord} cleanCellText="${cleanCellText.slice(0, 40)}" changed=${buffer !== prevBuf}`);
+          } else {
+            // Body structural coord: validate before use to detect stale coords.
+            // For empty cleanCellText: validate that the target cell is also empty.
+            // Stale coords (from previous empty-cell-mode mis-injections) point to
+            // body label/value cells; isCoordValid returns false for those.
+            const coordOk = isCoordValid(buffer, pos.coord, cleanCellText);
+            const fieldLabel = newSchema.find((f) => f.key === key)?.label ?? "";
+            const prevBuf = buffer;
+            if (coordOk) {
+              buffer = injectAtCoord(buffer, pos.coord, `{{${key}}}`, fieldLabel);
+            }
+            // Coord invalid/stale OR injectAtCoord found nothing — fall back to text-based.
+            // Guard: skip both injectAtCell and injectRawCell when cleanCellText is empty
+            // to prevent empty-cell mode from writing into a random body cell.
+            if (buffer === prevBuf && cleanCellText) {
+              buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
+              if (buffer === prevBuf) {
+                buffer = injectRawCell(buffer, cleanCellText, pos.ordinal, `{{${key}}}`);
+              }
+            }
+            console.info(`[schema/1b] key=${key} coord=${pos.coord} coordOk=${coordOk} changed=${buffer !== prevBuf}`);
           }
-          console.info(`[schema/1b] key=${key} coord=${pos.coord} coordOk=${coordOk} changed=${buffer !== prevBuf}`);
         } else {
           const prevBuf = buffer;
-          buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
-          // injectAtCell only searches document.xml — if the cell lives in a header/footer
-          // file, fall back to injectRawCell which has a Pass 3 for those files.
-          if (buffer === prevBuf && cleanCellText) {
-            buffer = injectRawCell(buffer, cleanCellText, pos.ordinal, `{{${key}}}`);
+          // Guard: only attempt text-based injection when we have cell text.
+          // Empty cleanCellText + no coord would trigger injectAtCell/injectRawCell
+          // empty-cell mode, which uses the global body <w:tc> ordinal and writes
+          // into a wrong body cell — the page-break root cause.
+          if (cleanCellText) {
+            buffer = injectAtCell(buffer, cleanCellText, pos.ordinal, key, hasInlineToken && cleanCellText.length > 0);
+            if (buffer === prevBuf) {
+              buffer = injectRawCell(buffer, cleanCellText, pos.ordinal, `{{${key}}}`);
+            }
           }
           console.info(`[schema/1b] key=${key} no-coord changed=${buffer !== prevBuf}`);
         }
@@ -333,10 +375,10 @@ export async function PATCH(
     }
 
     // 5b. Extract structural coords from the final DOCX and merge into allPositions.
-    // This ensures every {{key}} — including those placed by injectPlaceholders
-    // (auto-detection) — gets a coord stored in Firestore. On the next save the
-    // injectAtCoord path will be used instead of fragile text matching.
-    const extractedCoords = extractFieldCoords(buffer);
+    // Includes both body coords (T{ti}R{ri}C{ci}) from document.xml and HF coords
+    // (HF:{n}) from header/footer files. On the next save the stored coord is used
+    // for direct injection, bypassing fragile text matching.
+    const extractedCoords = { ...extractFieldCoords(buffer), ...extractHFFieldCoords(buffer) };
     for (const [key, coord] of Object.entries(extractedCoords)) {
       if (allPositions[key]) {
         allPositions[key] = { ...allPositions[key], coord };
