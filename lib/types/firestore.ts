@@ -185,6 +185,8 @@ export interface TemplateRecord {
   field_positions?: Record<string, { cellText: string; ordinal: number }>;
   /** Fields whose label has no structural backing in the deterministic scan — need manual review. */
   campos_baixa_confianca?: string[];
+  /** Consented: strip pageBreakBefore outside tables when regenerating the fillable. */
+  remove_page_breaks?: boolean;
   deleted_at?: string;
 }
 

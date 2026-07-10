@@ -1151,8 +1151,12 @@ function setCellContent(cellXml: string, content: string): string {
 
   const firstPara = paraMatch[0];
   const openTag = firstPara.match(/^(<w:p(?:\s[^>]*)?>)/)?.[1] ?? "<w:p>";
-  const pPr = firstPara.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] ?? "";
-  
+  // Never clone pageBreakBefore into a NEW paragraph — templates escolares
+  // carregam quebras latentes herdadas de estilos de título; cloná-las aqui
+  // ativaria uma quebra de página que o autor original nunca viu.
+  const pPr = (firstPara.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] ?? "")
+    .replace(/<w:pageBreakBefore(?:\s[^>]*)?\/>/g, "");
+
   // Extract run properties from any existing run, or use empty
   const firstRun = firstPara.match(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/)?.[0] ?? "";
   const rPr = firstRun.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
@@ -1160,6 +1164,54 @@ function setCellContent(cellXml: string, content: string): string {
   const newPara = `${openTag}${pPr}<w:r>${rPr}<w:t xml:space="preserve">${content}</w:t></w:r></w:p>`;
   
   return cellXml.replace(firstPara, newPara);
+}
+
+// ── Latent page breaks ────────────────────────────────────────────────────────
+
+/**
+ * Removes `<w:pageBreakBefore/>` from paragraphs OUTSIDE tables in document.xml.
+ *
+ * School templates often carry latent page breaks inherited from Word heading
+ * styles (the desktop Word ignores them in frames, so the school never saw
+ * them) — but honest renderers (docx-preview, Office Online) honor them and
+ * push content to the next page. This is a CONSENTED mutation: only called
+ * when the professor explicitly enables it; never applied silently.
+ *
+ * Table-internal paragraphs are left untouched (breaks inside tables are rare
+ * and usually intentional row-split control). Nested tables are handled by
+ * depth counting — a non-greedy `<w:tbl>…</w:tbl>` mask would corrupt them.
+ */
+export function stripPageBreaksOutsideTables(docxBuffer: Buffer): { buffer: Buffer; removed: number } {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return { buffer: docxBuffer, removed: 0 };
+  const xml = zip.files[xmlPath].asText();
+
+  const tokenRe = /<w:tbl(?=[\s>])|<\/w:tbl>/g;
+  let depth = 0;
+  let last = 0;
+  let removed = 0;
+  let out = "";
+  const strip = (segment: string) =>
+    segment.replace(/<w:pageBreakBefore(?:\s[^>]*)?\/>/g, () => {
+      removed++;
+      return "";
+    });
+
+  let m: RegExpExecArray | null;
+  while ((m = tokenRe.exec(xml)) !== null) {
+    const segment = xml.slice(last, m.index);
+    out += depth === 0 ? strip(segment) : segment;
+    out += m[0];
+    depth += m[0] === "</w:tbl>" ? -1 : 1;
+    last = m.index + m[0].length;
+  }
+  const tail = xml.slice(last);
+  out += depth === 0 ? strip(tail) : tail;
+
+  if (removed === 0) return { buffer: docxBuffer, removed: 0 };
+  zip.file(xmlPath, out);
+  return { buffer: zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer, removed };
 }
 
 // ── Remove / rename a single placeholder ─────────────────────────────────────

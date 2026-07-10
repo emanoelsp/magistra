@@ -36,11 +36,16 @@ export async function GET(
       const isDocx = /\.(docx|doc)(\?|$)/i.test(template.arquivo_url);
       const schema = Array.isArray(template.schema_campos) ? template.schema_campos : [];
       if (isDocx && schema.length > 0) {
+        // Fail-explicit: nunca degradar para o original em silêncio. Servir o
+        // docx SEM chips faria o professor concluir que as edições sumiram;
+        // o erro 502 deixa o client mostrar o estado de erro com retry.
         try {
           const fillableUrl = typeof template.arquivo_fillable_url === "string"
             ? template.arquivo_fillable_url
             : "";
           if (fillableUrl) {
+            // Blob salvo e verificado pós-save — a mesma fonte que a geração de
+            // plano consome. É o que o Visualizar deve mostrar.
             const fillableBuffer = await downloadFile(fillableUrl);
             return new NextResponse(new Uint8Array(fillableBuffer), {
               headers: {
@@ -50,6 +55,7 @@ export async function GET(
               },
             });
           }
+          // Bootstrap: template ainda sem fillable salvo — gera just-in-time.
           const { injectPlaceholders } = await import("../../../../../lib/utils/docx-filler");
           const rawBuffer = await downloadFile(template.arquivo_url);
           const freshBuffer = injectPlaceholders(rawBuffer, schema);
@@ -61,7 +67,11 @@ export async function GET(
             },
           });
         } catch (e) {
-          console.warn("[arquivo] fresh regeneration falhou, retornando original:", e);
+          console.error("[arquivo] fresh: falha ao servir fillable:", e);
+          return NextResponse.json(
+            { error: "Não foi possível carregar o documento preparado. Tente novamente." },
+            { status: 502 },
+          );
         }
       }
     }

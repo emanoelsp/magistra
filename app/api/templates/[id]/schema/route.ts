@@ -19,6 +19,7 @@ import {
   isCoordValid,
   reportInjections,
   stripNonSchemaTokens,
+  stripPageBreaksOutsideTables,
   wrapAllChipsInSdt,
 } from "../../../../../lib/utils/docx-filler";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
@@ -47,6 +48,8 @@ interface SchemaBody {
   schema_campos?: TemplateFieldSchema[];
   field_positions?: Record<string, FieldPosition>;
   cell_edits?: CellEdit[];
+  /** Mutação consentida: remover pageBreakBefore fora de tabelas ao gerar o fillable. */
+  remove_page_breaks?: boolean;
 }
 
 export async function PATCH(
@@ -143,6 +146,18 @@ export async function PATCH(
     // Pre-existing {{tokens}} typed by the user in the original are removed for
     // deleted keys, making ghost variables impossible even for pre-annotated files.
     let buffer = await downloadFile(arquivoUrl);
+
+    // Mutação consentida e persistida: como o fillable é sempre regenerado a
+    // partir do original (Immutable Base), a remoção precisa reaplicar a cada
+    // save — uma limpeza única no fillable seria desfeita no save seguinte.
+    const removePageBreaks = body.remove_page_breaks !== undefined
+      ? body.remove_page_breaks === true
+      : data.remove_page_breaks === true;
+    if (removePageBreaks) {
+      const { buffer: cleaned, removed } = stripPageBreaksOutsideTables(buffer);
+      buffer = cleaned;
+      if (removed > 0) console.info(`[templates/schema] ${removed} pageBreakBefore removido(s) fora de tabelas`);
+    }
 
     // ── cell_edits must be parsed BEFORE stripNonSchemaTokens ────────────────
     // When the user moves a chip from cell A to cell B in the editor, the original
@@ -381,9 +396,12 @@ export async function PATCH(
     // arquivo que o Visualizar e a geração de plano vão consumir, não um estado
     // intermediário em memória. Fallback para o buffer local se o download falhar.
     let verifyBuffer = buffer;
+    let verificacao: "blob" | "memoria" = "blob";
     try {
       verifyBuffer = await downloadFile(newFillableUrl);
     } catch (e) {
+      // Garantia enfraquecida — sinalizar na resposta para a UI não mostrar verde pleno
+      verificacao = "memoria";
       console.warn("[templates/schema] Verificação pós-save: download do blob falhou, usando buffer local:", e);
     }
     const { missing: camposSemPlaceholder } = reportInjections(verifyBuffer, newSchema);
@@ -415,6 +433,7 @@ export async function PATCH(
       arquivo_fillable_url: newFillableUrl,
       fillable_status: "pronto",
       field_positions: allPositions,    // source of truth for placement, now includes coords
+      remove_page_breaks: removePageBreaks,
     };
     if (corrections.length > 0) {
       firestoreUpdate.campo_corrections = FieldValue.arrayUnion(...corrections);
@@ -432,6 +451,8 @@ export async function PATCH(
       ok: true,
       arquivo_fillable_url: newFillableUrl,
       campos_sem_placeholder: camposSemPlaceholder,
+      verificacao,
+      remove_page_breaks: removePageBreaks,
     });
   } catch (error) {
     console.error("[templates/schema] Erro:", error);

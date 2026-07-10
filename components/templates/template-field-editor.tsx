@@ -25,6 +25,7 @@ import {
   PanelRightOpen,
   RefreshCw,
   RotateCcw,
+  Scissors,
   Sparkles,
   Trash2,
   X,
@@ -1260,6 +1261,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isReExtracting, setIsReExtracting] = useState(false);
+  const [removePageBreaks, setRemovePageBreaks] = useState(template.remove_page_breaks === true);
+  const [isTogglingPageBreaks, setIsTogglingPageBreaks] = useState(false);
   const [reExtractMsg, setReExtractMsg] = useState<string | null>(null);
   const [camposSemPlaceholder, setCamposSemPlaceholder] = useState<string[]>([]);
   const [camposBaixaConfianca, setCamposBaixaConfianca] = useState<string[]>(template.campos_baixa_confianca ?? []);
@@ -1526,6 +1529,53 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
       showMagisToast("Ops! Não consegui re-extrair os campos. Tente novamente.", "error");
     } finally {
       setIsReExtracting(false);
+    }
+  }
+
+  // Mutação consentida: remove pageBreakBefore fora de tabelas do fillable.
+  // Templates escolares carregam quebras latentes de estilos de título que o
+  // Word desktop ignora mas o preview honra. O original nunca é alterado —
+  // a limpeza reaplica a cada save e pode ser desfeita aqui.
+  async function handleTogglePageBreaks() {
+    const next = !removePageBreaks;
+    if (
+      next &&
+      !window.confirm(
+        "Remover as quebras de página do documento (fora de tabelas)?\n\nO arquivo original da escola não é alterado — a limpeza vale para o documento preparado e pode ser desfeita neste mesmo botão.",
+      )
+    ) {
+      return;
+    }
+    setIsTogglingPageBreaks(true);
+    try {
+      const res = await fetch(`/api/templates/${template.id}/schema`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ remove_page_breaks: next }),
+      });
+      const d = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        campos_sem_placeholder?: string[];
+        error?: string;
+      } | null;
+      if (!res.ok || !d?.ok) throw new Error(d?.error ?? "Falha ao atualizar quebras de página.");
+      setRemovePageBreaks(next);
+      setCamposSemPlaceholder(d.campos_sem_placeholder ?? []);
+      setPreviewVersion((v) => v + 1);
+      router.refresh();
+      showMagisToast(
+        next
+          ? "Quebras de página removidas do documento preparado."
+          : "Quebras de página originais restauradas.",
+        "success",
+      );
+    } catch (err) {
+      showMagisToast(
+        err instanceof Error ? err.message : "Não consegui atualizar as quebras de página.",
+        "error",
+      );
+    } finally {
+      setIsTogglingPageBreaks(false);
     }
   }
 
@@ -1858,7 +1908,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             const d = await res.json().catch(() => null) as { error?: string } | null;
             throw new Error(d?.error ?? "Falha ao salvar.");
           }
-          return res.json() as Promise<{ campos_sem_placeholder?: string[] }>;
+          return res.json() as Promise<{ campos_sem_placeholder?: string[]; verificacao?: "blob" | "memoria" }>;
         })
         .then((d) => {
           const semPlaceholder = d.campos_sem_placeholder ?? [];
@@ -1869,14 +1919,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           const labelsFaltando = fieldsToSave
             .filter((f) => semPlaceholder.includes(f.key))
             .map((f) => f.label || f.key);
+          const toastFaltando = (acao: string) => {
+            showMagisToast(
+              `Salvei, mas ${labelsFaltando.length === 1 ? "o campo" : "os campos"} ${labelsFaltando.slice(0, 3).join(", ")}${labelsFaltando.length > 3 ? "…" : ""} não ${labelsFaltando.length === 1 ? "entrou" : "entraram"} no documento. ${acao}`,
+              "error",
+            );
+          };
           if (switchToPreview) {
             setPreviewVersion((v) => v + 1);
-            if (labelsFaltando.length > 0) {
-              showMagisToast(
-                `Salvei, mas ${labelsFaltando.length === 1 ? "o campo" : "os campos"} ${labelsFaltando.slice(0, 3).join(", ")}${labelsFaltando.length > 3 ? "…" : ""} não ${labelsFaltando.length === 1 ? "entrou" : "entraram"} no documento. Posicione pelo editor.`,
-                "error",
-              );
-            }
+            if (labelsFaltando.length > 0) toastFaltando("Posicione pelo editor.");
           } else if (mode === "confirm") {
             setMagisQuestionsMode(true);
             setMagisStep(1);
@@ -1886,9 +1937,13 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             setTimeout(() => setSaved(false), 2500);
             router.refresh();
             if (labelsFaltando.length > 0) {
+              toastFaltando("Clique na célula desejada para posicionar.");
+            } else if (d.verificacao === "memoria") {
+              // Verificação rodou no buffer local (download do blob falhou) —
+              // não prometer verde pleno quando a garantia está enfraquecida.
               showMagisToast(
-                `Salvei, mas ${labelsFaltando.length === 1 ? "o campo" : "os campos"} ${labelsFaltando.slice(0, 3).join(", ")}${labelsFaltando.length > 3 ? "…" : ""} não ${labelsFaltando.length === 1 ? "entrou" : "entraram"} no documento. Clique na célula desejada para posicionar.`,
-                "error",
+                "Campos salvos, mas não consegui confirmar contra o arquivo armazenado. Confira no Visualizar.",
+                "info",
               );
             } else {
               showMagisToast("Campos salvos! O template está atualizado.", "success");
@@ -2361,15 +2416,35 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               </div>
 
               {template.arquivo_url && (
-                <button
-                  type="button"
-                  onClick={() => void handleReExtract()}
-                  disabled={isReExtracting}
-                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-slate-400 hover:text-slate-900 disabled:opacity-50"
-                >
-                  {isReExtracting ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  Reanalisar
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleReExtract()}
+                    disabled={isReExtracting}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-500 transition hover:border-slate-400 hover:text-slate-900 disabled:opacity-50"
+                  >
+                    {isReExtracting ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    Reanalisar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleTogglePageBreaks()}
+                    disabled={isTogglingPageBreaks}
+                    title={
+                      removePageBreaks
+                        ? "O documento preparado está sem as quebras de página do original. Clique para restaurá-las."
+                        : "Remove quebras de página herdadas do original (fora de tabelas). O arquivo da escola não é alterado."
+                    }
+                    className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs transition disabled:opacity-50 ${
+                      removePageBreaks
+                        ? "border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-500"
+                        : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-900"
+                    }`}
+                  >
+                    {isTogglingPageBreaks ? <Loader2 className="h-3 w-3 animate-spin" /> : <Scissors className="h-3 w-3" />}
+                    {removePageBreaks ? "Restaurar quebras de página" : "Remover quebras de página"}
+                  </button>
+                </>
               )}
             </div>
 
