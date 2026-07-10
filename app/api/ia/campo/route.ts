@@ -29,9 +29,65 @@ import {
   setCachedSuggestions,
 } from "../../../../lib/services/suggestions-cache.server";
 import type { IaSugestao, TemplateRecord } from "../../../../lib/types/firestore";
+import { inferirClasse } from "../../../../lib/utils/field-taxonomy";
+import { buildAllowedCodes, filterSugestoes } from "../../../../lib/services/bncc-validator";
 
 function sanitizeForPrompt(value: string): string {
   return value.replace(/<\/?[^>]+>/g, "").replace(/[{}]/g, "").trim();
+}
+
+const MESES_PT = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"] as const;
+
+/**
+ * Auto-computes date/time suggestions for contextual fields — no AI call needed.
+ * Uses Sao Paulo timezone since that's where most of the user base is.
+ */
+function buildContextualSugestoes(now: Date, fieldKey: string, _fieldLabel: string): IaSugestao[] {
+  const sp = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+  const day   = sp.getDate();
+  const month = sp.getMonth() + 1; // 1–12
+  const year  = sp.getFullYear();
+  const mesNome   = MESES_PT[month - 1]!;
+  const bimestre  = month <= 3 ? "1°" : month <= 6 ? "2°" : month <= 9 ? "3°" : "4°";
+  const dd = String(day).padStart(2, "0");
+  const mm = String(month).padStart(2, "0");
+
+  const key = fieldKey.toLowerCase();
+
+  if (/\bano(_letivo|_atual)?\b/.test(key) && !/data|mes|bim|tri|sem|per/.test(key)) {
+    return [
+      { id: "s1", label: String(year),      descricao: "Ano letivo vigente.", fonte: "Calendário" },
+      { id: "s2", label: String(year + 1),  descricao: "Próximo ano letivo.",  fonte: "Calendário" },
+    ];
+  }
+
+  if (/bimestre|trimestre|semestre|periodo/.test(key)) {
+    const tri = month <= 4 ? "1°" : month <= 8 ? "2°" : "3°";
+    const sem  = month <= 6 ? "1°" : "2°";
+    return [
+      { id: "s1", label: `${bimestre} Bimestre de ${year}`,  descricao: "Período bimestral atual.", fonte: "Calendário escolar" },
+      { id: "s2", label: `${tri} Trimestre de ${year}`,      descricao: "Período trimestral atual.", fonte: "Calendário escolar" },
+      { id: "s3", label: `${sem} Semestre de ${year}`,       descricao: "Período semestral atual.",  fonte: "Calendário escolar" },
+    ];
+  }
+
+  if (/^mes/.test(key) || key === "mes") {
+    const nextM  = month === 12 ? 1 : month + 1;
+    const nextY  = month === 12 ? year + 1 : year;
+    const nextMN = MESES_PT[nextM - 1]!;
+    return [
+      { id: "s1", label: `${mesNome} de ${year}`,     descricao: "Mês letivo atual.",    fonte: "Calendário" },
+      { id: "s2", label: `${nextMN} de ${nextY}`,     descricao: "Próximo mês letivo.",   fonte: "Calendário" },
+      { id: "s3", label: `${mm}/${year}`,              descricao: "Formato numérico MM/AAAA.", fonte: "Calendário" },
+    ];
+  }
+
+  // Generic date / data_atual / data_aula / data_realizacao / etc.
+  return [
+    { id: "s1", label: `${dd}/${mm}/${year}`,          descricao: "Data de hoje (DD/MM/AAAA).",   fonte: "Calendário" },
+    { id: "s2", label: `${mesNome} de ${year}`,         descricao: "Mês e ano sem dia exato.",     fonte: "Calendário" },
+    { id: "s3", label: `${bimestre} Bimestre de ${year}`, descricao: "Período letivo atual.",     fonte: "Calendário escolar" },
+  ];
 }
 
 function computeSchemaHash(schemaCampos: unknown[]): string {
@@ -44,6 +100,62 @@ function computeSchemaHash(schemaCampos: unknown[]): string {
 }
 
 const MODEL_NAME = process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash";
+
+/**
+ * Builds suggestions for "perfil" class fields from the teacher's stored profile.
+ * No AI call — instant, no quota consumed.
+ * Returns null when the profile has no relevant data for this field.
+ */
+function buildPerfilSugestoes(
+  fieldKey: string,
+  user: import("../../../../lib/types/firestore").UserProfile,
+): import("../../../../lib/types/firestore").IaSugestao[] | null {
+  const key = fieldKey.toLowerCase();
+  const pp  = user.perfil_pedagogico ?? {};
+
+  type Candidate = { value: string; descricao: string; fonte: string };
+  const candidates: Candidate[] = [];
+
+  // Professor / docente / regente → nome do usuário
+  if (/^(professor|docente|regente|ministrante|formador|orientador)/.test(key)) {
+    if (user.nome) candidates.push({ value: user.nome, descricao: "Nome cadastrado no seu perfil.", fonte: "Perfil" });
+    if (pp.cargo)  candidates.push({ value: pp.cargo,  descricao: "Cargo cadastrado no perfil.",    fonte: "Perfil" });
+  }
+  // Escola / unidade escolar
+  else if (/^(escola|unidade_escolar|colegio|instituicao)/.test(key)) {
+    if (user.escola_padrao) candidates.push({ value: user.escola_padrao, descricao: "Escola padrão do seu perfil.", fonte: "Perfil" });
+  }
+  // Turma / série / ano
+  else if (/^(turma|serie|ano_serie|classe)/.test(key)) {
+    if (pp.turma)        candidates.push({ value: pp.turma,        descricao: "Turma cadastrada no perfil.", fonte: "Perfil" });
+    if (pp.nivel_ensino) candidates.push({ value: pp.nivel_ensino, descricao: "Nível de ensino cadastrado.",  fonte: "Perfil" });
+  }
+  // Componente / disciplina / área
+  else if (/^(area_componente|componente|disciplina|materia)/.test(key)) {
+    if (pp.disciplina)   candidates.push({ value: pp.disciplina,   descricao: "Componente curricular cadastrado no perfil.", fonte: "Perfil" });
+  }
+  // Município / cidade
+  else if (/^(municipio|cidade)/.test(key)) {
+    if (pp.municipio)    candidates.push({ value: pp.municipio,    descricao: "Município cadastrado no perfil.", fonte: "Perfil" });
+  }
+  // UF / estado
+  else if (/^(uf|estado)/.test(key)) {
+    if (pp.uf)           candidates.push({ value: pp.uf,           descricao: "Estado cadastrado no perfil.", fonte: "Perfil" });
+  }
+  // Cargo / função
+  else if (/^(cargo|funcao|coordenador|diretor)/.test(key)) {
+    if (pp.cargo)        candidates.push({ value: pp.cargo,        descricao: "Cargo cadastrado no perfil.", fonte: "Perfil" });
+  }
+
+  if (candidates.length === 0) return null;
+
+  return candidates.map((c, i) => ({
+    id:       `p${i + 1}`,
+    label:    c.value,
+    descricao: c.descricao,
+    fonte:    c.fonte,
+  }));
+}
 
 // ── Response schema — garante conformidade estrutural no nível do sampler ──
 const SUGESTAO_RESPONSE_SCHEMA: ResponseSchema = {
@@ -236,6 +348,22 @@ export async function POST(request: Request) {
       );
     }
 
+    // Short-circuit: contextual fields (date, month, bimester) are auto-computed without AI.
+    // We infer the class from the key pattern; no DB access needed at this point.
+    if (inferirClasse(fieldKey, undefined) === "contextual") {
+      const autoSugestoes = buildContextualSugestoes(new Date(), fieldKey, fieldLabel);
+      return NextResponse.json({ sugestoes: autoSugestoes, provider: "local", quotaRemaining: -1 });
+    }
+
+    // Short-circuit: perfil fields are served from the teacher's stored profile — no AI needed.
+    if (inferirClasse(fieldKey, undefined) === "perfil") {
+      const perfilSugestoes = buildPerfilSugestoes(fieldKey, user);
+      if (perfilSugestoes) {
+        return NextResponse.json({ sugestoes: perfilSugestoes, provider: "local", quotaRemaining: -1 });
+      }
+      // Fall through to AI when the profile has no data for this specific field.
+    }
+
     const db = getAdminDb();
     const snap = await db.collection("magis_templates").doc(templateId).get();
     if (!snap.exists) {
@@ -259,6 +387,10 @@ export async function POST(request: Request) {
       ? template.schema_campos.find((f) => f.key === fieldKey)
       : undefined;
     const fieldAiInstructions = fieldSchema?.aiInstructions?.trim() ?? "";
+
+    // Determine lifecycle class: stored value wins; fallback to deterministic inference.
+    const fieldClasse = fieldSchema?.classe ?? inferirClasse(fieldKey, fieldSchema?.role ?? "manual");
+    const isPerfilField = fieldClasse === "perfil";
 
     const anoLetivo = new Date().getFullYear();
 
@@ -489,8 +621,12 @@ Responda SOMENTE com JSON válido:
         .test(etapaRaw) ? "EF"
       : undefined;
 
+    // Skip Pinecone for non-pedagogical fields: perfil fields never need BNCC context,
+    // and contextual fields are already handled by the short-circuit above.
+    const skipRag = isBibliografiaField || isPerfilField;
+
     const [curriculumRaw, pedagogicMemory] = await Promise.all([
-      isBibliografiaField
+      skipRag
         ? Promise.resolve({ bncc: [], saeb: [], curriculo_estadual: [], cnct: [], curriculo_digital: [] })
         : retrieveAllCurriculumContext(ragQuery, { componente, etapa, estado }),
       getPedagogicMemoryContext(user.uid, getPlanCapabilities(user.plano ?? "free").canAccessBiblioteca).catch(() => ""),
@@ -611,8 +747,9 @@ Responda SOMENTE com JSON válido:
             const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
             const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
             const nsLookupFb = buildNamespaceLookup(curriculum);
-            const sugestoes = validateSugestoes(raw, { templateId, fieldKey })
+            const validatedFb = validateSugestoes(raw, { templateId, fieldKey })
               .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookupFb) }));
+            const { filtered: sugestoes } = filterSugestoes(validatedFb, buildAllowedCodes(curriculum));
             if (cacheKey && sugestoes.length > 0) {
               void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
             }
@@ -642,8 +779,10 @@ Responda SOMENTE com JSON válido:
               const parsed = JSON.parse(accumulated) as { sugestoes: IaSugestao[] };
               const rawSug = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
               const nsLookupStr = buildNamespaceLookup(curriculum);
-              const sugestoes = validateSugestoes(rawSug, { templateId, fieldKey })
+              const validated = validateSugestoes(rawSug, { templateId, fieldKey })
                 .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookupStr) }));
+              const allowedCodesStr = buildAllowedCodes(curriculum);
+              const { filtered: sugestoes } = filterSugestoes(validated, allowedCodesStr);
               if (cacheKey && sugestoes.length > 0) {
                 void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
               }
@@ -715,8 +854,15 @@ Responda SOMENTE com JSON válido:
 
     const rawSugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
     const nsLookup = buildNamespaceLookup(curriculum);
-    const sugestoes = validateSugestoes(rawSugestoes, { templateId, fieldKey })
+    const validated = validateSugestoes(rawSugestoes, { templateId, fieldKey })
       .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookup) }));
+
+    // Closed-world: remove suggestions citing BNCC/SAEB codes outside the retrieved context.
+    const allowedCodes = buildAllowedCodes(curriculum);
+    const { filtered: sugestoes, removedCount } = filterSugestoes(validated, allowedCodes);
+    if (removedCount > 0) {
+      console.warn(`[ia/campo] Validator removeu ${removedCount} sugestão(ões) com códigos fora do contexto — field="${fieldKey}"`);
+    }
 
     if (cacheKey && sugestoes.length > 0) {
       void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });

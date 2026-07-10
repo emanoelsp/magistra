@@ -6,7 +6,20 @@ export type TemplateFieldKind =
   | "number"
   | "date";
 
+/** @deprecated use `classe` instead — kept for backward compatibility */
 export type TemplateFieldRole = "manual" | "ia_sugerida";
+
+/**
+ * Lifecycle class of a chip — HOW it gets resolved during plan generation.
+ * Orthogonal to `role` (which captures origin, not resolution).
+ *   perfil      → fixed data set once by the teacher (school, class, name)
+ *   pedagogico  → generated/suggested every month by AI + RAG (skills, content)
+ *   contextual  → calculated per plan (month, date, bimester)
+ */
+export type TemplateFieldClasse = "perfil" | "pedagogico" | "contextual";
+
+/** How the chip value was determined. */
+export type TemplateFieldOrigem = "ia" | "manual" | "regra";
 
 export type TemplateFieldGroup =
   | "dados_turma"
@@ -47,6 +60,23 @@ export interface TemplateFieldSchema {
   ai_confidence?: number;
   /** When true, the PlanEditor shows an "Importar do professor de área" button for this field. */
   importavel_de_regente?: boolean;
+  /**
+   * Lifecycle class — replaces the semantic dimension of `role`.
+   * Optional for backward compat; inferred via inferirClasse() when absent.
+   */
+  classe?: TemplateFieldClasse;
+  /** How the chip value was originally determined. */
+  origem?: TemplateFieldOrigem;
+}
+
+/** Dados pedagógicos do professor, salvos uma vez e reutilizados em todos os planos. */
+export interface PerfilPedagogico {
+  disciplina?: string;   // ex: "Língua Portuguesa", "Matemática"
+  turma?: string;        // ex: "9º B", "Turma 301"
+  nivel_ensino?: string; // ex: "EF2", "EM", "EI"
+  uf?: string;           // ex: "SC", "SP"
+  municipio?: string;    // ex: "Florianópolis"
+  cargo?: string;        // ex: "Professor", "Coordenador Pedagógico"
 }
 
 export interface UserProfile {
@@ -69,6 +99,8 @@ export interface UserProfile {
   ia_campo_mes?: string;
   /** Denormalized flag — true when any turma has tipo_professor === "segundo_professor" */
   is_segundo_professor?: boolean;
+  /** Dados pedagógicos persistidos para auto-preenchimento de campos perfil. */
+  perfil_pedagogico?: PerfilPedagogico;
 }
 
 export type TemplateFillableStatus = "processando" | "pronto" | "erro";

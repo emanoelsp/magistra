@@ -73,6 +73,7 @@ export default async function PerfilPage() {
           nome={user.nome}
           email={user.email}
           escolaPadrao={user.escola_padrao}
+          perfilPedagogico={user.perfil_pedagogico ?? {}}
         />
 
         {/* Coluna direita: métricas + assinatura */}

@@ -12,6 +12,7 @@ import { getLimitsStatus } from "../../../../lib/services/limits";
 import { callAIWithFallbacks } from "../../../../lib/ai/provider";
 import { scanDocxStructure, scanPlaceholders } from "../../../../lib/utils/docx-filler";
 import { structuralPairsToSchema, keyToField } from "../../../../lib/utils/docx-schema-mapper";
+import { inferirClasse, inferirOrigem } from "../../../../lib/utils/field-taxonomy";
 
 // Use a dedicated model for introspection when configured (allows using a more
 // capable model for extraction while keeping a faster model for suggestions).
@@ -107,7 +108,7 @@ function detectTemplateType(text: string): {
   };
 }
 
-// ── Response schema — restringe role, group e type aos valores válidos ─────
+// ── Response schema — restringe role, group, classe e type aos valores válidos
 const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
   type: SchemaType.OBJECT,
   required: ["raciocinio", "campos"],
@@ -117,13 +118,14 @@ const INTROSPECT_RESPONSE_SCHEMA: ResponseSchema = {
       type: SchemaType.ARRAY,
       items: {
         type: SchemaType.OBJECT,
-        required: ["key", "label", "type", "required", "role", "group"],
+        required: ["key", "label", "type", "required", "role", "group", "classe"],
         properties: {
           key:               { type: SchemaType.STRING },
           label:             { type: SchemaType.STRING },
           type:              { type: SchemaType.STRING, format: "enum", enum: ["text", "textarea"] },
           required:          { type: SchemaType.BOOLEAN },
           role:              { type: SchemaType.STRING, format: "enum", enum: ["manual", "ia_sugerida"] },
+          classe:            { type: SchemaType.STRING, format: "enum", enum: ["perfil", "pedagogico", "contextual"] },
           group:             { type: SchemaType.STRING, format: "enum", enum: ["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"] },
           defaultValue:      { type: SchemaType.STRING, nullable: true },
           aiInstructions:    { type: SchemaType.STRING, nullable: true },
@@ -142,8 +144,13 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
 1. REGRA CRÍTICA: O campo 'label' DEVE ser copiado EXATAMENTE como aparece no documento — sem tradução, normalização, abreviação ou substituição.
    Exemplos: 'Área/Componente:' → label 'Área/Componente' | 'HABILIDADES:' → label 'HABILIDADES' | 'Professor(a):' → label 'Professor(a)'.
    NUNCA invente labels.
-2. Campos de identificação (professor, curso/área, turma, componente etc.) → role 'manual', group 'dados_turma'.
-3. Campos pedagógicos (objetivos, competências, habilidades, BNCC, SAEB, conteúdos, avaliação) → role 'ia_sugerida'.
+2. Campos de identificação (professor, curso/área, turma, componente etc.) → role 'manual', group 'dados_turma', classe 'perfil'.
+3. Campos pedagógicos (objetivos, competências, habilidades, BNCC, SAEB, conteúdos, avaliação) → role 'ia_sugerida', classe 'pedagogico'.
+3b. CLASSES DE CAMPO (campo obrigatório 'classe'):
+   'perfil'     → dado fixo do professor/escola/turma preenchido uma única vez (professor, escola, turma, componente, cargo, município).
+   'pedagogico' → conteúdo gerado/sugerido todo mês por IA (habilidades BNCC, SAEB, conteúdos, objetivos, metodologia, avaliação, competências).
+   'contextual' → calculado mecanicamente por período (data_atual, data_realizacao, mes_referencia, bimestre, ano_letivo, período).
+   Regra de consistência: role 'ia_sugerida' implica classe 'pedagogico'. role 'manual' pode ser 'perfil' ou 'contextual' conforme o tipo de dado.
 4. Grupos válidos: dados_turma | objetivos | competencias | habilidades | conteudos | avaliacao | outros.
 5. O 'key' é o label em snake_case sem acentos (ex: 'area_componente', 'numero_de_aulas').
 6. type "textarea" para campos pedagógicos longos; "text" para campos curtos (nome, turma, data, número).
@@ -233,21 +240,24 @@ FORMATO DE SAÍDA — SUBSTITUI TODA INSTRUÇÃO JSON ANTERIOR:
 Responda APENAS com linhas no formato TOON abaixo. ZERO JSON. ZERO markdown. ZERO texto fora das linhas RACIOCINIO e CAMPO.
 
 RACIOCINIO: <seu raciocínio condensado em uma linha>
-CAMPO key=<chave_snake_case> | label=<label exato do documento> | type=<text|textarea> | required=<true|false> | role=<manual|ia_sugerida> | group=<dados_turma|objetivos|competencias|habilidades|conteudos|avaliacao|outros> | injection_pattern=<adjacent_right|adjacent_below|inline_colon|column_header|period_column|null> | ai_confidence=<0.0-1.0> | aiInstructions=<instrução curta ou vazio>
+CAMPO key=<chave_snake_case> | label=<label exato do documento> | type=<text|textarea> | required=<true|false> | role=<manual|ia_sugerida> | classe=<perfil|pedagogico|contextual> | group=<dados_turma|objetivos|competencias|habilidades|conteudos|avaliacao|outros> | injection_pattern=<adjacent_right|adjacent_below|inline_colon|column_header|period_column|null> | ai_confidence=<0.0-1.0> | aiInstructions=<instrução curta ou vazio>
 
 Regras do formato:
 - Uma linha CAMPO por campo, sem exceções.
 - O separador entre atributos é " | " (espaço-pipe-espaço).
 - aiInstructions é sempre o ÚLTIMO atributo da linha (pode conter espaços e vírgulas).
 - ai_confidence: número entre 0.0 e 1.0. Se não souber, use 0.6.
+- classe: perfil (professor/escola/turma — preenche 1x) | pedagogico (IA sugere todo mês) | contextual (data/período, calculado).
 - Nunca omita nenhum atributo. Se não souber o valor, use o default: required=true, injection_pattern=null, ai_confidence=0.6, aiInstructions=
 
 Exemplo:
 RACIOCINIO: 4 campos de identificação e 3 pedagógicos detectados.
-CAMPO key=professor | label=Professor(a) | type=text | required=true | role=manual | group=dados_turma | injection_pattern=inline_colon | ai_confidence=1.0 | aiInstructions=
-CAMPO key=habilidades | label=HABILIDADES | type=textarea | required=true | role=ia_sugerida | group=habilidades | injection_pattern=adjacent_below | ai_confidence=0.9 | aiInstructions=Selecione habilidades BNCC alinhadas ao componente curricular e ao período letivo.`;
+CAMPO key=professor | label=Professor(a) | type=text | required=true | role=manual | classe=perfil | group=dados_turma | injection_pattern=inline_colon | ai_confidence=1.0 | aiInstructions=
+CAMPO key=data_realizacao | label=Data | type=text | required=true | role=manual | classe=contextual | group=dados_turma | injection_pattern=inline_colon | ai_confidence=0.9 | aiInstructions=
+CAMPO key=habilidades | label=HABILIDADES | type=textarea | required=true | role=ia_sugerida | classe=pedagogico | group=habilidades | injection_pattern=adjacent_below | ai_confidence=0.9 | aiInstructions=Selecione habilidades BNCC alinhadas ao componente curricular e ao período letivo.`;
 
 const VALID_ROLES = new Set<string>(["manual", "ia_sugerida"]);
+const VALID_CLASSES = new Set<string>(["perfil", "pedagogico", "contextual"]);
 const VALID_GROUPS = new Set<string>(["dados_turma", "objetivos", "competencias", "habilidades", "conteudos", "avaliacao", "outros"]);
 const VALID_TYPES = new Set<string>(["text", "textarea"]);
 const VALID_PATTERNS = new Set<string>(["adjacent_right", "adjacent_below", "inline_colon", "column_header", "period_column"]);
@@ -276,12 +286,19 @@ function parseToonSchema(raw: string): import("../../../../lib/types/firestore")
     if (!key || !label) continue; // drop malformed lines
 
     const rawConfidence = parseFloat(pairs.ai_confidence ?? "");
+    const role = VALID_ROLES.has(pairs.role) ? (pairs.role as "manual" | "ia_sugerida") : "manual";
+    const classeRaw = pairs.classe;
+    const classe = VALID_CLASSES.has(classeRaw ?? "")
+      ? (classeRaw as import("../../../../lib/types/firestore").TemplateFieldClasse)
+      : inferirClasse(key, role);
     fields.push({
       key,
       label,
       type: VALID_TYPES.has(pairs.type) ? (pairs.type as "text" | "textarea") : "text",
       required: pairs.required !== "false",
-      role: VALID_ROLES.has(pairs.role) ? (pairs.role as "manual" | "ia_sugerida") : "manual",
+      role,
+      classe,
+      origem: inferirOrigem(role),
       group: VALID_GROUPS.has(pairs.group)
         ? (pairs.group as import("../../../../lib/types/firestore").TemplateFieldSchema["group"])
         : "outros",
@@ -363,10 +380,15 @@ function parseSchema(
   }
   if (!Array.isArray(schema)) throw new Error("invalid_schema: not an array");
 
-  const fields = schema as import("../../../../lib/types/firestore").TemplateFieldSchema[];
-  const check = validateParsedSchema(fields);
+  const raw_fields = schema as import("../../../../lib/types/firestore").TemplateFieldSchema[];
+  const check = validateParsedSchema(raw_fields);
   if (!check.valid) throw new Error(`invalid_json_schema: ${check.reason}`);
-  return fields;
+  // Backfill classe/origem for any field the model didn't classify
+  return raw_fields.map((f) => ({
+    ...f,
+    classe: VALID_CLASSES.has(f.classe ?? "") ? f.classe : inferirClasse(f.key, f.role),
+    origem: inferirOrigem(f.role),
+  }));
 }
 
 export async function POST(request: Request) {

@@ -19,6 +19,7 @@ import {
   isCoordValid,
   reportInjections,
   stripNonSchemaTokens,
+  wrapAllChipsInSdt,
 } from "../../../../../lib/utils/docx-filler";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
 import type { TemplateFieldSchema } from "../../../../../lib/types/firestore";
@@ -356,6 +357,12 @@ export async function PATCH(
     if (camposSemPlaceholder.length > 0) {
       console.info(`[templates/schema] Campos sem placeholder automático: ${camposSemPlaceholder.join(", ")}`);
     }
+
+    // 3b. Wrap all placed chip runs in w:sdt Content Controls tagged f_{key}.
+    // This makes every chip addressable by tag (not by coord/text) so future
+    // saves and Word-edit recovery can find chips without re-resolving coordinates.
+    // Flat-token chips in the original are also wrapped here.
+    buffer = wrapAllChipsInSdt(buffer, newKeys);
 
     // 4. Upload as the new fillable DOCX.
     // Use a timestamped path so each save produces a unique URL — this eliminates

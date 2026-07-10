@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 
 import { getAdminAuth, getAdminDb } from "../firebase/admin";
 import { normalizePlanKey } from "../services/plan-config";
-import type { UserProfile } from "../types/firestore";
+import type { UserProfile, PerfilPedagogico } from "../types/firestore";
 
 const SESSION_COOKIE_NAME = "__session";
 
@@ -81,6 +81,19 @@ export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null>
         : 0,
     role: userData.role === "admin" ? "admin" : "professor",
     is_segundo_professor,
+    perfil_pedagogico: ((): PerfilPedagogico | undefined => {
+      const pp = userData.perfil_pedagogico;
+      if (!pp || typeof pp !== "object") return undefined;
+      const s = (k: string) => (typeof (pp as Record<string, unknown>)[k] === "string" ? (pp as Record<string, string>)[k] : undefined);
+      return {
+        disciplina:   s("disciplina"),
+        turma:        s("turma"),
+        nivel_ensino: s("nivel_ensino"),
+        uf:           s("uf"),
+        municipio:    s("municipio"),
+        cargo:        s("cargo"),
+      };
+    })(),
   };
 });
 

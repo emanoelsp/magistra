@@ -40,6 +40,7 @@ import {
 import { PlanVersionsButton } from "./plan-versions-button";
 import { showMagisToast } from "../../lib/utils/magis-toast";
 import { fixDocxAnchorImages } from "../../lib/utils/docx-anchor-fix";
+import { GenerateReviewModal } from "./generate-review-modal";
 
 // ── Telemetria de feedback implícito ─────────────────────────────────────────
 
@@ -542,6 +543,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const bulkCancelRef = useRef(false);
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number; currentLabel: string } | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
 
   const hasDocx =
     (template.arquivo_url ?? "").match(/\.(docx|doc)$/i) !== null;
@@ -826,6 +828,40 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         filled > 0 ? "success" : "error",
       );
     }
+  }
+
+  /** Applies the result from GenerateReviewModal to editor state and DOCX view. */
+  function applyReviewResult(result: Record<string, { value: string; sugestoes: IaSugestao[] }>) {
+    if (Object.keys(result).length === 0) return;
+
+    setValues((prev) => {
+      const next = { ...prev };
+      for (const [key, { value }] of Object.entries(result)) next[key] = value;
+      return next;
+    });
+
+    setSuggestions((prev) => {
+      const next = { ...prev };
+      for (const [key, { sugestoes }] of Object.entries(result)) next[key] = sugestoes;
+      return next;
+    });
+
+    // Sync DOCX view cells
+    if (docContainerRef.current) {
+      for (const [key, { value }] of Object.entries(result)) {
+        const cell = docContainerRef.current.querySelector<HTMLElement>(`[data-field-key="${key}"]`);
+        if (!cell) continue;
+        const role = schema.find((f) => f.key === key)?.role;
+        if (role === "ia_sugerida") cell.innerHTML = value;
+        else cell.textContent = value.replace(/<[^>]+>/g, " ").trim();
+      }
+    }
+
+    const count = Object.keys(result).length;
+    showMagisToast(
+      `Magis inseriu ${count} campo${count !== 1 ? "s" : ""}. Revise e ajuste como quiser.`,
+      "success",
+    );
   }
 
   function trackSugestaoAceita(sugestaoId: string, tipo: "titulo" | "completo") {
@@ -1143,7 +1179,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
       )}
 
       {/* Entry banner — wizardMode + Mestre+ only, shown when no IA field has been filled yet */}
-      {wizardMode && canUseBulkIa && !bulkGenerating && iaFields.length > 0 && iaFilledCount === 0 && (
+      {wizardMode && canUseBulkIa && !bulkGenerating && !showReviewModal && iaFields.length > 0 && iaFilledCount === 0 && (
         <div className="flex items-center gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm shadow-violet-200">
             <Sparkles className="h-4 w-4 text-white" />
@@ -1156,7 +1192,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
           </div>
           <button
             type="button"
-            onClick={() => void generateAllIaFields()}
+            onClick={() => setShowReviewModal(true)}
             className="shrink-0 flex items-center gap-1.5 rounded-2xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
           >
             <WandSparkles className="h-4 w-4" />
@@ -1534,7 +1570,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
               }
               onGenerateAll={
                 wizardMode && iaFields.some((f) => !values[f.key]?.trim())
-                  ? () => void generateAllIaFields()
+                  ? () => setShowReviewModal(true)
                   : undefined
               }
               estudanteNome={estudanteNome}
@@ -1656,6 +1692,26 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
           setActiveFieldKey(pickerField.key);
         }}
         onClose={() => setPickerField(null)}
+      />
+    )}
+
+    {/* Review modal — batch generation with one Pinecone retrieval */}
+    {showReviewModal && (
+      <GenerateReviewModal
+        templateId={template.id}
+        metadata={metadata}
+        estudanteNome={estudanteNome}
+        estudanteContexto={
+          estudante
+            ? [
+                estudante.diagnostico ? `Diagnóstico: ${estudante.diagnostico}` : "",
+                estudante.necessidades ? `Necessidades: ${estudante.necessidades}` : "",
+                estudante.nivel_suporte ? `Nível de suporte: ${estudante.nivel_suporte}` : "",
+              ].filter(Boolean).join(" | ")
+            : undefined
+        }
+        onClose={() => setShowReviewModal(false)}
+        onApply={applyReviewResult}
       />
     )}
     </>

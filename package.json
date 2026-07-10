@@ -11,6 +11,7 @@
     "ingest:bncc": "tsx --env-file=.env.local scripts/ingest-bncc.ts",
     "seed:admin": "tsx --env-file=.env.local scripts/seed-admin.ts",
     "migrate:users": "tsx --env-file=.env.local scripts/migrate-users.ts",
+    "migrate:classe": "tsx --env-file=.env.local scripts/migrate-classe.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:update": "vitest run --update-snapshots",

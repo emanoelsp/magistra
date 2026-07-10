@@ -88,6 +88,21 @@ function replaceFirst(haystack: string, needle: string, replacement: string): st
   return haystack.slice(0, idx) + replacement + haystack.slice(idx + needle.length);
 }
 
+/**
+ * Replaces w:sdt elements tagged with our chip marker (w:tag w:val="f_*") with
+ * their sdtContent inline, leaving all other content controls untouched.
+ *
+ * Called by fillDocx so docxtemplater sees plain {{key}} tokens rather than
+ * tokens wrapped in a content-control container.
+ */
+function flattenSdtsInXml(xml: string): string {
+  return xml.replace(
+    /<w:sdt(?:\s[^>]*)?>[\s\S]*?<w:sdtContent>([\s\S]*?)<\/w:sdtContent>\s*<\/w:sdt>/g,
+    (match, content) =>
+      /<w:tag\s+w:val="f_[A-Za-z0-9_]+"/.test(match) ? content : match,
+  );
+}
+
 function stripChangeTracking(xml: string): string {
   return xml
     // Structural property change history (revision diffs on tables, rows, cells, runs, paras)
@@ -3130,6 +3145,48 @@ export function extractHFFieldCoords(docxBuffer: Buffer): Record<string, string>
   return coords;
 }
 
+/**
+ * Wraps every chip run (`<w:r>` whose sole `<w:t>` is `{{key}}`) in a
+ * `<w:sdt>` Content Control tagged `f_{key}`.
+ *
+ * The sdt makes each chip addressable by tag across all saves and Word edits,
+ * eliminating the need to re-resolve coordinates when finding existing chips.
+ * Only runs whose entire `<w:t>` content is `{{key}}` are wrapped; mixed-content
+ * runs (e.g. "Nome: {{key}}") are left as-is.
+ *
+ * Called once, after ALL injection steps and before the fillable is uploaded.
+ * Since we always start from the clean original, there are no pre-existing
+ * f_* sdts to worry about — the wrap is always a fresh, non-nested operation.
+ */
+export function wrapAllChipsInSdt(docxBuffer: Buffer, keys: Set<string>): Buffer {
+  if (keys.size === 0) return docxBuffer;
+  const zip = new PizZip(docxBuffer);
+  const paths = Object.keys(zip.files).filter(
+    (p) => p === "word/document.xml" || /^word\/(header|footer)\d+\.xml$/.test(p),
+  );
+  let anyChanged = false;
+  for (const path of paths) {
+    let xml = zip.files[path].asText();
+    let changed = false;
+    for (const key of keys) {
+      const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Match <w:r> whose entire <w:t> content is {{key}} (with optional whitespace)
+      const runRe = new RegExp(
+        `<w:r(?:\\s[^>]*)?>(?:<w:rPr>[\\s\\S]*?<\\/w:rPr>)?<w:t[^>]*>\\s*\\{\\{${safeKey}\\}\\}\\s*<\\/w:t><\\/w:r>`,
+        "g",
+      );
+      const patched = xml.replace(runRe, (runXml) => {
+        const sdtId = Math.floor(Math.random() * 2147483647);
+        return `<w:sdt><w:sdtPr><w:tag w:val="f_${key}"/><w:id w:val="${sdtId}"/></w:sdtPr><w:sdtContent>${runXml}</w:sdtContent></w:sdt>`;
+      });
+      if (patched !== xml) { xml = patched; changed = true; }
+    }
+    if (changed) { zip.file(path, xml); anyChanged = true; }
+  }
+  if (!anyChanged) return docxBuffer;
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
 // ── Strip non-schema tokens ──────────────────────────────────────────────────
 
 /**
@@ -3268,6 +3325,15 @@ export function fillDocx(
   values: Record<string, string>,
 ): Buffer {
   const zip = new PizZip(docxBuffer);
+
+  // Flatten sdt chip wrappers so docxtemplater sees plain {{key}} tokens.
+  // Only f_* tagged sdts (ours) are collapsed; other content controls are kept.
+  for (const p of Object.keys(zip.files)) {
+    if (p !== "word/document.xml" && !/^word\/(header|footer)\d+\.xml$/.test(p)) continue;
+    const raw = zip.files[p].asText();
+    const flat = flattenSdtsInXml(raw);
+    if (flat !== raw) zip.file(p, flat);
+  }
 
   // Strip paragraph-level alignment from cells containing {{placeholders}}
   // so values default to left-aligned instead of inheriting the DOCX template

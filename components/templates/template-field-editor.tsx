@@ -35,6 +35,7 @@ import type { TemplateFieldSchema, TemplateRecord } from "../../lib/types/firest
 import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
 import { OfficeInlineViewer } from "../shared/office-inline-viewer";
 import { showMagisToast } from "../../lib/utils/magis-toast";
+import { inferirClasse, CLASSE_LABELS, CLASSE_COLORS } from "../../lib/utils/field-taxonomy";
 
 interface TemplateFieldEditorProps {
   template: TemplateRecord;
@@ -2413,11 +2414,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         {statusText}
                       </p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      field.role === "ia_sugerida" ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-700"
-                    }`}>
-                      {field.role === "ia_sugerida" ? "Magis" : "Professor"}
-                    </span>
+                    {(() => {
+                      const cl = field.classe ?? inferirClasse(field.key, field.role);
+                      const colors = CLASSE_COLORS[cl];
+                      return (
+                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${colors.bg} ${colors.text} ${colors.border}`}>
+                          {CLASSE_LABELS[cl]}
+                        </span>
+                      );
+                    })()}
                     {/* Item 8: locate in document */}
                     <button
                       type="button"
