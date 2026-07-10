@@ -89,6 +89,25 @@ function replaceFirst(haystack: string, needle: string, replacement: string): st
 }
 
 /**
+ * Positional splice: replaces the exact byte range [start, start+original.length).
+ *
+ * replaceFirst substitui a PRIMEIRA ocorrência byte-idêntica no documento —
+ * células vazias são frequentemente gêmeas byte a byte, então a injeção podia
+ * aterrissar numa célula vazia ANTERIOR à pretendida (misplacement silencioso
+ * que o reportInjections não detecta, pois verifica presença, não posição).
+ * Com o offset vindo do parseRows a substituição é inequívoca.
+ *
+ * Guarda de staleness: se o xml mutou desde o parse e os bytes no offset já
+ * não batem, cai para replaceFirst — nunca pior que o comportamento antigo.
+ */
+function spliceAt(haystack: string, start: number, original: string, replacement: string): string {
+  if (start >= 0 && haystack.slice(start, start + original.length) === original) {
+    return haystack.slice(0, start) + replacement + haystack.slice(start + original.length);
+  }
+  return replaceFirst(haystack, original, replacement);
+}
+
+/**
  * Replaces w:sdt elements tagged with our chip marker (w:tag w:val="f_*") with
  * their sdtContent inline, leaving all other content controls untouched.
  *
@@ -334,14 +353,26 @@ interface Row {
   xml: string;
   cells: string[];
   cellTexts: string[];
+  /** Absolute byte offset of the row in the parsed XML — feeds spliceAt. */
+  start: number;
+  /** Absolute byte offset of each cell in the parsed XML — feeds spliceAt. */
+  cellStarts: number[];
 }
 
 function parseRows(xml: string): Row[] {
   return [...xml.matchAll(/<w:tr[\s>][\s\S]*?<\/w:tr>/g)].map((m) => {
     const rowXml = m[0];
+    const rowStart = m.index ?? 0;
     // Match cells with or without attributes (e.g. <w:tc> or <w:tc w:val="...">)
-    const cells = [...rowXml.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map((c) => c[0]);
-    return { xml: rowXml, cells, cellTexts: cells.map(extractText) };
+    const cellMatches = [...rowXml.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)];
+    const cells = cellMatches.map((c) => c[0]);
+    return {
+      xml: rowXml,
+      cells,
+      cellTexts: cells.map(extractText),
+      start: rowStart,
+      cellStarts: cellMatches.map((c) => rowStart + (c.index ?? 0)),
+    };
   });
 }
 
@@ -494,7 +525,7 @@ export function injectIntoAdjacentEmpty(
 
       const origCell = rows[target.rowIdx].cells[target.colIdx];
       const newCell  = setCellContent(origCell, placeholder);
-      xml = replaceFirst(xml, origCell, newCell);
+      xml = spliceAt(xml, rows[target.rowIdx].cellStarts[target.colIdx], origCell, newCell);
 
       zip.file(xmlPath, xml);
       return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
@@ -1147,7 +1178,20 @@ function setCellContent(cellXml: string, content: string): string {
 
   // No <w:t> found - find first paragraph and add a run with the content
   const paraMatch = cellXml.match(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/);
-  if (!paraMatch) return cellXml;
+  if (!paraMatch) {
+    // Empty cells often carry a SELF-CLOSING paragraph (<w:p/>), which the
+    // regex above can't match — the function silently returned the cell
+    // unchanged and the caller logged the injection as OK. Expand it.
+    const selfClosing = cellXml.match(/<w:p(?:\s[^>]*)?\/>/);
+    if (selfClosing) {
+      return replaceFirst(
+        cellXml,
+        selfClosing[0],
+        `<w:p><w:r><w:t xml:space="preserve">${content}</w:t></w:r></w:p>`,
+      );
+    }
+    return cellXml;
+  }
 
   const firstPara = paraMatch[0];
   const openTag = firstPara.match(/^(<w:p(?:\s[^>]*)?>)/)?.[1] ?? "<w:p>";
@@ -1649,7 +1693,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 
           const origCell = pass1Rows[target.rowIdx].cells[target.colIdx];
           const newCell  = setCellContent(origCell, `{{${f.key}}}`);
-          pass1Xml = replaceFirst(pass1Xml, origCell, newCell);
+          pass1Xml = spliceAt(pass1Xml, pass1Rows[target.rowIdx].cellStarts[target.colIdx], origCell, newCell);
           pass1Rows = parseRows(pass1Xml);
           used.add(f.key);
           placed = true;
@@ -1766,7 +1810,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
         if (isNeverInjectTargetCell(origCell, currentText)) continue;
 
         const newCell = setCellContent(origCell, `{{${field.key}}}`);
-        grXml = replaceFirst(grXml, origCell, newCell);
+        grXml = spliceAt(grXml, grRows[targetRowIdx]?.cellStarts[targetCellIdx] ?? -1, origCell, newCell);
         grRows = parseRows(grXml);
         used.add(field.key);
 
@@ -1859,8 +1903,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     }
 
     if (rowModified) {
-      xml = replaceFirst(xml, row.xml, rowXml);
-      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts };
+      xml = spliceAt(xml, row.start, row.xml, rowXml);
+      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts, start: -1, cellStarts: row.cells.map(() => -1) };
     }
   }
 
@@ -1931,8 +1975,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     }
 
     if (rowModified) {
-      xml = replaceFirst(xml, row.xml, rowXml);
-      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts };
+      xml = spliceAt(xml, row.start, row.xml, rowXml);
+      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts, start: -1, cellStarts: row.cells.map(() => -1) };
     }
   }
 
@@ -1973,8 +2017,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
             );
             if (newCellXml !== cellXml) {
               const newRowXml = replaceFirst(row.xml, cellXml, newCellXml);
-              xml = replaceFirst(xml, row.xml, newRowXml);
-              rows[ri] = { xml: newRowXml, cells: [newCellXml], cellTexts: [extractText(newCellXml)] };
+              xml = spliceAt(xml, row.start, row.xml, newRowXml);
+              rows[ri] = { xml: newRowXml, cells: [newCellXml], cellTexts: [extractText(newCellXml)], start: -1, cellStarts: [-1] };
               used.add(dateField.key);
               console.info(`[inject pass2-periodo_blank] ${dateField.key} in "${singleCellText}"`);
             }
@@ -2006,8 +2050,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
             ? origCell.slice(0, lastPClose) + run + origCell.slice(lastPClose)
             : origCell;
           const newRowXml = replaceFirst(row.xml, origCell, newCell);
-          xml = replaceFirst(xml, row.xml, newRowXml);
-          rows[ri] = { xml: newRowXml, cells: [newCell], cellTexts: [extractText(newCell)] };
+          xml = spliceAt(xml, row.start, row.xml, newRowXml);
+          rows[ri] = { xml: newRowXml, cells: [newCell], cellTexts: [extractText(newCell)], start: -1, cellStarts: [-1] };
           used.add(dateField.key);
           console.info(`[inject pass2-city_comma] ${dateField.key} in "${singleCellText}"`);
         }
@@ -2036,7 +2080,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
         }
         const newRowXml = replaceFirst(row.xml, origCell, newCell);
         xml = replaceFirst(xml, row.xml, newRowXml);
-        rows[ri] = { xml: newRowXml, cells: [newCell], cellTexts: [extractText(newCell)] };
+        rows[ri] = { xml: newRowXml, cells: [newCell], cellTexts: [extractText(newCell)], start: -1, cellStarts: [-1] };
         used.add(field.key);
       } else if (ri + 1 < rows.length) {
         // Adjacent-below: inject into next row's first cell
@@ -2045,11 +2089,13 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
           const origCell = nextRow.cells[0];
           const newCell = setCellContent(origCell, `{{${field.key}}}`);
           const newNextRowXml = replaceFirst(nextRow.xml, origCell, newCell);
-          xml = replaceFirst(xml, nextRow.xml, newNextRowXml);
+          xml = spliceAt(xml, nextRow.start, nextRow.xml, newNextRowXml);
           rows[ri + 1] = {
             xml: newNextRowXml,
             cells: [newCell, ...nextRow.cells.slice(1)],
             cellTexts: [`{{${field.key}}}`, ...nextRow.cellTexts.slice(1)],
+            start: -1,
+            cellStarts: nextRow.cells.map(() => -1),
           };
           used.add(field.key);
         }
@@ -2113,12 +2159,12 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
           const newBelow = setCellContent(belowCellXml, `{{${field.key}}}`);
           const tRow = rows[bri];
           const newBelowRowXml = replaceFirst(tRow.xml, belowCellXml, newBelow);
-          xml = replaceFirst(xml, tRow.xml, newBelowRowXml);
+          xml = spliceAt(xml, tRow.start, tRow.xml, newBelowRowXml);
           const bc = [...tRow.cells];
           const bt = [...tRow.cellTexts];
           bc[bci] = newBelow;
           bt[bci] = `{{${field.key}}}`;
-          rows[bri] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
+          rows[bri] = { xml: newBelowRowXml, cells: bc, cellTexts: bt, start: -1, cellStarts: bc.map(() => -1) };
           used.add(field.key);
           continue;
         }
@@ -2151,12 +2197,12 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
           const newBelow = setCellContent(belowCellXml, `{{${field.key}}}`);
           const tRow = rows[bri];
           const newBelowRowXml = replaceFirst(tRow.xml, belowCellXml, newBelow);
-          xml = replaceFirst(xml, tRow.xml, newBelowRowXml);
+          xml = spliceAt(xml, tRow.start, tRow.xml, newBelowRowXml);
           const bc = [...tRow.cells];
           const bt = [...tRow.cellTexts];
           bc[bci] = newBelow;
           bt[bci] = `{{${field.key}}}`;
-          rows[bri] = { xml: newBelowRowXml, cells: bc, cellTexts: bt };
+          rows[bri] = { xml: newBelowRowXml, cells: bc, cellTexts: bt, start: -1, cellStarts: bc.map(() => -1) };
           used.add(field.key);
           continue;
         }
@@ -2191,8 +2237,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     }
 
     if (rowModified) {
-      xml = replaceFirst(xml, row.xml, rowXml);
-      rows[ri] = { xml: rowXml, cells, cellTexts };
+      xml = spliceAt(xml, row.start, row.xml, rowXml);
+      rows[ri] = { xml: rowXml, cells, cellTexts, start: -1, cellStarts: cells.map(() => -1) };
     }
 
     // ── Fallback: all-label row → inject into next row's cells ─────────────
@@ -2264,7 +2310,7 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
 
       if (nextModified) {
         xml = replaceFirst(xml, nextRow.xml, nextRowXml);
-        rows[ri + 1] = { xml: nextRowXml, cells: nextCells, cellTexts: nextCellTexts };
+        rows[ri + 1] = { xml: nextRowXml, cells: nextCells, cellTexts: nextCellTexts, start: -1, cellStarts: nextCells.map(() => -1) };
       }
     }
   }
@@ -2363,8 +2409,8 @@ export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSche
     }
 
     if (rowModified) {
-      xml = replaceFirst(xml, row.xml, rowXml);
-      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts };
+      xml = spliceAt(xml, row.start, row.xml, rowXml);
+      rows[ri] = { xml: rowXml, cells: row.cells, cellTexts: row.cellTexts, start: -1, cellStarts: row.cells.map(() => -1) };
     }
   }
 
