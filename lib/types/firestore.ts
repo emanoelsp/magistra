@@ -298,7 +298,12 @@ export interface IaSugestao {
   descricao?: string;
   fonte?: string;
   namespace?: string; // namespace RAG de origem: "bncc" | "saeb" | "curriculo_estadual" | "cnct" | "curriculo_digital" | "unknown"
-  aviso?: string;    // presente quando adaptado de outro componente curricular — ex: "Não encontrei habilidade exata de Matemática. EF06CI01 é de Ciências, mas se alinha porque ambas desenvolvem raciocínio proporcional."
+  aviso?: string;    // presente quando adaptado de outro componente curricular
+  /**
+   * Quando true, o modelo citou códigos fora do contexto RAG e a regeneração
+   * também falhou. A UI deve exibir a sugestão em âmbar com aviso de revisão.
+   */
+  precisaRevisao?: boolean;
 }
 
 export type UsageAction = "introspect" | "ia_campo" | "gerar_plano";

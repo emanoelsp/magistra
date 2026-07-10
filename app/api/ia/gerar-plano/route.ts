@@ -34,7 +34,7 @@ import {
   resolveNamespace,
   matchComponente,
 } from "../../../../lib/services/bncc-rag.server";
-import { buildAllowedCodes, filterSugestoes } from "../../../../lib/services/bncc-validator";
+import { buildAllowedCodes, filterSugestoes, buildCorrecaoPrompt } from "../../../../lib/services/bncc-validator";
 import { inferirClasse } from "../../../../lib/utils/field-taxonomy";
 import { FieldValue } from "firebase-admin/firestore";
 import type { IaSugestao, TemplateRecord, TemplateFieldSchema } from "../../../../lib/types/firestore";
@@ -115,7 +115,7 @@ async function generateForField(
     allowedCodes: Set<string>;
     nsLookup: ReturnType<typeof buildNamespaceLookup>;
   },
-): Promise<{ sugestoes: IaSugestao[]; error?: string }> {
+): Promise<{ sugestoes: IaSugestao[]; error?: string; precisaRevisao?: boolean }> {
   const label = sanitize(field.label);
   const instrucao = instrucaoField(label, field.group, sharedContext.isPei);
 
@@ -140,30 +140,58 @@ async function generateForField(
     ...(sharedContext.digitalContexto ? [`<curriculo_educacao_digital>\n${sharedContext.digitalContexto}\n</curriculo_educacao_digital>`] : []),
   ].join("\n");
 
-  try {
+  async function callAndParse(p: string): Promise<IaSugestao[]> {
     const { text } = await callAIWithFallbacks({
       systemInstruction,
-      prompt,
+      prompt: p,
       temperature: 0.35,
       topP: 0.8,
       geminiSchema: SUGESTAO_SCHEMA,
     });
-
-    let parsed: { sugestoes: IaSugestao[] };
+    let parsedInner: { sugestoes: IaSugestao[] };
     try {
-      parsed = JSON.parse(text) as { sugestoes: IaSugestao[] };
+      parsedInner = JSON.parse(text) as { sugestoes: IaSugestao[] };
     } catch {
       const fb = text.indexOf("{");
       const lb = text.lastIndexOf("}");
       if (fb === -1 || lb <= fb) throw new Error("JSON inválido");
-      parsed = JSON.parse(text.slice(fb, lb + 1)) as { sugestoes: IaSugestao[] };
+      parsedInner = JSON.parse(text.slice(fb, lb + 1)) as { sugestoes: IaSugestao[] };
+    }
+    const raw = Array.isArray(parsedInner?.sugestoes) ? parsedInner.sugestoes : [];
+    return validateSugestoes(raw, { templateId: sharedContext.templateId, fieldKey: field.key })
+      .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", sharedContext.nsLookup) }));
+  }
+
+  try {
+    let currentValidated = await callAndParse(prompt);
+    let filterRes = filterSugestoes(currentValidated, sharedContext.allowedCodes);
+
+    // fail-visible step 1: ONE regeneration with invalid codes listed in the prompt.
+    if (filterRes.allInvalid && filterRes.invalidCodes.length > 0) {
+      console.warn(
+        `[ia/gerar-plano] Todas as sugestões citam códigos inválidos ` +
+        `(${filterRes.invalidCodes.join(", ")}) — regenerando — field="${field.key}"`,
+      );
+      try {
+        const correcao = buildCorrecaoPrompt(filterRes.invalidCodes);
+        currentValidated = await callAndParse(correcao + prompt);
+        filterRes = filterSugestoes(currentValidated, sharedContext.allowedCodes);
+      } catch (retryErr) {
+        console.error(`[ia/gerar-plano] Erro na regeneração — field="${field.key}":`, retryErr);
+        // filterRes.allInvalid stays true → fall through to precisaRevisao
+      }
     }
 
-    const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
-    const validated = validateSugestoes(raw, { templateId: sharedContext.templateId, fieldKey: field.key })
-      .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", sharedContext.nsLookup) }));
-    const { filtered } = filterSugestoes(validated, sharedContext.allowedCodes);
-    return { sugestoes: filtered };
+    // fail-visible step 2: still allInvalid → return tagged for UI warning.
+    if (filterRes.allInvalid) {
+      console.warn(`[ia/gerar-plano] Regeneração falhou. Marcando precisaRevisao — field="${field.key}"`);
+      return {
+        sugestoes: currentValidated.map((s) => ({ ...s, precisaRevisao: true as const })),
+        precisaRevisao: true,
+      };
+    }
+
+    return { sugestoes: filterRes.filtered };
   } catch (err) {
     return { sugestoes: [], error: (err as Error).message ?? "Falha na geração" };
   }
@@ -301,7 +329,7 @@ export async function POST(request: Request) {
 
     // ── Fan-out com concorrência limitada ─────────────────────────────────────
 
-    const results: Record<string, { label: string; sugestoes: IaSugestao[]; error?: string }> = {};
+    const results: Record<string, { label: string; sugestoes: IaSugestao[]; error?: string; precisaRevisao?: boolean }> = {};
 
     async function runBatch(fields: TemplateFieldSchema[]) {
       for (let i = 0; i < fields.length; i += CONCURRENCY) {

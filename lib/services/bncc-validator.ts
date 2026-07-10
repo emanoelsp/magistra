@@ -1,21 +1,17 @@
 /**
  * Closed-world BNCC code validator.
  *
- * Principle (from Fable 5): AI redige livremente, mas CÓDIGOS BNCC/SAEB citados
- * devem existir no conjunto recuperado pelo RAG — nunca vindos da memória do modelo.
- * Códigos inventados ("EF07LP99", componente errado, número fora de range) são
- * descartados aqui, ANTES de chegar ao professor.
+ * Principle: AI writes freely, but every BNCC/SAEB code it cites must exist in
+ * the set retrieved by the RAG — never from the model's parametric memory.
  *
- * Usage:
- *   const allowed = buildAllowedCodes(curriculum);
- *   const filtered = filterSugestoes(sugestoes, allowed);
+ * All regexes and code extraction logic live in lib/utils/bncc-code.ts,
+ * which is the canonical TypeScript source. The Python ingest_bncc.py mirrors it.
  */
 
 import type { IaSugestao } from "../types/firestore";
+import { extractAllCodes } from "../utils/bncc-code";
 
-// Same pattern used in the Python ingest script (canonical — keep in sync)
-const RE_BNCC_CODE = /\b(EF|EM|EI)\d{2}[A-Z]{2,3}\d{2,3}\b/g;
-const RE_SAEB_CODE = /\b[DT]\d{1,3}\b/gi;
+// ── Allowed-code set builder ──────────────────────────────────────────────────
 
 /**
  * Builds the set of codes that are valid for the current request.
@@ -31,51 +27,99 @@ export function buildAllowedCodes(curriculum: {
   return allowed;
 }
 
-/** Returns all BNCC/SAEB codes cited in a string. */
-function extractCitedCodes(text: string): string[] {
-  const bncc = [...(text.match(RE_BNCC_CODE) ?? [])].map((c) => c.toUpperCase());
-  const saeb = [...(text.match(RE_SAEB_CODE) ?? [])].map((c) => c.toUpperCase());
-  return [...new Set([...bncc, ...saeb])];
-}
+// ── Per-suggestion check ──────────────────────────────────────────────────────
 
 /**
- * Returns false when the suggestion cites at least one BNCC/SAEB code
- * that is NOT in the allowed set. Cross-component adaptations (already
- * tagged in the prompt with "→ adaptável para X") are let through — the
- * AI was explicitly told to use them.
+ * Returns the list of codes cited in the suggestion that are NOT in allowedCodes.
+ * Empty result → suggestion is valid (either no codes cited or all codes allowed).
  *
- * When allowedCodes is empty, all suggestions pass (no context = no restriction).
+ * Cross-component adaptations (tagged in the prompt context with "→ adaptável para X")
+ * are safe: those codes are included in allowedCodes because buildAllowedCodes collects
+ * every code returned by Pinecone regardless of component. The "→ adaptável" marker
+ * in the prompt is purely informational for the model; it creates no bypass here.
  */
-export function isSugestaoValid(
-  s: IaSugestao,
-  allowedCodes: Set<string>,
-): boolean {
-  if (allowedCodes.size === 0) return true;
+export function invalidCodesIn(s: IaSugestao, allowedCodes: Set<string>): string[] {
+  if (allowedCodes.size === 0) return [];
   const text = `${s.label ?? ""} ${s.descricao ?? ""} ${s.fonte ?? ""}`;
-  const cited = extractCitedCodes(text);
-  if (cited.length === 0) return true; // no code cited → no restriction
-  return cited.every((code) => allowedCodes.has(code));
+  const cited = extractAllCodes(text);
+  return cited.filter((code) => !allowedCodes.has(code));
+}
+
+export function isSugestaoValid(s: IaSugestao, allowedCodes: Set<string>): boolean {
+  return invalidCodesIn(s, allowedCodes).length === 0;
+}
+
+// ── Batch filter ──────────────────────────────────────────────────────────────
+
+export interface FilterResult {
+  filtered:    IaSugestao[];
+  removedCount: number;
+  /**
+   * True when EVERY suggestion cited at least one invalid code — no valid
+   * suggestion survived the filter. The caller must NOT fall-open silently;
+   * it should retry with a correction prompt or mark suggestions precisaRevisao.
+   */
+  allInvalid:  boolean;
+  /** The invalid codes found across all removed suggestions (for the correction prompt). */
+  invalidCodes: string[];
 }
 
 /**
- * Filters suggestions, removing those with codes outside the allowed set.
- * If filtering would leave zero suggestions, returns the original list
- * (fail-open: better to show an unvalidated suggestion than nothing).
+ * Filters suggestions, removing those that cite codes outside the allowed set.
+ *
+ * IMPORTANT: When allInvalid === true, the caller must:
+ *   1. Attempt ONE regeneration with the error injected into the prompt.
+ *   2. If the regeneration also returns allInvalid, mark remaining suggestions
+ *      with precisaRevisao: true and return them so the UI warns the teacher.
+ *   Never silently return unvalidated suggestions when allInvalid is true.
  */
 export function filterSugestoes(
   sugestoes: IaSugestao[],
   allowedCodes: Set<string>,
-): { filtered: IaSugestao[]; removedCount: number } {
-  if (allowedCodes.size === 0) return { filtered: sugestoes, removedCount: 0 };
-
-  const valid = sugestoes.filter((s) => isSugestaoValid(s, allowedCodes));
-  if (valid.length === 0) {
-    // Fail-open: log and return originals
-    console.warn(
-      "[bncc-validator] Todas as sugestões contêm códigos inválidos — retornando sem filtro.",
-      sugestoes.map((s) => extractCitedCodes(`${s.label} ${s.fonte}`)),
-    );
-    return { filtered: sugestoes, removedCount: 0 };
+): FilterResult {
+  if (allowedCodes.size === 0) {
+    return { filtered: sugestoes, removedCount: 0, allInvalid: false, invalidCodes: [] };
   }
-  return { filtered: valid, removedCount: sugestoes.length - valid.length };
+
+  const invalidPerSugestao = sugestoes.map((s) => ({
+    s,
+    bad: invalidCodesIn(s, allowedCodes),
+  }));
+
+  const valid   = invalidPerSugestao.filter((x) => x.bad.length === 0).map((x) => x.s);
+  const invalid = invalidPerSugestao.filter((x) => x.bad.length > 0);
+  const allInvalidCodes = [...new Set(invalid.flatMap((x) => x.bad))];
+
+  if (valid.length > 0) {
+    return {
+      filtered:     valid,
+      removedCount: invalid.length,
+      allInvalid:   false,
+      invalidCodes: allInvalidCodes,
+    };
+  }
+
+  // All suggestions failed — do NOT fall-open. Signal the caller.
+  return {
+    filtered:     [],           // empty → caller must retry or mark precisaRevisao
+    removedCount: sugestoes.length,
+    allInvalid:   true,
+    invalidCodes: allInvalidCodes,
+  };
+}
+
+// ── Correction prompt builder ─────────────────────────────────────────────────
+
+/**
+ * Returns a correction paragraph to prepend to the original prompt on retry.
+ * The paragraph is in the same language as the system instruction (pt-BR) so
+ * the model receives a single-language request.
+ */
+export function buildCorrecaoPrompt(invalidCodes: string[]): string {
+  return (
+    `⚠️ CORREÇÃO OBRIGATÓRIA: na tentativa anterior você citou os seguintes códigos ` +
+    `que NÃO estão no contexto fornecido: ${invalidCodes.join(", ")}.\n` +
+    `Use APENAS os códigos listados em <habilidades_bncc> e <descritores_saeb>. ` +
+    `Se não houver código adequado para este campo, NÃO cite nenhum código — escreva a sugestão sem referência numérica.\n\n`
+  );
 }

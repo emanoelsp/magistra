@@ -1,20 +1,27 @@
 import type { IaSugestao } from "../types/firestore";
+import { decompor, extractBnccCodes, extractSaebCodes } from "../utils/bncc-code";
 
 const MIN_DESCRICAO_LEN = 20;
 
-// BNCC code patterns:
-// EF: EF01MA01, EF02LP03 (2-digit year + 2-letter component + 2-digit sequence)
-// EM: EM13CNT101, EM13LP01, EM13MAT101 (EM13 + component + 2-3 digit sequence)
-// SAEB: descriptors like D01, D32
-const BNCC_CODE_REGEX = /^(EF\d{2}[A-Z]{2,3}\d{2}|EM13[A-Z]{2,3}\d{2,3}|D\d{2})$/;
+/**
+ * Validates BNCC/SAEB codes found in the fonte field using the canonical
+ * decompor() function, which checks both format and component whitelists.
+ * Returns false if any extracted code fails structural validation.
+ */
+function hasValidCodesInFonte(fonte: string): boolean {
+  const bnccCodes = extractBnccCodes(fonte);
+  for (const code of bnccCodes) {
+    const d = decompor(code);
+    if (!d || !d.valido) return false;
+  }
 
-function validateBnccCode(fonte: string): boolean {
-  if (!fonte?.trim()) return true; // no fonte is fine — not all fields cite codes
-  // Extract all code-like tokens from the fonte string
-  const tokens = fonte.trim().split(/[\s,;]+/);
-  const codeTokens = tokens.filter((t) => /^[A-Z]{2}\d/.test(t));
-  if (codeTokens.length === 0) return true; // fonte is descriptive text, not a code
-  return codeTokens.every((code) => BNCC_CODE_REGEX.test(code));
+  const saebCodes = extractSaebCodes(fonte);
+  for (const code of saebCodes) {
+    const num = parseInt(code.slice(1), 10);
+    if (num < 1 || num > 30) return false;
+  }
+
+  return true;
 }
 
 function normalizeForComparison(text: string): string {
@@ -30,7 +37,6 @@ function isTooSimilar(a: string, b: string): boolean {
   const na = normalizeForComparison(a);
   const nb = normalizeForComparison(b);
   if (na === nb) return true;
-  // Jaccard similarity on words
   const wa = new Set(na.split(" "));
   const wb = new Set(nb.split(" "));
   const intersection = [...wa].filter((w) => wb.has(w)).length;
@@ -65,11 +71,11 @@ export function validateSugestoes(
       continue;
     }
 
-    // Validate BNCC code format in fonte — mark as unverified rather than removing
+    // Strip malformed codes from fonte rather than removing the whole suggestion.
     let fonteValidada = s.fonte;
-    if (s.fonte && !validateBnccCode(s.fonte)) {
-      console.warn("[suggestion-validator] Código BNCC com formato inválido:", { ...context, id: s.id, fonte: s.fonte });
-      fonteValidada = undefined; // strip invalid code, keep suggestion
+    if (s.fonte && !hasValidCodesInFonte(s.fonte)) {
+      console.warn("[suggestion-validator] Código com formato inválido removido de fonte:", { ...context, id: s.id, fonte: s.fonte });
+      fonteValidada = undefined;
     }
 
     seen.push(fingerprint);
