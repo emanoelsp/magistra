@@ -25,6 +25,13 @@ export function TemplatePreviewClient({
 
 // ─── DocxPreview ──────────────────────────────────────────────────────────────
 
+// Renders the fillable DOCX client-side via docx-preview.
+// This replaced the Office Online embed (view.officeapps.live.com): the Microsoft
+// viewer failed intermittently ("Word teve um problema..."), cached stale versions
+// of the document on their side, and depended on a 30-min HMAC token. Rendering
+// the blob we serve keeps freshness and availability entirely under our control.
+// key=fillableUrl forces remount (and re-fetch) whenever the template is saved,
+// so Visualizar always shows the most recently generated fillable.
 function DocxPreview({
   templateId,
   schema,
@@ -36,70 +43,12 @@ function DocxPreview({
   hasFillable: boolean;
   fillableUrl?: string;
 }) {
-  const [officeUrl, setOfficeUrl] = useState<string | null>(null);
-  const [tokenLoading, setTokenLoading] = useState(false);
-  const [isLocalhost, setIsLocalhost] = useState(true);
-
-  useEffect(() => {
-    const host = window.location.hostname;
-    const local = host === "localhost" || host === "127.0.0.1" || host.endsWith(".local");
-    setIsLocalhost(local);
-    if (local) return;
-
-    setTokenLoading(true);
-    fetch(`/api/templates/${templateId}/preview-token`)
-      .then((r) => r.json())
-      .then(({ token, exp }: { token: string; exp: number }) => {
-        const previewPath = `/api/templates/${templateId}/preview-publico?token=${encodeURIComponent(token)}&exp=${exp}&annotated=1`;
-        const previewUrl = `${window.location.origin}${previewPath}`;
-        setOfficeUrl(
-          `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`,
-        );
-      })
-      .catch(() => {/* fallback to docx-preview */})
-      .finally(() => setTokenLoading(false));
-  }, [templateId, hasFillable]);
-
-  if (!isLocalhost && (tokenLoading || officeUrl)) {
-    return (
-      <div className="flex flex-col gap-4">
-        {/* Office Online preview */}
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white" style={{ height: "72vh" }}>
-          {tokenLoading || !officeUrl ? (
-            <div className="flex h-full items-center justify-center gap-3 text-slate-500">
-              <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
-              <span className="text-sm">Carregando preview Word…</span>
-            </div>
-          ) : (
-            /* Clip top toolbar and bottom toolbar via overflow:hidden */
-            <div className="relative h-full overflow-hidden">
-              <iframe
-                src={officeUrl}
-                title="Pré-visualização do template"
-                allowFullScreen
-                style={{
-                  position: "absolute",
-                  top: "-56px",
-                  left: 0,
-                  width: "100%",
-                  height: "calc(100% + 100px)",
-                  border: "none",
-                }}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Variable reference panel */}
-        <VariablePanel schema={schema} hasFillable={hasFillable} />
-      </div>
-    );
-  }
-
-  // Localhost fallback — docx-preview with chip overlays.
-  // key=fillableUrl forces remount (and re-fetch) whenever the template is saved,
-  // so Visualizar always shows the most recently generated fillable.
-  return <DocxPreviewLocal key={fillableUrl ?? templateId} templateId={templateId} schema={schema} />;
+  return (
+    <div className="flex flex-col gap-4">
+      <DocxPreviewLocal key={fillableUrl ?? templateId} templateId={templateId} schema={schema} />
+      <VariablePanel schema={schema} hasFillable={hasFillable} />
+    </div>
+  );
 }
 
 // ─── Variable reference panel ─────────────────────────────────────────────────
@@ -152,22 +101,24 @@ function VariablePanel({ schema, hasFillable }: { schema: TemplateFieldSchema[];
   );
 }
 
-// ─── Localhost fallback: docx-preview with chip overlays ──────────────────────
+// ─── docx-preview renderer with chip overlays ─────────────────────────────────
 
 function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: TemplateFieldSchema[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<"loading" | "rendering" | "done" | "error">("loading");
+  const [attempt, setAttempt] = useState(0);
   const bufferRef = useRef<ArrayBuffer | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setPhase("loading");
     // Use fresh-injected DOCX so {{key}} tokens are at exact positions
     fetch(`/api/templates/${templateId}/arquivo?fresh=1`)
       .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
       .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
       .catch(() => { if (!cancelled) setPhase("error"); });
     return () => { cancelled = true; };
-  }, [templateId]);
+  }, [templateId, attempt]);
 
   useEffect(() => {
     if (phase !== "rendering" || !bufferRef.current || !containerRef.current) return;
@@ -262,9 +213,9 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-200">
       <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2">
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
         <p className="text-[11px] text-slate-500">
-          Preview local aproximado — em produção o Word é exibido com formatação exata.
+          Pré-visualização do documento salvo — fontes podem variar levemente; o download DOCX preserva a formatação exata do Word.
         </p>
       </div>
       <style>{`
@@ -283,8 +234,15 @@ function DocxPreviewLocal({ templateId, schema }: { templateId: string; schema: 
         </div>
       )}
       {phase === "error" && (
-        <div className="p-8 text-center">
+        <div className="flex flex-col items-center gap-3 p-8 text-center">
           <p className="text-sm text-slate-500">Não foi possível carregar o documento.</p>
+          <button
+            type="button"
+            onClick={() => setAttempt((a) => a + 1)}
+            className="rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+          >
+            Tentar novamente
+          </button>
         </div>
       )}
     </div>
