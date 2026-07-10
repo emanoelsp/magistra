@@ -41,6 +41,8 @@ import { PlanVersionsButton } from "./plan-versions-button";
 import { showMagisToast } from "../../lib/utils/magis-toast";
 import { fixDocxAnchorImages } from "../../lib/utils/docx-anchor-fix";
 import { GenerateReviewModal } from "./generate-review-modal";
+import { BnccCodeBadges } from "./bncc-code-badges";
+import { MAGIS_FINAL_MARKER, type MagisFinalPayload } from "../../lib/utils/stream-protocol";
 
 // ── Telemetria de feedback implícito ─────────────────────────────────────────
 
@@ -490,6 +492,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null);
   const [activeFieldMeta, setActiveFieldMeta] = useState<{ label: string; role: string } | null>(null);
   const [suggestions, setSuggestions] = useState<Record<string, IaSugestao[]>>({});
+  const [raciocinios, setRaciocinios] = useState<Record<string, string>>({});
   const [loadingField, setLoadingField] = useState<string | null>(null);
   const [streamingCharCount, setStreamingCharCount] = useState(0);
   const [suggestError, setSuggestError] = useState<string | null>(null);
@@ -660,6 +663,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
 
         const contentType = res.headers.get("content-type") ?? "";
         let sugestoes: IaSugestao[] = [];
+        let raciocinio: string | undefined;
 
         if (contentType.includes("text/plain") && res.body) {
           // Streaming response — accumulate chunks in real time
@@ -674,45 +678,75 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
             setStreamingCharCount(accumulated.length);
           }
 
-          const firstBrace = accumulated.indexOf("{");
-          const lastBrace = accumulated.lastIndexOf("}");
-          const jsonStr =
-            firstBrace !== -1 && lastBrace > firstBrace
-              ? accumulated.slice(firstBrace, lastBrace + 1)
-              : accumulated;
-
-          let parsed: { sugestoes?: IaSugestao[]; error?: string; _streamError?: string };
-          try {
-            parsed = JSON.parse(jsonStr) as typeof parsed;
-          } catch {
-            const isQuota = /quota|rate.?limit|cota|429/i.test(accumulated);
-            throw new Error(
-              isQuota
-                ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
-                : "A IA não retornou uma resposta válida. Tente novamente."
-            );
+          // Payload autoritativo pós-marcador: validado closed-world no servidor,
+          // com codigosOficiais e raciocinio. O texto antes do marcador é preview.
+          const markerIdx = accumulated.lastIndexOf(MAGIS_FINAL_MARKER);
+          let finalPayload: MagisFinalPayload | null = null;
+          if (markerIdx !== -1) {
+            try {
+              finalPayload = JSON.parse(
+                accumulated.slice(markerIdx + MAGIS_FINAL_MARKER.length),
+              ) as MagisFinalPayload;
+            } catch { /* payload truncado — cai no parse legado abaixo */ }
           }
 
-          if (parsed.error || parsed._streamError) {
-            const rawMsg = (parsed.error ?? parsed._streamError ?? "").toLowerCase();
-            const isQuota = /quota|rate.?limit|cota|429/.test(rawMsg);
-            throw new Error(
-              isQuota
-                ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
-                : "Não consegui gerar sugestões agora. Tente novamente."
-            );
+          if (finalPayload && Array.isArray(finalPayload.sugestoes)) {
+            sugestoes = finalPayload.sugestoes;
+            raciocinio = finalPayload.raciocinio;
+          } else {
+            // Parse legado do texto cru (servidor antigo ou stream interrompido)
+            const legacy = markerIdx !== -1 ? accumulated.slice(0, markerIdx) : accumulated;
+            const firstBrace = legacy.indexOf("{");
+            const lastBrace = legacy.lastIndexOf("}");
+            const jsonStr =
+              firstBrace !== -1 && lastBrace > firstBrace
+                ? legacy.slice(firstBrace, lastBrace + 1)
+                : legacy;
+
+            let parsed: { raciocinio?: string; sugestoes?: IaSugestao[]; error?: string; _streamError?: string };
+            try {
+              parsed = JSON.parse(jsonStr) as typeof parsed;
+            } catch {
+              const isQuota = /quota|rate.?limit|cota|429/i.test(accumulated);
+              throw new Error(
+                isQuota
+                  ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
+                  : "A IA não retornou uma resposta válida. Tente novamente."
+              );
+            }
+
+            if (parsed.error || parsed._streamError) {
+              const rawMsg = (parsed.error ?? parsed._streamError ?? "").toLowerCase();
+              const isQuota = /quota|rate.?limit|cota|429/.test(rawMsg);
+              throw new Error(
+                isQuota
+                  ? "Cota da IA atingida. Aguarde alguns minutos e tente novamente."
+                  : "Não consegui gerar sugestões agora. Tente novamente."
+              );
+            }
+            sugestoes = Array.isArray(parsed.sugestoes) ? parsed.sugestoes : [];
+            raciocinio = typeof parsed.raciocinio === "string" ? parsed.raciocinio : undefined;
           }
-          sugestoes = Array.isArray(parsed.sugestoes) ? parsed.sugestoes : [];
           const qh = res.headers.get("X-Quota-Remaining");
           if (qh !== null) setQuotaRemaining(Number(qh));
         } else {
           // Cache hit ou fallback batch — JSON response
-          const d = (await res.json()) as { sugestoes: IaSugestao[]; quotaRemaining?: number };
+          const d = (await res.json()) as { sugestoes: IaSugestao[]; quotaRemaining?: number; raciocinio?: string };
           sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
+          raciocinio = typeof d.raciocinio === "string" ? d.raciocinio : undefined;
           if (typeof d.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
         }
 
         setSuggestions((prev) => ({ ...prev, [field.key]: sugestoes }));
+        setRaciocinios((prev) => {
+          if (raciocinio) return { ...prev, [field.key]: raciocinio };
+          if (prev[field.key]) {
+            const next = { ...prev };
+            delete next[field.key];
+            return next;
+          }
+          return prev;
+        });
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
         const isQuota = /quota|rate.?limit|cota|429/i.test(raw);
@@ -1521,6 +1555,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                 if (activeField) void fetchSuggestionsForField(activeField, metadata, extraContext, bypass);
               }}
               quotaRemaining={quotaRemaining}
+              raciocinio={activeFieldKey ? raciocinios[activeFieldKey] : undefined}
               panelClassName={mobileTab !== "magis" ? "hidden lg:flex" : ""}
               onRegenerate={
                 activeField?.role === "ia_sugerida" && activeFieldKey && values[activeFieldKey]?.trim()
@@ -1557,11 +1592,14 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                               : "Não consegui regenerar. Tente novamente."
                           );
                         }
-                        const d = (await res.json()) as { sugestoes?: IaSugestao[]; quotaRemaining?: number };
+                        const d = (await res.json()) as { sugestoes?: IaSugestao[]; quotaRemaining?: number; raciocinio?: string };
                         if (typeof d.quotaRemaining === "number") setQuotaRemaining(d.quotaRemaining);
                         const sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
                         if (sugestoes.length > 0) {
                           setSuggestions((prev) => ({ ...prev, [activeField.key]: sugestoes }));
+                          if (typeof d.raciocinio === "string" && d.raciocinio) {
+                            setRaciocinios((prev) => ({ ...prev, [activeField.key]: d.raciocinio! }));
+                          }
                           if (sugestoes[0].precisaRevisao) {
                             showMagisToast("Gerei uma sugestão, mas não consegui validar os códigos BNCC. Revise no painel antes de inserir.", "error");
                           } else {
@@ -2084,6 +2122,8 @@ interface AIChatPanelProps {
   onRegenerate?: () => void;
   /** Saldo restante de chamadas mensais — null enquanto não há resposta da API */
   quotaRemaining?: number | null;
+  /** Raciocínio da Magis para o lote de sugestões atual — "por que estas sugestões". */
+  raciocinio?: string;
   /** When provided, shows "Gerar com Magis" button for one-click bulk generation */
   onGenerateAll?: () => void;
   /** Extra class applied to the root element — used for mobile show/hide */
@@ -2116,6 +2156,7 @@ function AIChatPanel({
   onGenerateAll,
   panelClassName,
   quotaRemaining,
+  raciocinio,
   estudanteNome,
 }: AIChatPanelProps) {
   const [contextInput, setContextInput] = useState("");
@@ -2124,6 +2165,7 @@ function AIChatPanel({
   const [editingSugText, setEditingSugText] = useState("");
   // Sugestões com precisaRevisao exigem dois cliques para inserir (fail-visible)
   const [revisaoAckId, setRevisaoAckId] = useState<string | null>(null);
+  const [showRaciocinio, setShowRaciocinio] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -2138,6 +2180,7 @@ function AIChatPanel({
     setContextInput("");
     setEditingSugId(null);
     setCooldown(0); // campo trocado — cooldown zera
+    setShowRaciocinio(false);
   }, [activeField?.key]);
 
   // Novas sugestões podem reusar ids gerados pelo modelo — o ack não sobrevive à troca
@@ -2355,6 +2398,23 @@ function AIChatPanel({
           </ChatBubble>
         )}
 
+        {/* Raciocínio da Magis — por que estas sugestões */}
+        {!isLoading && raciocinio && suggestions.length > 0 && (
+          <ChatBubble>
+            <button
+              type="button"
+              onClick={() => setShowRaciocinio((v) => !v)}
+              className="flex items-center gap-1 text-[11px] font-semibold text-violet-600 transition hover:text-violet-800"
+            >
+              <ChevronDown className={`h-3 w-3 transition-transform ${showRaciocinio ? "rotate-180" : ""}`} />
+              Por que estas sugestões?
+            </button>
+            {showRaciocinio && (
+              <p className="mt-1 text-xs italic leading-snug text-slate-600">{raciocinio}</p>
+            )}
+          </ChatBubble>
+        )}
+
         {/* Suggestions */}
         {!isLoading &&
           suggestions.map((s, i) => {
@@ -2429,6 +2489,7 @@ function AIChatPanel({
                         {s.fonte}
                       </span>
                     )}
+                    <BnccCodeBadges codigos={s.codigosOficiais} />
                     <div className="mt-2 flex gap-1.5">
                       <button
                         type="button"

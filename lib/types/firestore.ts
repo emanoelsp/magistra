@@ -292,6 +292,13 @@ export interface TemplateOption {
   deletado?: boolean;
 }
 
+/** Texto oficial de um código BNCC/SAEB, anexado no servidor a partir do contexto RAG. */
+export interface CodigoOficial {
+  codigo: string;
+  texto: string;
+  origem: "bncc" | "saeb";
+}
+
 export interface IaSugestao {
   id: string;
   label: string;
@@ -304,6 +311,11 @@ export interface IaSugestao {
    * também falhou. A UI deve exibir a sugestão em âmbar com aviso de revisão.
    */
   precisaRevisao?: boolean;
+  /**
+   * Textos oficiais dos códigos citados na sugestão, resolvidos server-side
+   * contra o contexto RAG. A UI exibe como badges clicáveis.
+   */
+  codigosOficiais?: CodigoOficial[];
 }
 
 export type UsageAction = "introspect" | "ia_campo" | "gerar_plano";

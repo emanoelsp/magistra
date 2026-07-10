@@ -34,7 +34,7 @@ import {
   resolveNamespace,
   matchComponente,
 } from "../../../../lib/services/bncc-rag.server";
-import { buildAllowedCodes, filterWithRetry } from "../../../../lib/services/bncc-validator";
+import { anexarCodigosOficiais, buildAllowedCodes, filterWithRetry } from "../../../../lib/services/bncc-validator";
 import { inferirClasse } from "../../../../lib/utils/field-taxonomy";
 import { FieldValue } from "firebase-admin/firestore";
 import type { IaSugestao, TemplateRecord, TemplateFieldSchema } from "../../../../lib/types/firestore";
@@ -114,8 +114,12 @@ async function generateForField(
     estado: string | undefined;
     allowedCodes: Set<string>;
     nsLookup: ReturnType<typeof buildNamespaceLookup>;
+    curriculum: {
+      bncc: Array<{ codigo: string; texto: string }>;
+      saeb: Array<{ codigo: string; texto: string }>;
+    };
   },
-): Promise<{ sugestoes: IaSugestao[]; error?: string; precisaRevisao?: boolean }> {
+): Promise<{ sugestoes: IaSugestao[]; error?: string; precisaRevisao?: boolean; raciocinio?: string }> {
   const label = sanitize(field.label);
   const instrucao = instrucaoField(label, field.group, sharedContext.isPei);
 
@@ -140,7 +144,7 @@ async function generateForField(
     ...(sharedContext.digitalContexto ? [`<curriculo_educacao_digital>\n${sharedContext.digitalContexto}\n</curriculo_educacao_digital>`] : []),
   ].join("\n");
 
-  async function callAndParse(p: string): Promise<IaSugestao[]> {
+  async function callAndParse(p: string): Promise<{ sugestoes: IaSugestao[]; raciocinio?: string }> {
     const { text } = await callAIWithFallbacks({
       systemInstruction,
       prompt: p,
@@ -148,31 +152,37 @@ async function generateForField(
       topP: 0.8,
       geminiSchema: SUGESTAO_SCHEMA,
     });
-    let parsedInner: { sugestoes: IaSugestao[] };
+    let parsedInner: { raciocinio?: string; sugestoes: IaSugestao[] };
     try {
-      parsedInner = JSON.parse(text) as { sugestoes: IaSugestao[] };
+      parsedInner = JSON.parse(text) as typeof parsedInner;
     } catch {
       const fb = text.indexOf("{");
       const lb = text.lastIndexOf("}");
       if (fb === -1 || lb <= fb) throw new Error("JSON inválido");
-      parsedInner = JSON.parse(text.slice(fb, lb + 1)) as { sugestoes: IaSugestao[] };
+      parsedInner = JSON.parse(text.slice(fb, lb + 1)) as typeof parsedInner;
     }
     const raw = Array.isArray(parsedInner?.sugestoes) ? parsedInner.sugestoes : [];
-    return validateSugestoes(raw, { templateId: sharedContext.templateId, fieldKey: field.key })
-      .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", sharedContext.nsLookup) }));
+    return {
+      sugestoes: validateSugestoes(raw, { templateId: sharedContext.templateId, fieldKey: field.key })
+        .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", sharedContext.nsLookup) })),
+      ...(typeof parsedInner.raciocinio === "string" && parsedInner.raciocinio
+        ? { raciocinio: parsedInner.raciocinio }
+        : {}),
+    };
   }
 
   try {
-    const validated = await callAndParse(prompt);
+    const first = await callAndParse(prompt);
     // filterWithRetry runs the fail-visible flow: filter → ONE regeneration → precisaRevisao.
     const result = await filterWithRetry(
-      validated,
+      first.sugestoes,
       sharedContext.allowedCodes,
-      (correcao) => callAndParse(correcao + prompt),
+      (correcao) => callAndParse(correcao + prompt).then((r) => r.sugestoes),
       `ia/gerar-plano field="${field.key}"`,
     );
     return {
-      sugestoes: result.sugestoes,
+      sugestoes: anexarCodigosOficiais(result.sugestoes, sharedContext.curriculum),
+      ...(first.raciocinio ? { raciocinio: first.raciocinio } : {}),
       ...(result.precisaRevisao ? { precisaRevisao: true } : {}),
     };
   } catch (err) {
@@ -308,11 +318,12 @@ export async function POST(request: Request) {
       estado,
       allowedCodes,
       nsLookup,
+      curriculum,
     };
 
     // ── Fan-out com concorrência limitada ─────────────────────────────────────
 
-    const results: Record<string, { label: string; sugestoes: IaSugestao[]; error?: string; precisaRevisao?: boolean }> = {};
+    const results: Record<string, { label: string; sugestoes: IaSugestao[]; error?: string; precisaRevisao?: boolean; raciocinio?: string }> = {};
 
     async function runBatch(fields: TemplateFieldSchema[]) {
       for (let i = 0; i < fields.length; i += CONCURRENCY) {

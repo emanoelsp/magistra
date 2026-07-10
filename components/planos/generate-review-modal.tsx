@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import type { IaSugestao, TemplateFieldSchema } from "../../lib/types/firestore";
+import { BnccCodeBadges } from "./bncc-code-badges";
 
 export interface ReviewField {
   fieldSchema: TemplateFieldSchema;
@@ -49,6 +50,7 @@ interface FieldState {
   customText: string;  // teacher-edited text (starts from label of selected suggestion)
   skipped: boolean;
   error?: string;
+  raciocinio?: string; // "por que estas sugestões" — vem da IA por campo
 }
 
 function buildInsertValue(s: IaSugestao, role: string | undefined): string {
@@ -150,6 +152,13 @@ function FieldCard({
           {selected?.fonte && (
             <p className="text-[10px] text-violet-600 font-medium">{selected.fonte}</p>
           )}
+          <BnccCodeBadges codigos={selected?.codigosOficiais} />
+          {state.raciocinio && (
+            <p className="text-[11px] italic leading-snug text-slate-500">
+              <span className="font-semibold not-italic text-violet-600">Por quê: </span>
+              {state.raciocinio}
+            </p>
+          )}
           {selected?.aviso && (
             <p className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11px] text-amber-700">
               {selected.aviso}
@@ -224,7 +233,7 @@ export function GenerateReviewModal({
           throw new Error(d.error ?? `Erro HTTP ${res.status}`);
         }
         return res.json() as Promise<{
-          fields: Record<string, { label: string; sugestoes: IaSugestao[]; error?: string }>;
+          fields: Record<string, { label: string; sugestoes: IaSugestao[]; error?: string; raciocinio?: string }>;
           quotaRemaining: number;
         }>;
       })
@@ -242,6 +251,7 @@ export function GenerateReviewModal({
             customText:  firstSug ? buildInsertValue(firstSug, undefined) : "",
             skipped:     f.sugestoes.length === 0,
             error:       f.error ?? (f.sugestoes.length === 0 ? "Não foi possível gerar sugestões." : undefined),
+            raciocinio:  f.raciocinio,
           };
         });
 

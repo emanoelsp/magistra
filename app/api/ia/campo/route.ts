@@ -30,7 +30,8 @@ import {
 } from "../../../../lib/services/suggestions-cache.server";
 import type { IaSugestao, TemplateRecord } from "../../../../lib/types/firestore";
 import { inferirClasse } from "../../../../lib/utils/field-taxonomy";
-import { buildAllowedCodes, filterSugestoes, filterWithRetry } from "../../../../lib/services/bncc-validator";
+import { anexarCodigosOficiais, buildAllowedCodes, filterSugestoes, filterWithRetry } from "../../../../lib/services/bncc-validator";
+import { MAGIS_FINAL_MARKER, type MagisFinalPayload } from "../../../../lib/utils/stream-protocol";
 
 function sanitizeForPrompt(value: string): string {
   return value.replace(/<\/?[^>]+>/g, "").replace(/[{}]/g, "").trim();
@@ -744,17 +745,23 @@ Responda SOMENTE com JSON válido:
             if (fbProvider !== "gemini") {
               console.warn(`[PlanoMagistra/ia/campo] Fallback ativo: provider=${fbProvider} field=${fieldKey}`);
             }
-            const parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
+            const parsed = JSON.parse(rawText) as { raciocinio?: string; sugestoes: IaSugestao[] };
             const raw = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
             const nsLookupFb = buildNamespaceLookup(curriculum);
             const validatedFb = validateSugestoes(raw, { templateId, fieldKey })
               .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookupFb) }));
-            const { filtered: sugestoes } = filterSugestoes(validatedFb, buildAllowedCodes(curriculum));
+            const { filtered } = filterSugestoes(validatedFb, buildAllowedCodes(curriculum));
+            const sugestoes = anexarCodigosOficiais(filtered, curriculum);
             if (cacheKey && sugestoes.length > 0) {
               void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
             }
             const remaining = await atomicIncrement();
-            return NextResponse.json({ sugestoes, provider: fbProvider, quotaRemaining: remaining });
+            return NextResponse.json({
+              sugestoes,
+              provider: fbProvider,
+              quotaRemaining: remaining,
+              ...(typeof parsed.raciocinio === "string" && parsed.raciocinio ? { raciocinio: parsed.raciocinio } : {}),
+            });
           } catch {
             return NextResponse.json({ error: "Cota da IA esgotada. Tente novamente mais tarde." }, { status: 429 });
           }
@@ -774,19 +781,43 @@ Responda SOMENTE com JSON válido:
               controller.enqueue(encoder.encode(text));
             }
             void atomicIncrement(); // fire-and-forget — headers já foram enviados no streaming
-            // Save to cache after full generation (updates cache even on bypassCache)
+            // O texto streamado acima é só preview (anima a digitação no cliente).
+            // O payload autoritativo vai após o marcador: validado closed-world
+            // com retry, enriquecido com textos oficiais e raciocínio. Sem isso
+            // o cliente exibiria o output cru do modelo sem validação.
             try {
-              const parsed = JSON.parse(accumulated) as { sugestoes: IaSugestao[] };
+              const fb = accumulated.indexOf("{");
+              const lb = accumulated.lastIndexOf("}");
+              const jsonStr = fb !== -1 && lb > fb ? accumulated.slice(fb, lb + 1) : accumulated;
+              const parsed = JSON.parse(jsonStr) as { raciocinio?: string; sugestoes: IaSugestao[] };
               const rawSug = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
               const nsLookupStr = buildNamespaceLookup(curriculum);
               const validated = validateSugestoes(rawSug, { templateId, fieldKey })
                 .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookupStr) }));
               const allowedCodesStr = buildAllowedCodes(curriculum);
-              const { filtered: sugestoes } = filterSugestoes(validated, allowedCodesStr);
-              if (cacheKey && sugestoes.length > 0) {
+              const filterResult = await filterWithRetry(
+                validated,
+                allowedCodesStr,
+                async (correcao) => {
+                  const { text: retryText } = await generateSuggestions(systemInstruction, correcao + prompt);
+                  const retryParsed = JSON.parse(retryText) as { sugestoes: IaSugestao[] };
+                  const retryRaw = Array.isArray(retryParsed?.sugestoes) ? retryParsed.sugestoes : [];
+                  return validateSugestoes(retryRaw, { templateId, fieldKey })
+                    .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookupStr) }));
+                },
+                `ia/campo(stream) field="${fieldKey}"`,
+              );
+              const sugestoes = anexarCodigosOficiais(filterResult.sugestoes, curriculum);
+              if (cacheKey && sugestoes.length > 0 && !filterResult.precisaRevisao) {
                 void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
               }
-            } catch { /* ignore parse errors during cache save */ }
+              const finalPayload: MagisFinalPayload = {
+                sugestoes,
+                ...(typeof parsed.raciocinio === "string" && parsed.raciocinio ? { raciocinio: parsed.raciocinio } : {}),
+                ...(filterResult.precisaRevisao ? { precisaRevisao: true } : {}),
+              };
+              controller.enqueue(encoder.encode(MAGIS_FINAL_MARKER + JSON.stringify(finalPayload)));
+            } catch { /* sem payload final — cliente cai no parse legado do texto cru */ }
           } catch (err) {
             const msg = (err as Error)?.message ?? "Erro durante streaming.";
             controller.enqueue(encoder.encode(JSON.stringify({ _streamError: msg })));
@@ -840,16 +871,16 @@ Responda SOMENTE com JSON válido:
       return NextResponse.json({ error: "Falha ao gerar sugestões." }, { status: 502 });
     }
 
-    let parsed: { sugestoes: IaSugestao[] };
+    let parsed: { raciocinio?: string; sugestoes: IaSugestao[] };
     try {
-      parsed = JSON.parse(rawText) as { sugestoes: IaSugestao[] };
+      parsed = JSON.parse(rawText) as typeof parsed;
     } catch {
       const firstBrace = rawText.indexOf("{");
       const lastBrace = rawText.lastIndexOf("}");
       if (firstBrace === -1 || lastBrace <= firstBrace) {
         return NextResponse.json({ error: "Resposta inválida do modelo." }, { status: 502 });
       }
-      parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1)) as { sugestoes: IaSugestao[] };
+      parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1)) as typeof parsed;
     }
 
     const rawSugestoes = Array.isArray(parsed?.sugestoes) ? parsed.sugestoes : [];
@@ -876,7 +907,7 @@ Responda SOMENTE com JSON válido:
       },
       `ia/campo field="${fieldKey}"`,
     );
-    const sugestoes = filterResult.sugestoes;
+    const sugestoes = anexarCodigosOficiais(filterResult.sugestoes, curriculum);
 
     if (cacheKey && sugestoes.length > 0 && !filterResult.precisaRevisao) {
       void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
@@ -887,6 +918,7 @@ Responda SOMENTE com JSON válido:
       sugestoes,
       provider: aiProvider,
       quotaRemaining: remaining,
+      ...(typeof parsed.raciocinio === "string" && parsed.raciocinio ? { raciocinio: parsed.raciocinio } : {}),
       ...(filterResult.precisaRevisao ? { precisaRevisao: true } : {}),
     });
   } catch (error) {

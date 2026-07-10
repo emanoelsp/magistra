@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IaSugestao } from "../lib/types/firestore";
 import {
+  anexarCodigosOficiais,
   buildAllowedCodes,
   buildCorrecaoPrompt,
   filterSugestoes,
@@ -56,6 +57,39 @@ describe("filterSugestoes", () => {
     expect(res.filtered).toEqual([]);
     expect(res.allInvalid).toBe(true);
     expect(res.invalidCodes.sort()).toEqual(["D29", "EF67LP99"]);
+  });
+});
+
+describe("anexarCodigosOficiais", () => {
+  const curriculum = {
+    bncc: [
+      { codigo: "EF89EF03", texto: "Experimentar e fruir danças urbanas..." },
+      { codigo: "EF15LP01", texto: "Identificar a função social de textos..." },
+    ],
+    saeb: [{ codigo: "D5", texto: "Interpretar texto com auxílio de material gráfico." }],
+  };
+
+  it("anexa o texto oficial de cada código citado, com origem", () => {
+    const [s] = anexarCodigosOficiais([sug("1", "Trabalhar (EF89EF03) com D5")], curriculum);
+    expect(s.codigosOficiais).toEqual([
+      { codigo: "EF89EF03", texto: "Experimentar e fruir danças urbanas...", origem: "bncc" },
+      { codigo: "D5", texto: "Interpretar texto com auxílio de material gráfico.", origem: "saeb" },
+    ]);
+  });
+
+  it("não adiciona o campo quando a sugestão não cita códigos", () => {
+    const [s] = anexarCodigosOficiais([sug("1", "Avaliação formativa em duplas")], curriculum);
+    expect(s.codigosOficiais).toBeUndefined();
+  });
+
+  it("ignora códigos citados que não estão no contexto", () => {
+    const [s] = anexarCodigosOficiais([sug("1", "Usar EF67LP99 e EF15LP01")], curriculum);
+    expect(s.codigosOficiais?.map((c) => c.codigo)).toEqual(["EF15LP01"]);
+  });
+
+  it("passa tudo intacto quando o contexto está vazio", () => {
+    const input = [sug("1", "Usar EF89EF03")];
+    expect(anexarCodigosOficiais(input, { bncc: [], saeb: [] })).toBe(input);
   });
 });
 

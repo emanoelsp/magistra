@@ -8,7 +8,7 @@
  * which is the canonical TypeScript source. The Python ingest_bncc.py mirrors it.
  */
 
-import type { IaSugestao } from "../types/firestore";
+import type { CodigoOficial, IaSugestao } from "../types/firestore";
 import { extractAllCodes } from "../utils/bncc-code";
 
 // ── Allowed-code set builder ──────────────────────────────────────────────────
@@ -106,6 +106,45 @@ export function filterSugestoes(
     allInvalid:   true,
     invalidCodes: allInvalidCodes,
   };
+}
+
+// ── Official-text enrichment ──────────────────────────────────────────────────
+
+/**
+ * Attaches the official BNCC/SAEB text of every code a suggestion cites,
+ * resolved from the same RAG context used for generation. Zero extra latency:
+ * the texts are already in memory when the route runs. The UI renders them as
+ * clickable badges so the teacher can audit the citation.
+ */
+export function anexarCodigosOficiais(
+  sugestoes: IaSugestao[],
+  curriculum: {
+    bncc: Array<{ codigo: string; texto: string }>;
+    saeb: Array<{ codigo: string; texto: string }>;
+  },
+): IaSugestao[] {
+  const oficiais = new Map<string, CodigoOficial>();
+  for (const c of curriculum.bncc) {
+    if (c.codigo && c.texto) {
+      const codigo = c.codigo.toUpperCase();
+      oficiais.set(codigo, { codigo, texto: c.texto, origem: "bncc" });
+    }
+  }
+  for (const c of curriculum.saeb) {
+    if (c.codigo && c.texto) {
+      const codigo = c.codigo.toUpperCase();
+      oficiais.set(codigo, { codigo, texto: c.texto, origem: "saeb" });
+    }
+  }
+  if (oficiais.size === 0) return sugestoes;
+
+  return sugestoes.map((s) => {
+    const cited = extractAllCodes(`${s.label ?? ""} ${s.descricao ?? ""} ${s.fonte ?? ""}`);
+    const encontrados = cited
+      .map((code) => oficiais.get(code))
+      .filter((c): c is CodigoOficial => c !== undefined);
+    return encontrados.length > 0 ? { ...s, codigosOficiais: encontrados } : s;
+  });
 }
 
 // ── Fail-visible flow (filter → one retry → precisaRevisao) ──────────────────
