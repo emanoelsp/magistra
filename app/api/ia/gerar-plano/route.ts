@@ -118,6 +118,8 @@ async function generateForField(
       bncc: Array<{ codigo: string; texto: string }>;
       saeb: Array<{ codigo: string; texto: string }>;
     };
+    /** Acumulador de tokens do request inteiro — alimenta o log agregado de custo. */
+    usageTotal: { input: number; output: number };
   },
 ): Promise<{ sugestoes: IaSugestao[]; error?: string; precisaRevisao?: boolean; raciocinio?: string }> {
   const label = sanitize(field.label);
@@ -145,13 +147,17 @@ async function generateForField(
   ].join("\n");
 
   async function callAndParse(p: string): Promise<{ sugestoes: IaSugestao[]; raciocinio?: string }> {
-    const { text } = await callAIWithFallbacks({
+    const { text, usage } = await callAIWithFallbacks({
       systemInstruction,
       prompt: p,
       temperature: 0.35,
       topP: 0.8,
       geminiSchema: SUGESTAO_SCHEMA,
     });
+    if (usage) {
+      sharedContext.usageTotal.input += usage.inputTokens;
+      sharedContext.usageTotal.output += usage.outputTokens;
+    }
     let parsedInner: { raciocinio?: string; sugestoes: IaSugestao[] };
     try {
       parsedInner = JSON.parse(text) as typeof parsedInner;
@@ -319,6 +325,7 @@ export async function POST(request: Request) {
       allowedCodes,
       nsLookup,
       curriculum,
+      usageTotal: { input: 0, output: 0 },
     };
 
     // ── Fan-out com concorrência limitada ─────────────────────────────────────
@@ -361,8 +368,8 @@ export async function POST(request: Request) {
       action: "gerar_plano",
       model: MODEL_NAME,
       provider: "gemini",
-      tokens_input: 0,
-      tokens_output: 0,
+      tokens_input: sharedCtx.usageTotal.input,
+      tokens_output: sharedCtx.usageTotal.output,
       fields_generated: consumed,
       created_at: FieldValue.serverTimestamp(),
     }).catch(() => {});

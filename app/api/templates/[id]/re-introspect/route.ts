@@ -339,13 +339,16 @@ function buildPrompt(
     );
   }
 
-  parts.push(`<${docTag}>`, content, `</${docTag}>`);
+  // Neutraliza tentativa de fechar o delimitador dentro do conteúdo do arquivo
+  // (prompt injection) — mesmo tratamento do introspect principal.
+  const contentSafe = content.replace(/<\/?\s*(documento|documento_html)\s*>/gi, "‹doc›");
+  parts.push(`<${docTag}>`, contentSafe, `</${docTag}>`);
   return parts.join("\n");
 }
 
 // ── AI generation ───────────────────────────────────────────────────────────
 
-async function generateSchema(promptStr: string): Promise<{ text: string; provider: import("../../../../../lib/ai/provider").AiProvider }> {
+async function generateSchema(promptStr: string): Promise<import("../../../../../lib/ai/provider").AiResult> {
   return callAIWithFallbacks({
     systemInstruction: SYSTEM_INSTRUCTION,
     prompt: promptStr,
@@ -447,7 +450,7 @@ export async function POST(
     const { template_type, tipo_incerto } = detectTemplateType(extracted.content);
     console.info(`[re-introspect] template_type="${template_type}" tipo_incerto=${tipo_incerto}`);
     const prompt = buildPrompt(extracted, structuralPairs, draftSchema, confirmedFields, corrections);
-    const { text: raw, provider: aiProvider } = await generateSchema(prompt);
+    const { text: raw, provider: aiProvider, usage: aiUsage } = await generateSchema(prompt);
 
     let schema: unknown;
     try {
@@ -466,8 +469,8 @@ export async function POST(
         action: "introspect",
         model: "re-introspect",
         provider: aiProvider,
-        tokensInput: 0,
-        tokensOutput: 0,
+        tokensInput: aiUsage?.inputTokens ?? 0,
+        tokensOutput: aiUsage?.outputTokens ?? 0,
         metadata: { template_id: id },
       });
     });

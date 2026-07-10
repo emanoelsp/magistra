@@ -20,11 +20,25 @@ export interface AiCallOptions {
 
 export type AiProvider = "claude" | "gemini" | "openai" | "groq" | "ollama";
 
+/** Token usage reported by the provider — feeds the cost dashboard via logUsage. */
+export interface AiUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface AiResult {
   text: string;
   provider: AiProvider;
   /** "json" when the provider returned structured JSON; "toon" when it used TOON line format. */
   format: "json" | "toon";
+  /** Present when the provider reports usage — absent only for providers that omit it. */
+  usage?: AiUsage;
+}
+
+/** Internal per-provider result before the orchestrator stamps provider/format. */
+interface ProviderText {
+  text: string;
+  usage?: AiUsage;
 }
 
 // ── Constantes ────────────────────────────────────────────────────────────────
@@ -61,6 +75,14 @@ const OLLAMA_MODELS: string[] = [
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+
+// Timeout por chamada. Sem ele, um provider que trava sem responder consome a
+// função serverless inteira e o fallback nunca chega a rodar. Timeout NÃO é
+// retryado (retryar um provider travado custa outra janela inteira) — ele
+// derruba direto para o próximo provider da cadeia.
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) > 0
+  ? Number(process.env.AI_TIMEOUT_MS)
+  : 120_000;
 
 // ── Classificação de erros ────────────────────────────────────────────────────
 
@@ -119,49 +141,80 @@ export function makeGeminiModel(
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY não configurada.");
   const genAI = new GoogleGenerativeAI(apiKey);
-  return genAI.getGenerativeModel({
-    model: GEMINI_MODEL,
-    generationConfig: {
-      temperature: options.temperature ?? 0.1,
-      topP: options.topP ?? 0.6,
-      topK: options.topK ?? 40,
-      responseMimeType: "application/json",
-      ...(options.geminiSchema ? { responseSchema: options.geminiSchema } : {}),
+  return genAI.getGenerativeModel(
+    {
+      model: GEMINI_MODEL,
+      generationConfig: {
+        temperature: options.temperature ?? 0.1,
+        topP: options.topP ?? 0.6,
+        topK: options.topK ?? 40,
+        responseMimeType: "application/json",
+        ...(options.geminiSchema ? { responseSchema: options.geminiSchema } : {}),
+      },
+      systemInstruction,
     },
-    systemInstruction,
-  });
+    { timeout: AI_TIMEOUT_MS },
+  );
 }
 
 // ── Provedores individuais ─────────────────────────────────────────────────────
 
-async function callClaude(options: AiCallOptions): Promise<string> {
+async function callClaude(options: AiCallOptions): Promise<ProviderText> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY não configurada.");
-  const client = new Anthropic({ apiKey });
+  // maxRetries: 0 — o withRetry daqui é a única camada de retry; deixar o retry
+  // interno do SDK ligado multiplicaria as tentativas (3 × 2) em outages.
+  const client = new Anthropic({ apiKey, timeout: AI_TIMEOUT_MS, maxRetries: 0 });
   // Claude segue instruções de JSON muito bem — ignora systemSuffixFallback (TOON é para
   // provedores que não suportam formato estruturado nativo).
-  const message = await withRetry(() =>
-    client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 8192,
-      temperature: options.temperature ?? 0.1,
-      system: options.systemInstruction,
-      messages: [{ role: "user", content: options.prompt }],
-    }),
-  );
+  const create = (maxTokens: number) =>
+    withRetry(() =>
+      client.messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: maxTokens,
+        temperature: options.temperature ?? 0.1,
+        system: options.systemInstruction,
+        messages: [{ role: "user", content: options.prompt }],
+      }),
+    );
+
+  let message = await create(8192);
+  // Saída truncada = JSON quebrado = 502 para o professor. Uma introspecção com
+  // 30+ campos estoura 8192 tokens; repetir uma vez com teto 4x resolve sem
+  // custo no caso comum (só paga quando realmente truncou).
+  if (message.stop_reason === "max_tokens") {
+    console.warn(`[PlanoMagistra/ai] Claude truncou em 8192 tokens — repetindo com teto 32768.`);
+    message = await create(32_768);
+    if (message.stop_reason === "max_tokens") {
+      throw new Error("Claude: resposta truncada mesmo com max_tokens=32768.");
+    }
+  }
+
   const block = message.content.find((c) => c.type === "text");
   const text = block?.type === "text" ? block.text : undefined;
   if (!text) throw new Error("Claude retornou resposta vazia.");
-  return text;
+  return {
+    text,
+    usage: {
+      inputTokens: message.usage.input_tokens,
+      outputTokens: message.usage.output_tokens,
+    },
+  };
 }
 
-async function callGemini(options: AiCallOptions): Promise<string> {
+async function callGemini(options: AiCallOptions): Promise<ProviderText> {
   const model = makeGeminiModel(options.systemInstruction, options);
   const result = await withRetry(() => model.generateContent(options.prompt));
-  return result.response.text();
+  const meta = result.response.usageMetadata;
+  return {
+    text: result.response.text(),
+    ...(meta
+      ? { usage: { inputTokens: meta.promptTokenCount ?? 0, outputTokens: meta.candidatesTokenCount ?? 0 } }
+      : {}),
+  };
 }
 
-async function callOpenAI(options: AiCallOptions): Promise<string> {
+async function callOpenAI(options: AiCallOptions): Promise<ProviderText> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY não configurada.");
   const useToon = Boolean(options.systemSuffixFallback);
@@ -181,18 +234,27 @@ async function callOpenAI(options: AiCallOptions): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
   });
   if (!res.ok) {
     const resBody = await res.text();
     throw new Error(`OpenAI error ${res.status}: ${resBody}`);
   }
-  const data = (await res.json()) as { choices: { message: { content: string } }[] };
+  const data = (await res.json()) as {
+    choices: { message: { content: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
   const content = data.choices[0]?.message?.content;
   if (!content) throw new Error("OpenAI retornou resposta vazia.");
-  return content;
+  return {
+    text: content,
+    ...(data.usage
+      ? { usage: { inputTokens: data.usage.prompt_tokens ?? 0, outputTokens: data.usage.completion_tokens ?? 0 } }
+      : {}),
+  };
 }
 
-async function callGroq(options: AiCallOptions): Promise<string> {
+async function callGroq(options: AiCallOptions): Promise<ProviderText> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
   const useToon = Boolean(options.systemSuffixFallback);
@@ -212,18 +274,27 @@ async function callGroq(options: AiCallOptions): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
   });
   if (!res.ok) {
     const resBody = await res.text();
     throw new Error(`Groq error ${res.status}: ${resBody}`);
   }
-  const data = (await res.json()) as { choices: { message: { content: string } }[] };
+  const data = (await res.json()) as {
+    choices: { message: { content: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
   const content = data.choices[0]?.message?.content;
   if (!content) throw new Error("Groq retornou resposta vazia.");
-  return content;
+  return {
+    text: content,
+    ...(data.usage
+      ? { usage: { inputTokens: data.usage.prompt_tokens ?? 0, outputTokens: data.usage.completion_tokens ?? 0 } }
+      : {}),
+  };
 }
 
-async function callOllama(options: AiCallOptions): Promise<string> {
+async function callOllama(options: AiCallOptions): Promise<ProviderText> {
   const apiKey = process.env.OLLAMA_API_KEY;
   if (!apiKey) throw new Error("OLLAMA_API_KEY não configurada.");
   const useToon = Boolean(options.systemSuffixFallback);
@@ -248,6 +319,7 @@ async function callOllama(options: AiCallOptions): Promise<string> {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
 
     if (res.status === 403 || res.status === 404) {
@@ -261,11 +333,20 @@ async function callOllama(options: AiCallOptions): Promise<string> {
       throw new Error(`Ollama error ${res.status}: ${msg}`);
     }
 
-    const data = (await res.json()) as { message?: { content?: string } };
+    const data = (await res.json()) as {
+      message?: { content?: string };
+      prompt_eval_count?: number;
+      eval_count?: number;
+    };
     const content = data.message?.content;
     if (!content) throw new Error(`Ollama modelo "${model}" retornou resposta vazia.`);
     console.info(`[PlanoMagistra/ai] Ollama usou modelo "${model}".`);
-    return content;
+    return {
+      text: content,
+      ...(typeof data.eval_count === "number"
+        ? { usage: { inputTokens: data.prompt_eval_count ?? 0, outputTokens: data.eval_count } }
+        : {}),
+    };
   }
 
   throw new Error(`Ollama: nenhum modelo disponível. Último erro: ${lastError}`);
@@ -276,55 +357,51 @@ async function callOllama(options: AiCallOptions): Promise<string> {
 /**
  * Chama os provedores de IA em ordem: Claude → Gemini → OpenAI → Groq → Ollama.
  *
- * - Claude: primário. JSON nativo. Retry em 429/529 transientes; cai se créditos esgotarem.
- * - Gemini: segundo. JSON com schema enforcement. Cai se cota gratuita esgotar.
+ * Semântica de fallback: QUALQUER falha de um provider (cota, 5xx persistente,
+ * timeout, chave ausente, resposta vazia) derruba para o próximo da cadeia.
+ * A versão anterior só caía em erro de cota — um 529 da Anthropic que esgotasse
+ * os retries abortava a cadeia inteira com Gemini/OpenAI/Groq saudáveis. O
+ * custo do fall-through indiscriminado (um request 4xx inválido tenta todos os
+ * providers antes de falhar) é aceitável; indisponibilidade em outage não é.
+ * Erros transientes (429/503/529) ainda são retryados DENTRO de cada provider
+ * pelo withRetry antes de cair; timeouts caem direto.
+ *
+ * - Claude: primário. JSON nativo. Repete 1x com teto 4x quando trunca em max_tokens.
+ * - Gemini: segundo. JSON com schema enforcement.
  * - OpenAI: terceiro. TOON quando systemSuffixFallback definido; JSON nativo caso contrário.
  * - Groq: quarto. Mesmo comportamento do OpenAI.
- * - Ollama: quinto/último recurso. Endpoint OpenAI-compatible configurável via OLLAMA_BASE_URL.
+ * - Ollama: quinto/último recurso. Endpoint configurável via OLLAMA_BASE_URL.
  */
 export async function callAIWithFallbacks(options: AiCallOptions): Promise<AiResult> {
   const fallbackFormat: "json" | "toon" = options.systemSuffixFallback ? "toon" : "json";
 
-  // 1. Claude — JSON nativo (sem TOON; Claude segue instrução de formato no system prompt)
-  if (process.env.ANTHROPIC_API_KEY) {
+  const chain: Array<{
+    provider: AiProvider;
+    format: "json" | "toon";
+    call: (o: AiCallOptions) => Promise<ProviderText>;
+  }> = [
+    { provider: "claude", format: "json", call: callClaude },
+    { provider: "gemini", format: "json", call: callGemini },
+    { provider: "openai", format: fallbackFormat, call: callOpenAI },
+    { provider: "groq", format: fallbackFormat, call: callGroq },
+    { provider: "ollama", format: fallbackFormat, call: callOllama },
+  ];
+
+  let lastError: unknown;
+  for (let i = 0; i < chain.length; i++) {
+    const { provider, format, call } = chain[i];
     try {
-      const text = await callClaude(options);
-      return { text, provider: "claude", format: "json" };
+      const { text, usage } = await call(options);
+      if (i > 0) {
+        console.warn(`[PlanoMagistra/ai] ${provider} usado como fallback ${i} (format=${format}).`);
+      }
+      return { text, provider, format, ...(usage ? { usage } : {}) };
     } catch (err) {
-      if (!isQuotaError(err)) throw err;
-      console.warn("[PlanoMagistra/ai] Claude quota/crédito esgotado, tentando Gemini...");
+      lastError = err;
+      const motivo = isQuotaError(err) ? "cota/crédito esgotado" : (err as Error)?.message ?? "erro desconhecido";
+      const proximo = chain[i + 1]?.provider ?? "nenhum";
+      console.warn(`[PlanoMagistra/ai] ${provider} falhou (${motivo.slice(0, 200)}), próximo: ${proximo}`);
     }
   }
-
-  // 2. Gemini — JSON com schema enforcement
-  try {
-    const text = await callGemini(options);
-    return { text, provider: "gemini", format: "json" };
-  } catch (err) {
-    if (!isQuotaError(err)) throw err;
-    console.warn("[PlanoMagistra/ai] Gemini quota esgotada, tentando OpenAI...");
-  }
-
-  // 3. OpenAI — TOON quando systemSuffixFallback, JSON caso contrário
-  try {
-    const text = await callOpenAI(options);
-    console.warn(`[PlanoMagistra/ai] OpenAI usado como fallback 2 (format=${fallbackFormat}).`);
-    return { text, provider: "openai", format: fallbackFormat };
-  } catch (err) {
-    console.warn("[PlanoMagistra/ai] OpenAI falhou, tentando Groq...", (err as Error)?.message);
-  }
-
-  // 4. Groq
-  try {
-    const text = await callGroq(options);
-    console.warn(`[PlanoMagistra/ai] Groq usado como fallback 3 (format=${fallbackFormat}).`);
-    return { text, provider: "groq", format: fallbackFormat };
-  } catch (err) {
-    console.warn("[PlanoMagistra/ai] Groq falhou, tentando Ollama...", (err as Error)?.message);
-  }
-
-  // 5. Ollama — último recurso
-  const text = await callOllama(options);
-  console.warn(`[PlanoMagistra/ai] Ollama usado como fallback 4 (format=${fallbackFormat}).`);
-  return { text, provider: "ollama", format: fallbackFormat };
+  throw lastError;
 }

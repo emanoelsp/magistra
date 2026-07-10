@@ -431,6 +431,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Template não encontrado." }, { status: 404 });
     }
 
+    // .doc legado é binário OLE — o PizZip lança e viraria 500 genérico.
+    // Rejeitar com instrução clara antes de qualquer processamento.
+    if (/\.doc$/i.test(file.name)) {
+      return NextResponse.json(
+        { error: "Arquivos .doc (Word 97-2003) não são suportados. Abra o arquivo no Word e salve como .docx." },
+        { status: 400 },
+      );
+    }
+
     // Read the file buffer once and reuse for text extraction + structural scan
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const pdfText = await extractFileText(new File([fileBuffer], file.name, { type: file.type }));
@@ -581,14 +590,17 @@ export async function POST(request: Request) {
       );
     }
 
-    promptParts.push(`<documento>`, pdfText, `</documento>`);
+    // Neutraliza tentativa de fechar o delimitador dentro do texto do arquivo
+    // (prompt injection). Templates legítimos nunca contêm essa tag; outros
+    // usos de <> em labels são preservados intactos.
+    promptParts.push(`<documento>`, pdfText.replace(/<\/?\s*documento\s*>/gi, "‹documento›"), `</documento>`);
     const promptStr = promptParts.join("\n");
 
     // Detect template type before the AI call (deterministic, free)
     const { template_type, tipo_incerto } = detectTemplateType(pdfText);
     console.info(`[introspect] template_type="${template_type}" tipo_incerto=${tipo_incerto}`);
 
-    const { text: raw, provider: aiProvider, format: aiFormat } = await generateSchema(promptStr);
+    const { text: raw, provider: aiProvider, format: aiFormat, usage: aiUsage } = await generateSchema(promptStr);
 
     let schema: import("../../../../lib/types/firestore").TemplateFieldSchema[];
     try {
@@ -634,8 +646,8 @@ export async function POST(request: Request) {
         action: "introspect",
         model: MODEL_NAME,
         provider: aiProvider,
-        tokensInput: 0,
-        tokensOutput: 0,
+        tokensInput: aiUsage?.inputTokens ?? 0,
+        tokensOutput: aiUsage?.outputTokens ?? 0,
         metadata: { template_id: templateId ?? undefined },
       });
     });

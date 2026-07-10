@@ -233,7 +233,11 @@ function makeLocalGeminiModel(systemInstruction: string) {
   });
 }
 
-async function generateSuggestions(systemInstruction: string, prompt: string): Promise<{ text: string; provider: import("../../../../lib/ai/provider").AiProvider }> {
+async function generateSuggestions(systemInstruction: string, prompt: string): Promise<{
+  text: string;
+  provider: import("../../../../lib/ai/provider").AiProvider;
+  usage?: import("../../../../lib/ai/provider").AiUsage;
+}> {
   const result = await callAIWithFallbacks({
     systemInstruction,
     prompt,
@@ -857,8 +861,8 @@ Responda SOMENTE com JSON válido:
           action: "ia_campo",
           model: MODEL_NAME,
           provider: genResult.provider,
-          tokensInput: 0,
-          tokensOutput: 0,
+          tokensInput: genResult.usage?.inputTokens ?? 0,
+          tokensOutput: genResult.usage?.outputTokens ?? 0,
           metadata: { template_id: templateId, field_key: fieldKey },
         });
       });
