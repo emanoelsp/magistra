@@ -797,6 +797,12 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
         const sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
         if (sugestoes.length > 0) {
           const best = sugestoes[0];
+          if (best.precisaRevisao) {
+            // Sugestão falhou na validação BNCC — não inserir automaticamente;
+            // fica no painel para o professor revisar e inserir manualmente.
+            setSuggestions((prev) => ({ ...prev, [field.key]: sugestoes }));
+            continue;
+          }
           const html = best.descricao
             ? `<p><strong>${best.label}</strong></p><p>${best.descricao}</p>`
             : `<p>${best.label}</p>`;
@@ -1556,8 +1562,12 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(function
                         const sugestoes = Array.isArray(d.sugestoes) ? d.sugestoes : [];
                         if (sugestoes.length > 0) {
                           setSuggestions((prev) => ({ ...prev, [activeField.key]: sugestoes }));
-                          insertSuggestion(sugestoes[0], "full");
-                          showMagisToast("Campo regenerado! Verifique o novo conteúdo.", "success");
+                          if (sugestoes[0].precisaRevisao) {
+                            showMagisToast("Gerei uma sugestão, mas não consegui validar os códigos BNCC. Revise no painel antes de inserir.", "error");
+                          } else {
+                            insertSuggestion(sugestoes[0], "full");
+                            showMagisToast("Campo regenerado! Verifique o novo conteúdo.", "success");
+                          }
                         }
                       } catch {
                         setSuggestError("Não consegui regenerar. Tente novamente.");
@@ -2112,6 +2122,8 @@ function AIChatPanel({
   const [showGeneralCtx, setShowGeneralCtx] = useState(false);
   const [editingSugId, setEditingSugId] = useState<string | null>(null);
   const [editingSugText, setEditingSugText] = useState("");
+  // Sugestões com precisaRevisao exigem dois cliques para inserir (fail-visible)
+  const [revisaoAckId, setRevisaoAckId] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -2127,6 +2139,11 @@ function AIChatPanel({
     setEditingSugId(null);
     setCooldown(0); // campo trocado — cooldown zera
   }, [activeField?.key]);
+
+  // Novas sugestões podem reusar ids gerados pelo modelo — o ack não sobrevive à troca
+  useEffect(() => {
+    setRevisaoAckId(null);
+  }, [suggestions]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -2396,6 +2413,14 @@ function AIChatPanel({
                         <p className="text-[11px] leading-snug text-amber-800">{s.aviso}</p>
                       </div>
                     )}
+                    {s.precisaRevisao && (
+                      <div className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5">
+                        <span className="mt-px shrink-0 text-amber-500" aria-hidden>⚠</span>
+                        <p className="text-[11px] leading-snug text-amber-800">
+                          Não foi possível validar os códigos citados contra a base BNCC. Revise antes de usar.
+                        </p>
+                      </div>
+                    )}
                     {s.descricao && (
                       <p className="mt-0.5 text-xs text-slate-600">{s.descricao}</p>
                     )}
@@ -2407,21 +2432,40 @@ function AIChatPanel({
                     <div className="mt-2 flex gap-1.5">
                       <button
                         type="button"
-                        onClick={() => onInsert(s, "label")}
-                        className="flex-1 rounded-lg border border-violet-200 bg-violet-50 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
+                        onClick={() => {
+                          if (s.precisaRevisao && revisaoAckId !== s.id) { setRevisaoAckId(s.id); return; }
+                          onInsert(s, "label");
+                        }}
+                        className={`flex-1 rounded-lg py-1 text-xs font-medium transition ${
+                          s.precisaRevisao
+                            ? "border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-500 hover:text-white"
+                            : "border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-600 hover:text-white"
+                        }`}
                       >
                         Título
                       </button>
                       {s.descricao && (
                         <button
                           type="button"
-                          onClick={() => onInsert(s, "full")}
-                          className="flex-1 rounded-lg bg-violet-100 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-600 hover:text-white"
+                          onClick={() => {
+                            if (s.precisaRevisao && revisaoAckId !== s.id) { setRevisaoAckId(s.id); return; }
+                            onInsert(s, "full");
+                          }}
+                          className={`flex-1 rounded-lg py-1 text-xs font-medium transition ${
+                            s.precisaRevisao
+                              ? "bg-amber-100 text-amber-700 hover:bg-amber-500 hover:text-white"
+                              : "bg-violet-100 text-violet-700 hover:bg-violet-600 hover:text-white"
+                          }`}
                         >
                           Completo
                         </button>
                       )}
                     </div>
+                    {revisaoAckId === s.id && (
+                      <p className="mt-1 text-[11px] font-medium text-amber-700">
+                        Clique novamente para inserir sem validação.
+                      </p>
+                    )}
                   </>
                 )}
               </ChatBubble>

@@ -30,7 +30,7 @@ import {
 } from "../../../../lib/services/suggestions-cache.server";
 import type { IaSugestao, TemplateRecord } from "../../../../lib/types/firestore";
 import { inferirClasse } from "../../../../lib/utils/field-taxonomy";
-import { buildAllowedCodes, filterSugestoes, buildCorrecaoPrompt } from "../../../../lib/services/bncc-validator";
+import { buildAllowedCodes, filterSugestoes, filterWithRetry } from "../../../../lib/services/bncc-validator";
 
 function sanitizeForPrompt(value: string): string {
   return value.replace(/<\/?[^>]+>/g, "").replace(/[{}]/g, "").trim();
@@ -858,18 +858,12 @@ Responda SOMENTE com JSON válido:
       .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookup) }));
 
     // Closed-world: remove suggestions citing BNCC/SAEB codes outside the retrieved context.
+    // filterWithRetry runs the fail-visible flow: filter → ONE regeneration → precisaRevisao.
     const allowedCodes = buildAllowedCodes(curriculum);
-    let currentValidated = validated;
-    let filterRes = filterSugestoes(currentValidated, allowedCodes);
-
-    // fail-visible step 1: ONE regeneration with the invalid codes listed in the prompt.
-    if (filterRes.allInvalid && filterRes.invalidCodes.length > 0) {
-      console.warn(
-        `[ia/campo] Todas as ${filterRes.removedCount} sugestões citam códigos inválidos ` +
-        `(${filterRes.invalidCodes.join(", ")}) — tentando regeneração — field="${fieldKey}"`,
-      );
-      try {
-        const correcao = buildCorrecaoPrompt(filterRes.invalidCodes);
+    const filterResult = await filterWithRetry(
+      validated,
+      allowedCodes,
+      async (correcao) => {
         const { text: retryText, provider: retryProvider } = await generateSuggestions(
           systemInstruction,
           correcao + prompt,
@@ -877,31 +871,14 @@ Responda SOMENTE com JSON válido:
         aiProvider = retryProvider;
         const retryParsed = JSON.parse(retryText) as { sugestoes: IaSugestao[] };
         const retryRaw = Array.isArray(retryParsed?.sugestoes) ? retryParsed.sugestoes : [];
-        currentValidated = validateSugestoes(retryRaw, { templateId, fieldKey })
+        return validateSugestoes(retryRaw, { templateId, fieldKey })
           .map((s) => ({ ...s, namespace: resolveNamespace(s.fonte ?? "", nsLookup) }));
-        filterRes = filterSugestoes(currentValidated, allowedCodes);
-      } catch (err) {
-        console.error("[ia/campo] Erro na regeneração com correção:", err);
-        // filterRes.allInvalid stays true → fall through to precisaRevisao marking
-      }
-    } else if (filterRes.removedCount > 0) {
-      console.warn(
-        `[ia/campo] Validator removeu ${filterRes.removedCount} sugestão(ões) com códigos fora do contexto — field="${fieldKey}"`,
-      );
-    }
+      },
+      `ia/campo field="${fieldKey}"`,
+    );
+    const sugestoes = filterResult.sugestoes;
 
-    // fail-visible step 2: if still allInvalid, return originals tagged for UI warning.
-    let sugestoes: IaSugestao[];
-    if (filterRes.allInvalid) {
-      console.warn(
-        `[ia/campo] Regeneração também falhou. Marcando precisaRevisao — field="${fieldKey}"`,
-      );
-      sugestoes = currentValidated.map((s) => ({ ...s, precisaRevisao: true as const }));
-    } else {
-      sugestoes = filterRes.filtered;
-    }
-
-    if (cacheKey && sugestoes.length > 0 && !filterRes.allInvalid) {
+    if (cacheKey && sugestoes.length > 0 && !filterResult.precisaRevisao) {
       void setCachedSuggestions(cacheKey, sugestoes, { fieldKey, templateId, userId: user.uid });
     }
 
@@ -910,7 +887,7 @@ Responda SOMENTE com JSON válido:
       sugestoes,
       provider: aiProvider,
       quotaRemaining: remaining,
-      ...(filterRes.allInvalid ? { precisaRevisao: true } : {}),
+      ...(filterResult.precisaRevisao ? { precisaRevisao: true } : {}),
     });
   } catch (error) {
     console.error("[PlanoMagistra/api/ia/campo] Erro:", error);

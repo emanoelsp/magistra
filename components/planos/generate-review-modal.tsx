@@ -99,12 +99,14 @@ function FieldCard({
   onChange: (patch: Partial<FieldState>) => void;
   onSkip: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  // Sugestões não validadas contra a BNCC abrem já em modo de edição (fail-visible)
+  const [expanded, setExpanded] = useState(() => Boolean(state.sugestoes[state.selectedIdx]?.precisaRevisao));
   const selected = state.sugestoes[state.selectedIdx];
 
   function handleSelectSugestao(idx: number) {
     const s = state.sugestoes[idx];
     if (!s) return;
+    if (s.precisaRevisao) setExpanded(true);
     onChange({ selectedIdx: idx, customText: buildInsertValue(s, state.schema.role) });
   }
 
@@ -151,6 +153,11 @@ function FieldCard({
           {selected?.aviso && (
             <p className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11px] text-amber-700">
               {selected.aviso}
+            </p>
+          )}
+          {selected?.precisaRevisao && (
+            <p className="rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1.5 text-[11px] font-medium text-amber-800">
+              ⚠ Não foi possível validar os códigos citados contra a base BNCC. Revise o texto antes de inserir.
             </p>
           )}
 

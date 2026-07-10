@@ -46,6 +46,17 @@ export const COMPS_EM = new Set([
   "LP","AR","EF","LI","LE","MA","FI","QU","BI","HI","GE","SO","FL","ER",
 ]);
 
+/**
+ * Year-pair strings that actually occur in published EF codes: individual
+ * years 01–09 plus the multi-year faixas (EF12EF, EF15LP, EF35EF, EF67LP,
+ * EF69AR, EF89EF). Anything else (e.g. "24") is a fabricated code even when
+ * the digits parse to a plausible range.
+ */
+export const FAIXAS_EF = new Set([
+  "01","02","03","04","05","06","07","08","09",
+  "12","15","35","67","69","89",
+]);
+
 // ── Decomposer ────────────────────────────────────────────────────────────────
 
 export interface CodigoDecomposto {
@@ -66,11 +77,13 @@ const RE_EM = /^EM13([A-Z]{2,3})(\d{2,3})$/;
 
 /**
  * "67" → [6,7]; "15" → [1,2,3,4,5]; "09" → [9]; "35" → [3,4,5]
- * The first digit is the low bound and the second is the high bound.
+ * A leading zero means an individual year ("01".."09"); otherwise the first
+ * digit is the low bound and the second is the high bound.
  * When lo > hi the pair is treated as two individual years (e.g. "91" → [9,1]
  * is invalid in the real BNCC but we report it rather than silently ignoring).
  */
 function parseAnos(anos2: string): number[] {
+  if (anos2.startsWith("0")) return [parseInt(anos2, 10)];
   const lo = parseInt(anos2[0] ?? "0", 10);
   const hi = parseInt(anos2[1] ?? "0", 10);
   if (lo === hi) return [lo];
@@ -96,7 +109,7 @@ export function decompor(raw: string): CodigoDecomposto | null {
   if (m) {
     const [, anos2, comp, seq] = m as [string, string, string, string];
     const anos = parseAnos(anos2);
-    const valido = COMPS_EF.has(comp) && anos.every((a) => a >= 1 && a <= 9);
+    const valido = COMPS_EF.has(comp) && FAIXAS_EF.has(anos2);
     return {
       codigo: c, etapa: "EF", anos, componente: comp,
       seq: parseInt(seq, 10), valido,

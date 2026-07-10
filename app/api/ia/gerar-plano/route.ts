@@ -34,7 +34,7 @@ import {
   resolveNamespace,
   matchComponente,
 } from "../../../../lib/services/bncc-rag.server";
-import { buildAllowedCodes, filterSugestoes, buildCorrecaoPrompt } from "../../../../lib/services/bncc-validator";
+import { buildAllowedCodes, filterWithRetry } from "../../../../lib/services/bncc-validator";
 import { inferirClasse } from "../../../../lib/utils/field-taxonomy";
 import { FieldValue } from "firebase-admin/firestore";
 import type { IaSugestao, TemplateRecord, TemplateFieldSchema } from "../../../../lib/types/firestore";
@@ -163,35 +163,18 @@ async function generateForField(
   }
 
   try {
-    let currentValidated = await callAndParse(prompt);
-    let filterRes = filterSugestoes(currentValidated, sharedContext.allowedCodes);
-
-    // fail-visible step 1: ONE regeneration with invalid codes listed in the prompt.
-    if (filterRes.allInvalid && filterRes.invalidCodes.length > 0) {
-      console.warn(
-        `[ia/gerar-plano] Todas as sugestões citam códigos inválidos ` +
-        `(${filterRes.invalidCodes.join(", ")}) — regenerando — field="${field.key}"`,
-      );
-      try {
-        const correcao = buildCorrecaoPrompt(filterRes.invalidCodes);
-        currentValidated = await callAndParse(correcao + prompt);
-        filterRes = filterSugestoes(currentValidated, sharedContext.allowedCodes);
-      } catch (retryErr) {
-        console.error(`[ia/gerar-plano] Erro na regeneração — field="${field.key}":`, retryErr);
-        // filterRes.allInvalid stays true → fall through to precisaRevisao
-      }
-    }
-
-    // fail-visible step 2: still allInvalid → return tagged for UI warning.
-    if (filterRes.allInvalid) {
-      console.warn(`[ia/gerar-plano] Regeneração falhou. Marcando precisaRevisao — field="${field.key}"`);
-      return {
-        sugestoes: currentValidated.map((s) => ({ ...s, precisaRevisao: true as const })),
-        precisaRevisao: true,
-      };
-    }
-
-    return { sugestoes: filterRes.filtered };
+    const validated = await callAndParse(prompt);
+    // filterWithRetry runs the fail-visible flow: filter → ONE regeneration → precisaRevisao.
+    const result = await filterWithRetry(
+      validated,
+      sharedContext.allowedCodes,
+      (correcao) => callAndParse(correcao + prompt),
+      `ia/gerar-plano field="${field.key}"`,
+    );
+    return {
+      sugestoes: result.sugestoes,
+      ...(result.precisaRevisao ? { precisaRevisao: true } : {}),
+    };
   } catch (err) {
     return { sugestoes: [], error: (err as Error).message ?? "Falha na geração" };
   }

@@ -108,6 +108,68 @@ export function filterSugestoes(
   };
 }
 
+// ── Fail-visible flow (filter → one retry → precisaRevisao) ──────────────────
+
+export interface FilterWithRetryResult {
+  sugestoes: IaSugestao[];
+  /** True when even the regeneration failed — suggestions are tagged precisaRevisao. */
+  precisaRevisao: boolean;
+  /** Suggestions removed by the LAST filter pass (0 when precisaRevisao). */
+  removedCount: number;
+}
+
+/**
+ * Runs the complete fail-visible validation flow shared by /api/ia/campo and
+ * /api/ia/gerar-plano:
+ *
+ *   1. Filter suggestions against allowedCodes (closed-world).
+ *   2. If ALL cite invalid codes, call `regenerate` ONCE with the correction
+ *      prompt prepended by the caller.
+ *   3. If the retry also returns allInvalid (or throws), tag the last batch
+ *      with precisaRevisao: true — never fall-open silently.
+ *
+ * `regenerate` receives the correction paragraph and must return the new
+ * batch already validated/normalized (the caller owns parsing + namespaces).
+ */
+export async function filterWithRetry(
+  sugestoes: IaSugestao[],
+  allowedCodes: Set<string>,
+  regenerate: (correcaoPrompt: string) => Promise<IaSugestao[]>,
+  logTag = "bncc-validator",
+): Promise<FilterWithRetryResult> {
+  let current = sugestoes;
+  let filterRes = filterSugestoes(current, allowedCodes);
+
+  if (filterRes.allInvalid && filterRes.invalidCodes.length > 0) {
+    console.warn(
+      `[${logTag}] Todas as ${filterRes.removedCount} sugestões citam códigos inválidos ` +
+      `(${filterRes.invalidCodes.join(", ")}) — tentando regeneração`,
+    );
+    try {
+      current = await regenerate(buildCorrecaoPrompt(filterRes.invalidCodes));
+      filterRes = filterSugestoes(current, allowedCodes);
+    } catch (err) {
+      console.error(`[${logTag}] Erro na regeneração com correção:`, err);
+      // filterRes.allInvalid stays true → precisaRevisao below
+    }
+  } else if (filterRes.removedCount > 0) {
+    console.warn(
+      `[${logTag}] Validator removeu ${filterRes.removedCount} sugestão(ões) com códigos fora do contexto`,
+    );
+  }
+
+  if (filterRes.allInvalid) {
+    console.warn(`[${logTag}] Regeneração também falhou. Marcando precisaRevisao`);
+    return {
+      sugestoes: current.map((s) => ({ ...s, precisaRevisao: true as const })),
+      precisaRevisao: true,
+      removedCount: 0,
+    };
+  }
+
+  return { sugestoes: filterRes.filtered, precisaRevisao: false, removedCount: filterRes.removedCount };
+}
+
 // ── Correction prompt builder ─────────────────────────────────────────────────
 
 /**
