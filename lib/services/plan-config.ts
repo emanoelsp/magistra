@@ -6,6 +6,9 @@ export interface PlanLimits {
   maxIaCampoCallsPerMonth: number;
 }
 
+// "avancado" e "premium" são SKUs legados do mesmo tier do "pro" (label Regente,
+// mesmo preço) mantidos porque existem usuários com esses valores no Firestore.
+// Não são vendidos na página de preços — PLANS (plans.ts) só expõe os 4 canônicos.
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
   free:     { maxTemplates: 1,   maxPlanosPerMonth: 1,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 50   },
   starter:  { maxTemplates: 2,   maxPlanosPerMonth: 2,   maxDownloadsPerPlano: 1,   maxIaCampoCallsPerMonth: 130  },
