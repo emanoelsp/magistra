@@ -27,8 +27,10 @@ interface GerarPlanoTriggerProps {
   canManageEstudantes?: boolean;
   limitsStatus: {
     canCreatePlano: boolean;
-    limits: { maxPlanosPerMonth: number };
+    limits: { maxPlanosPerMonth: number; maxIaCampoCallsPerMonth?: number };
     currentPlanosThisMonth: number;
+    /** Saldo de sugestões IA no mês — exibido ANTES do fluxo para evitar surpresa no meio do trabalho. */
+    iaCallsRemaining?: number;
     plano: string;
   };
   recentPlanos: RecentPlano[];
@@ -61,6 +63,18 @@ export function GerarPlanoTrigger({
   ...flowProps
 }: GerarPlanoTriggerProps) {
   const [open, setOpen] = useState(hasTemplates && (!!resumeData || !!preSelectedTemplateId || !!peiEstudanteId));
+
+  const { limitsStatus } = flowProps;
+  const planosRestantes = Math.max(
+    0,
+    limitsStatus.limits.maxPlanosPerMonth - limitsStatus.currentPlanosThisMonth,
+  );
+  const iaRestante = limitsStatus.iaCallsRemaining;
+  const maxIa = limitsStatus.limits.maxIaCampoCallsPerMonth;
+  const saldoEsgotado = planosRestantes === 0 || iaRestante === 0;
+  const saldoBaixo =
+    planosRestantes <= 1 ||
+    (typeof iaRestante === "number" && typeof maxIa === "number" && maxIa > 0 && iaRestante <= maxIa * 0.2);
 
   return (
     <>
@@ -95,7 +109,7 @@ export function GerarPlanoTrigger({
             </div>
           </div>
 
-          <div className="flex w-full justify-center">
+          <div className="flex w-full flex-col items-center gap-2">
             <button
               type="button"
               disabled={!hasTemplates}
@@ -106,6 +120,21 @@ export function GerarPlanoTrigger({
               Criar plano de aula
               <span>→</span>
             </button>
+            {hasTemplates && (
+              <p
+                className={`text-center text-[11px] font-medium ${
+                  saldoEsgotado ? "text-red-600" : saldoBaixo ? "text-amber-600" : "text-slate-400"
+                }`}
+              >
+                {planosRestantes === 0
+                  ? "Limite de planos do mês atingido — renova no próximo mês."
+                  : `${planosRestantes} plano${planosRestantes === 1 ? "" : "s"}${
+                      typeof iaRestante === "number"
+                        ? ` e ${iaRestante} sugest${iaRestante === 1 ? "ão" : "ões"} de IA`
+                        : ""
+                    } disponíve${planosRestantes === 1 && iaRestante === undefined ? "l" : "is"} este mês`}
+              </p>
+            )}
           </div>
 
           {recentPlanos.length > 0 && (

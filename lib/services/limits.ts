@@ -11,6 +11,8 @@ export interface LimitsStatus {
   canCreatePlano: boolean;
   currentTemplates: number;
   currentPlanosThisMonth: number;
+  /** Saldo de chamadas de sugestão IA no mês (ia_campo + gerar_plano). */
+  iaCallsRemaining: number;
   limits: PlanLimits;
   plano: string;
 }
@@ -71,11 +73,18 @@ export async function getLimitsStatus(userId: string, plano: string): Promise<Li
   // Exclude soft-deleted templates from the count
   const currentTemplates = templatesSnap.docs.filter((d) => !d.data().deleted_at).length;
 
+  // Mesmo formato/reset das rotas de IA: contador zera quando o mês vira
+  const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  const iaCallsMes = (userData.ia_campo_mes as string | undefined) === currentMonth
+    ? ((userData.ia_campo_calls_mes as number | undefined) ?? 0)
+    : 0;
+
   return {
     canCreateTemplate: currentTemplates < limits.maxTemplates,
     canCreatePlano: currentPlanosThisMonth < limits.maxPlanosPerMonth,
     currentTemplates,
     currentPlanosThisMonth,
+    iaCallsRemaining: Math.max(0, limits.maxIaCampoCallsPerMonth - iaCallsMes),
     limits,
     plano: normalizedPlano,
   };
