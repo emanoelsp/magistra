@@ -352,13 +352,7 @@ export async function PATCH(
     const schemaForAutoPlace = newSchema.filter((f) => autoPlaceKeys.has(f.key) && !hfPlaced.has(f.key));
     buffer = injectPlaceholders(buffer, schemaForAutoPlace);
 
-    // 3. Post-injection validation: report which fields got placed and which didn't
-    const { missing: camposSemPlaceholder } = reportInjections(buffer, newSchema);
-    if (camposSemPlaceholder.length > 0) {
-      console.info(`[templates/schema] Campos sem placeholder automático: ${camposSemPlaceholder.join(", ")}`);
-    }
-
-    // 3b. Wrap all placed chip runs in w:sdt Content Controls tagged f_{key}.
+    // 3. Wrap all placed chip runs in w:sdt Content Controls tagged f_{key}.
     // This makes every chip addressable by tag (not by coord/text) so future
     // saves and Word-edit recovery can find chips without re-resolving coordinates.
     // Flat-token chips in the original are also wrapped here.
@@ -379,6 +373,22 @@ export async function PATCH(
     // Delete the previous fillable (best-effort — stale storage is non-critical)
     if (oldFillableUrl && oldFillableUrl !== newFillableUrl) {
       void deleteFile(oldFillableUrl).catch(() => {/* non-fatal */});
+    }
+
+    // 5. Post-save verification (fail-visible): scan the blob that was ACTUALLY
+    // stored — round-trip through storage, after every transformation including
+    // wrapAllChipsInSdt. "Localizado no documento" na UI passa a refletir o
+    // arquivo que o Visualizar e a geração de plano vão consumir, não um estado
+    // intermediário em memória. Fallback para o buffer local se o download falhar.
+    let verifyBuffer = buffer;
+    try {
+      verifyBuffer = await downloadFile(newFillableUrl);
+    } catch (e) {
+      console.warn("[templates/schema] Verificação pós-save: download do blob falhou, usando buffer local:", e);
+    }
+    const { missing: camposSemPlaceholder } = reportInjections(verifyBuffer, newSchema);
+    if (camposSemPlaceholder.length > 0) {
+      console.info(`[templates/schema] Campos sem placeholder no blob salvo: ${camposSemPlaceholder.join(", ")}`);
     }
 
     // 5b. Extract structural coords from the final DOCX and merge into allPositions.

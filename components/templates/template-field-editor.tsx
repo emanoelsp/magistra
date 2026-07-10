@@ -1861,10 +1861,22 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
           return res.json() as Promise<{ campos_sem_placeholder?: string[] }>;
         })
         .then((d) => {
-          setCamposSemPlaceholder(d.campos_sem_placeholder ?? []);
+          const semPlaceholder = d.campos_sem_placeholder ?? [];
+          setCamposSemPlaceholder(semPlaceholder);
           setFieldPositions({});
+          // Fail-visible: o servidor verificou o blob salvo — se algum campo não
+          // chegou ao documento, o professor precisa saber AGORA, não no Visualizar.
+          const labelsFaltando = fieldsToSave
+            .filter((f) => semPlaceholder.includes(f.key))
+            .map((f) => f.label || f.key);
           if (switchToPreview) {
             setPreviewVersion((v) => v + 1);
+            if (labelsFaltando.length > 0) {
+              showMagisToast(
+                `Salvei, mas ${labelsFaltando.length === 1 ? "o campo" : "os campos"} ${labelsFaltando.slice(0, 3).join(", ")}${labelsFaltando.length > 3 ? "…" : ""} não ${labelsFaltando.length === 1 ? "entrou" : "entraram"} no documento. Posicione pelo editor.`,
+                "error",
+              );
+            }
           } else if (mode === "confirm") {
             setMagisQuestionsMode(true);
             setMagisStep(1);
@@ -1873,7 +1885,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             setPreviewVersion((v) => v + 1);
             setTimeout(() => setSaved(false), 2500);
             router.refresh();
-            showMagisToast("Campos salvos! O template está atualizado.", "success");
+            if (labelsFaltando.length > 0) {
+              showMagisToast(
+                `Salvei, mas ${labelsFaltando.length === 1 ? "o campo" : "os campos"} ${labelsFaltando.slice(0, 3).join(", ")}${labelsFaltando.length > 3 ? "…" : ""} não ${labelsFaltando.length === 1 ? "entrou" : "entraram"} no documento. Clique na célula desejada para posicionar.`,
+                "error",
+              );
+            } else {
+              showMagisToast("Campos salvos! O template está atualizado.", "success");
+            }
             // Item 7: show undo toast
             setShowUndoToast(true);
             if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
