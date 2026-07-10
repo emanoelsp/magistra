@@ -110,17 +110,17 @@ exports[`corpus — templates com variáveis: tokens sobrevivem à fragmentaçã
 exports[`corpus — templates em branco: scan estrutural + posição de cada chip > C-Planejamento anual - EMIEP-2026 Em branco .docx 1`] = `
 {
   "campos_no_scan": 25,
-  "colocados": 21,
+  "colocados": 22,
   "faltando": [
     "1",
-    "1_tr1",
     "2",
     "3",
   ],
   "posicoes": {
+    "1_tr1": "T0R10C3",
     "2_tr2": "T0R10C4",
     "3_tr3": "T0R10C5",
-    "area_s_do_conhecimento": "T0R10C3",
+    "area_s_do_conhecimento": "T0R1C1",
     "avaliacao": "T0R21C0",
     "carga_horaria_nao_presencial": "T0R2C3",
     "carga_horaria_presencial": "T0R1C3",

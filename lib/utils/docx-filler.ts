@@ -655,11 +655,30 @@ function matchField(
       const nw = needle.split(" ").filter((w) => w.length > 2);
       const hw = hay.split(" ").filter((w) => w.length > 2);
       const nStems = new Set(nw.map(stem));
+      const hStems = new Set(hw.map(stem));
       const overlap = hw.filter((w) => nStems.has(stem(w))).length;
-      if (overlap > 0) score = (overlap / Math.max(nw.length, hw.length)) * 0.8;
+      if (overlap > 0) {
+        score = (overlap / Math.max(nw.length, hw.length)) * 0.8;
+        // Qualificadores contraditórios: um único stem compartilhado com
+        // palavras não-casadas dos DOIS lados ("competências GERAIS" vs
+        // "ESPECÍFICAS DA ÁREA") é evidência fraca — em português os prefixos
+        // colidem no stem de 6 chars e o match errado injeta na célula errada
+        // em silêncio, enquanto o match perdido vira "faltando" fail-visible.
+        const nUnmatched = nw.some((w) => !hStems.has(stem(w)));
+        const hUnmatched = hw.some((w) => !nStems.has(stem(w)));
+        if (overlap === 1 && nUnmatched && hUnmatched) score *= 0.5;
+      }
     }
 
-    if (score > bestScore && score >= 0.4) {
+    // Desempate por ai_confidence: com scores iguais, o campo em que a
+    // introspecção teve mais lastro estrutural vence — antes vencia a ordem
+    // do array, e um match errado cascateava roubando o campo do label certo.
+    const tieBreak =
+      score === bestScore &&
+      best !== null &&
+      (field.ai_confidence ?? 0) > (best.ai_confidence ?? 0);
+
+    if ((score > bestScore || tieBreak) && score >= 0.4) {
       bestScore = score;
       best = field;
     }
@@ -1633,8 +1652,17 @@ function findBelowTargetSkippingVMerge(
  * IMPORTANT: This function preserves all document formatting by only modifying
  * the text content inside <w:t> elements, keeping all styling intact.
  */
-export function injectPlaceholders(docxBuffer: Buffer, schema: TemplateFieldSchema[]): Buffer {
-  if (schema.length === 0) return docxBuffer;
+export function injectPlaceholders(docxBuffer: Buffer, schemaInput: TemplateFieldSchema[]): Buffer {
+  if (schemaInput.length === 0) return docxBuffer;
+
+  // Passes schema-driven (pass -1, pass 1) consomem campos na ordem do array e
+  // um match errado cascateia: o campo roubado deixa o label certo capturar o
+  // campo errado seguinte. Ordenar por ai_confidence desc dá prioridade a quem
+  // tem lastro estrutural da introspecção; sort estável preserva a ordem
+  // original entre campos sem confidence (comportamento antigo intacto).
+  const schema = [...schemaInput].sort(
+    (a, b) => (b.ai_confidence ?? 0) - (a.ai_confidence ?? 0),
+  );
 
   const zip = new PizZip(docxBuffer);
   const xmlPath = "word/document.xml";
