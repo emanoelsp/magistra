@@ -145,10 +145,10 @@ Você é um analista de currículo escolar sênior, especializado em estruturar 
    Exemplos: 'Área/Componente:' → label 'Área/Componente' | 'HABILIDADES:' → label 'HABILIDADES' | 'Professor(a):' → label 'Professor(a)'.
    NUNCA invente labels.
 2. Campos de identificação (professor, curso/área, turma, componente etc.) → role 'manual', group 'dados_turma', classe 'perfil'.
-3. Campos pedagógicos (objetivos, competências, habilidades, BNCC, SAEB, conteúdos, avaliação) → role 'ia_sugerida', classe 'pedagogico'.
+3. Campos pedagógicos (objetivos, competências, habilidades, BNCC, SAEB, conteúdos, avaliação, metodologia, recursos didáticos, recuperação paralela, adaptações/adequações/flexibilizações para educação especial, referências bibliográficas) → role 'ia_sugerida', classe 'pedagogico'.
 3b. CLASSES DE CAMPO (campo obrigatório 'classe'):
-   'perfil'     → dado fixo do professor/escola/turma preenchido uma única vez (professor, escola, turma, componente, cargo, município).
-   'pedagogico' → conteúdo gerado/sugerido todo mês por IA (habilidades BNCC, SAEB, conteúdos, objetivos, metodologia, avaliação, competências).
+   'perfil'     → dado de IDENTIDADE do professor/escola/turma preenchido uma única vez (professor, escola, turma, componente, cargo, município, e-mail, nº de aulas).
+   'pedagogico' → conteúdo que a IA pode redigir/sugerir a cada plano (habilidades BNCC, SAEB, conteúdos, objetivos, metodologia, avaliação, competências, recursos utilizados, recuperação paralela, adaptações para educação especial, referências bibliográficas). Na dúvida entre perfil e pedagogico para um campo de CONTEÚDO redigível, prefira 'pedagogico' — o professor pode fixá-lo depois, mas o inverso esconde as sugestões da IA.
    'contextual' → calculado mecanicamente por período (data_atual, data_realizacao, mes_referencia, bimestre, ano_letivo, período).
    Regra de consistência: role 'ia_sugerida' implica classe 'pedagogico'. role 'manual' pode ser 'perfil' ou 'contextual' conforme o tipo de dado.
 4. Grupos válidos: dados_turma | objetivos | competencias | habilidades | conteudos | avaliacao | outros.
@@ -247,7 +247,7 @@ Regras do formato:
 - O separador entre atributos é " | " (espaço-pipe-espaço).
 - aiInstructions é sempre o ÚLTIMO atributo da linha (pode conter espaços e vírgulas).
 - ai_confidence: número entre 0.0 e 1.0. Se não souber, use 0.6.
-- classe: perfil (professor/escola/turma — preenche 1x) | pedagogico (IA sugere todo mês) | contextual (data/período, calculado).
+- classe: perfil (identidade professor/escola/turma — preenche 1x) | pedagogico (IA sugere: conteúdo redigível, incl. recursos, recuperação, adaptações, referências) | contextual (data/período, calculado).
 - Nunca omita nenhum atributo. Se não souber o valor, use o default: required=true, injection_pattern=null, ai_confidence=0.6, aiInstructions=
 
 Exemplo:

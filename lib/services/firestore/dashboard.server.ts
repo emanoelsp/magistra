@@ -124,6 +124,15 @@ export async function getUserTemplateOptions(userId: string): Promise<TemplateOp
               options: Array.isArray(obj.options) ? (obj.options as string[]) : undefined,
               defaultValue: typeof obj.defaultValue === "string" ? obj.defaultValue : undefined,
               aiInstructions: typeof obj.aiInstructions === "string" ? obj.aiInstructions : undefined,
+              // classe é a fonte da verdade de "campo IA?" (isCampoIa) — sem
+              // mapeá-la o wizard cairia no role deprecado e um campo com
+              // classe=pedagogico + role=manual voltaria a aparecer como fixo.
+              classe: obj.classe === "perfil" || obj.classe === "pedagogico" || obj.classe === "contextual"
+                ? (obj.classe as TemplateFieldSchema["classe"])
+                : undefined,
+              origem: obj.origem === "ia" || obj.origem === "manual" || obj.origem === "regra"
+                ? (obj.origem as TemplateFieldSchema["origem"])
+                : undefined,
             };
           })
         : [];
