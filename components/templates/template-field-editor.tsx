@@ -1349,31 +1349,16 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
   const [isAdvancing, setIsAdvancing] = useState(false);
 
   // Magis questions (after confirmation)
+  // Valores de dados fixos NÃO são perguntados aqui — o professor os define
+  // no "Valor padrão" da sidebar ou nos metadados na hora de gerar o plano;
+  // o wizard lê defaultValue e metadata_padrao e pré-preenche o balão.
   const [magisQuestionsMode, setMagisQuestionsMode] = useState(false);
-  const [magisStep, setMagisStep] = useState<1 | 2 | 3>(1);
+  const [magisStep, setMagisStep] = useState<1 | 2>(1);
   const [magisAnswers, setMagisAnswers] = useState({
     nivelEnsino: template.tipo_plano ?? "",
     estadoMagis: template.estado ?? "",
   });
-  // Valores dos dados fixos (classe perfil), salvos em metadata_padrao para o
-  // wizard de geração pré-preencher o balão já no PRIMEIRO plano — sem isso o
-  // professor marca o campo como Fixo mas o valor só é aprendido após gerar.
-  const [magisFixos, setMagisFixos] = useState<Record<string, string>>({});
   const [isSavingMagis, setIsSavingMagis] = useState(false);
-
-  // Campos fixos que merecem pergunta de valor no passo 3 do modal da Magis
-  const perfilFields = fields.filter(
-    (f) => f.role !== "ia_sugerida" && (f.classe ?? inferirClasse(f.key, f.role)) === "perfil" && f.label.trim(),
-  );
-
-  function initMagisFixos() {
-    const initial: Record<string, string> = {};
-    const saved = template.metadata_padrao ?? {};
-    for (const f of perfilFields) {
-      initial[f.key] = saved[f.key] ?? f.defaultValue ?? "";
-    }
-    setMagisFixos(initial);
-  }
 
   // Doc save result feedback
 
@@ -2087,10 +2072,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
 
   async function handleCompleteMagis() {
     setIsSavingMagis(true);
-    // Só valores preenchidos — o PATCH faz merge com o metadata_padrao existente
-    const fixosPreenchidos = Object.fromEntries(
-      Object.entries(magisFixos).filter(([, v]) => v.trim()),
-    );
     try {
       await fetch(`/api/templates/${template.id}/schema`, {
         method: "PATCH",
@@ -2098,7 +2079,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
         body: JSON.stringify({
           tipo_plano: magisAnswers.nivelEnsino || null,
           estado: magisAnswers.estadoMagis || null,
-          ...(Object.keys(fixosPreenchidos).length > 0 ? { metadata_padrao: fixosPreenchidos } : {}),
         }),
       });
     } catch { /* não bloquear se falhar */ }
@@ -2908,7 +2888,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             <p className="text-[11px] text-violet-300">assistente de planos</p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {(perfilFields.length > 0 ? ([1, 2, 3] as const) : ([1, 2] as const)).map((s) => (
+            {([1, 2] as const).map((s) => (
               <div key={s} className={`h-1.5 rounded-full transition-all ${magisStep >= s ? "w-5 bg-white" : "w-2.5 bg-white/30"}`} />
             ))}
           </div>
@@ -3002,58 +2982,14 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               </div>
             </>
           )}
-
-          {/* Etapa 3 — Valores dos dados fixos (classe perfil) */}
-          {magisStep === 3 && (
-            <>
-              <div className="flex items-end gap-2">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600 shadow-sm mb-0.5">
-                  <Sparkles className="h-3 w-3 text-white" />
-                </div>
-                <div className="flex max-w-[80%] flex-col gap-1">
-                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
-                    <p className="text-sm text-slate-800">Última coisa! Vi que este template tem <strong>dados fixos</strong> 📌</p>
-                  </div>
-                  <div className="rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 shadow-sm">
-                    <p className="text-sm text-slate-800">Me conta os valores — assim eles já vêm preenchidos em <strong>todo plano</strong> que você gerar. Pode pular o que preferir preencher na hora.</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pl-9 space-y-2.5 pt-1">
-                {perfilFields.map((f) => (
-                  <label key={f.key} className="block">
-                    <span className="mb-1 block pl-1 text-[11px] font-semibold text-slate-600">{f.label}</span>
-                    {f.type === "textarea" ? (
-                      <textarea
-                        rows={2}
-                        value={magisFixos[f.key] ?? ""}
-                        onChange={(e) => setMagisFixos((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                        placeholder={f.placeholder ?? f.label}
-                        className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                      />
-                    ) : (
-                      <input
-                        type={f.type === "number" ? "number" : "text"}
-                        value={magisFixos[f.key] ?? ""}
-                        onChange={(e) => setMagisFixos((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                        placeholder={f.placeholder ?? f.label}
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                      />
-                    )}
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
         </div>
 
         {/* Action bar */}
         <div className="shrink-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-3">
-          {magisStep > 1 ? (
+          {magisStep === 2 ? (
             <button
               type="button"
-              onClick={() => setMagisStep((s) => (s === 3 ? 2 : 1))}
+              onClick={() => setMagisStep(1)}
               className="text-xs text-slate-400 hover:text-slate-700"
             >
               ← Voltar
@@ -3066,14 +3002,6 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
               onClick={() => setMagisStep(2)}
               disabled={!magisAnswers.nivelEnsino}
               className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-40"
-            >
-              Continuar →
-            </button>
-          ) : magisStep === 2 && perfilFields.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => { initMagisFixos(); setMagisStep(3); }}
-              className="rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500"
             >
               Continuar →
             </button>
