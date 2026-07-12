@@ -409,6 +409,24 @@ export async function PATCH(
       console.info(`[templates/schema] Campos sem placeholder no blob salvo: ${camposSemPlaceholder.join(", ")}`);
     }
 
+    // Bem-formação do XML: Word abre XML inválido (leniente), mas o docx-preview
+    // do Visualizar/Editar rejeita — corrupção aqui já derrubou o preview em
+    // produção (wrapAllChipsInSdt cruzando runs). Detectar NO SAVE, nunca depois.
+    let xmlValido = true;
+    try {
+      const { XMLValidator } = await import("fast-xml-parser");
+      const verifyZip = new (await import("pizzip")).default(verifyBuffer);
+      for (const p of Object.keys(verifyZip.files).filter((f) => /^word\/(document|header\d+|footer\d+)\.xml$/.test(f))) {
+        const res = XMLValidator.validate(verifyZip.files[p].asText());
+        if (res !== true) {
+          xmlValido = false;
+          console.error(`[templates/schema] XML MALFORMADO no fillable salvo (${p}):`, JSON.stringify(res).slice(0, 300));
+        }
+      }
+    } catch (e) {
+      console.warn("[templates/schema] Validação de XML falhou ao executar:", e);
+    }
+
     // 5b. Extract structural coords from the final DOCX and merge into allPositions.
     // Includes both body coords (T{ti}R{ri}C{ci}) from document.xml and HF coords
     // (HF:{n}) from header/footer files. On the next save the stored coord is used
@@ -452,6 +470,7 @@ export async function PATCH(
       arquivo_fillable_url: newFillableUrl,
       campos_sem_placeholder: camposSemPlaceholder,
       verificacao,
+      xml_valido: xmlValido,
       remove_page_breaks: removePageBreaks,
     });
   } catch (error) {

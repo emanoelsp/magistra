@@ -175,8 +175,10 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
     setPhase("loading");
     bufferRef.current = null;
     let cancelled = false;
+    // Sem fallback silencioso para o arquivo original: mostrar o doc SEM os
+    // chips faz o professor concluir que as edições sumiram (o schema no
+    // Firestore está certo — é o fillable que falhou). Erro explícito + retry.
     fetch(`/api/templates/${templateId}/arquivo?fresh=1&v=${previewVersion}`)
-      .then((r) => r.ok ? r : fetch(`/api/templates/${templateId}/arquivo?v=${previewVersion}`))
       .then((r) => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
       .then((buf) => { if (!cancelled) { bufferRef.current = buf; setPhase("rendering"); } })
       .catch(() => { if (!cancelled) setPhase("error"); });
@@ -1911,9 +1913,15 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             const d = await res.json().catch(() => null) as { error?: string } | null;
             throw new Error(d?.error ?? "Falha ao salvar.");
           }
-          return res.json() as Promise<{ campos_sem_placeholder?: string[]; verificacao?: "blob" | "memoria" }>;
+          return res.json() as Promise<{ campos_sem_placeholder?: string[]; verificacao?: "blob" | "memoria"; xml_valido?: boolean }>;
         })
         .then((d) => {
+          if (d.xml_valido === false) {
+            showMagisToast(
+              "O documento salvo ficou com estrutura inválida — a pré-visualização pode falhar. Tente salvar novamente e, se persistir, reporte.",
+              "error",
+            );
+          }
           const semPlaceholder = d.campos_sem_placeholder ?? [];
           setCamposSemPlaceholder(semPlaceholder);
           setFieldPositions({});
