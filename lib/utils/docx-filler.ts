@@ -3294,19 +3294,23 @@ export function wrapAllChipsInSdt(docxBuffer: Buffer, keys: Set<string>): Buffer
   for (const path of paths) {
     let xml = zip.files[path].asText();
     let changed = false;
-    for (const key of keys) {
-      const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // Match <w:r> whose entire <w:t> content is {{key}} (with optional whitespace)
-      const runRe = new RegExp(
-        `<w:r(?:\\s[^>]*)?>(?:<w:rPr>[\\s\\S]*?<\\/w:rPr>)?<w:t[^>]*>\\s*\\{\\{${safeKey}\\}\\}\\s*<\\/w:t><\\/w:r>`,
-        "g",
-      );
-      const patched = xml.replace(runRe, (runXml) => {
-        const sdtId = Math.floor(Math.random() * 2147483647);
-        return `<w:sdt><w:sdtPr><w:tag w:val="f_${key}"/><w:id w:val="${sdtId}"/></w:sdtPr><w:sdtContent>${runXml}</w:sdtContent></w:sdt>`;
-      });
-      if (patched !== xml) { xml = patched; changed = true; }
-    }
+    // Itera RUNS REAIS (tempered dot: nunca atravessa <w:r>/<\/w:r>) e embrulha
+    // o run cujo <w:t> é exatamente {{key}}. A versão anterior usava
+    // `<w:rPr>[\s\S]*?<\/w:rPr>` num regex por chave — o lazy atravessava
+    // fronteiras de run/parágrafo e o match começava no PRIMEIRO run estilizado
+    // do documento (cabeçalho da escola), engolindo tudo até o chip e gerando
+    // sdts aninhados com </w:p> órfão: XML inválido que o Word abre (leniente)
+    // mas o docx-preview rejeita — a causa raiz do Visualizar "não carrega".
+    const runRe = /<w:r(?:\s[^>]*)?>(?:(?!<w:r[\s>])(?!<\/w:r>)[\s\S])*?<\/w:r>/g;
+    const patched = xml.replace(runRe, (runXml) => {
+      const wt = runXml.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/);
+      if (!wt) return runXml;
+      const token = wt[1].trim().match(/^\{\{([A-Za-z0-9_]+)\}\}$/);
+      if (!token || !keys.has(token[1])) return runXml;
+      const sdtId = Math.floor(Math.random() * 2147483647);
+      return `<w:sdt><w:sdtPr><w:tag w:val="f_${token[1]}"/><w:id w:val="${sdtId}"/></w:sdtPr><w:sdtContent>${runXml}</w:sdtContent></w:sdt>`;
+    });
+    if (patched !== xml) { xml = patched; changed = true; }
     if (changed) { zip.file(path, xml); anyChanged = true; }
   }
   if (!anyChanged) return docxBuffer;

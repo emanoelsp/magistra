@@ -19,6 +19,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { XMLValidator } from "fast-xml-parser";
+import PizZip from "pizzip";
 import { describe, expect, test } from "vitest";
 import type { TemplateFieldSchema } from "../lib/types/firestore";
 import {
@@ -28,6 +30,7 @@ import {
   reportInjections,
   scanDocxStructure,
   scanPlaceholders,
+  wrapAllChipsInSdt,
 } from "../lib/utils/docx-filler";
 
 const CORPUS_DIR = join(__dirname, "..", "template_originais");
@@ -94,7 +97,16 @@ describe("corpus — templates em branco: scan estrutural + posição de cada ch
       const scan = pairs.map((p) => `${p.pattern}${p.periodSuffix ?? ""} :: ${p.label.slice(0, 60)}`);
 
       const schema = schemaFromScan(buffer);
-      const injected = injectPlaceholders(buffer, schema);
+      // Mesmo pipeline do save real: injeção + embrulho em Content Controls.
+      // Todo XML tocado precisa sair BEM-FORMADO — Word abre XML inválido
+      // (leniente), mas docx-preview rejeita e o Visualizar quebra.
+      const injected = wrapAllChipsInSdt(injectPlaceholders(buffer, schema), new Set(schema.map((f) => f.key)));
+      {
+        const zip = new PizZip(injected);
+        for (const p of Object.keys(zip.files).filter((f) => /^word\/(document|header\d+|footer\d+)\.xml$/.test(f))) {
+          expect(XMLValidator.validate(zip.files[p].asText()), `XML malformado em ${p}`).toBe(true);
+        }
+      }
 
       const { injected: colocados, missing: faltando } = reportInjections(injected, schema);
       const coords = { ...extractFieldCoords(injected), ...extractHFFieldCoords(injected) };
