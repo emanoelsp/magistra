@@ -29,6 +29,7 @@ import {
   type DownloadLimitInfo,
 } from "./download-plan-button";
 import { showMagisToast } from "../../lib/utils/magis-toast";
+import { normalizeSchemaRoles } from "../../lib/utils/field-taxonomy";
 
 export interface RecentPlano {
   id: string;
@@ -221,7 +222,9 @@ export function PlanGenerationWizard({
       }
     : null;
 
-  const schema = selectedTemplate?.schema_campos ?? [];
+  // normalizeSchemaRoles: classe explícita (taxonomia nova) decide o que é IA;
+  // sem ela, campo com classe=pedagogico e role=manual apareceria como dado fixo.
+  const schema = normalizeSchemaRoles(selectedTemplate?.schema_campos ?? []);
   const manualFields = schema.filter(
     (f) => f.role !== "ia_sugerida" && (f.role === "manual" || f.group === "dados_turma" || (!f.role && !f.group)),
   );

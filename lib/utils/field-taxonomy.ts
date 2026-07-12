@@ -53,6 +53,37 @@ export function inferirOrigem(role?: TemplateFieldRole | string): TemplateFieldO
   return "manual";
 }
 
+/**
+ * Fonte única da verdade "este campo é preenchido pela IA?".
+ *
+ * A introspecção pode emitir role e classe CONTRADITÓRIOS (role=manual +
+ * classe=pedagogico) — o badge da UI mostra a classe enquanto wizard e
+ * plan-editor decidiam pelo role deprecado, então o professor via "IA" no
+ * badge e o campo aparecia como dado fixo na geração. Regra canônica:
+ * classe explícita vence (taxonomia nova); sem classe, o role legado decide
+ * — templates antigos sem classe mantêm o comportamento de sempre.
+ */
+export function isCampoIa(f: { classe?: TemplateFieldClasse; role?: TemplateFieldRole | string }): boolean {
+  if (f.classe) return f.classe === "pedagogico";
+  return f.role === "ia_sugerida";
+}
+
+/**
+ * Normaliza o `role` de cada campo a partir da classe (via isCampoIa), para
+ * que TODOS os checks downstream por role (wizard, plan-editor, modais)
+ * enxerguem um schema coerente sem reescrever cada call site. Não muta o
+ * array de entrada; campos já coerentes saem idênticos.
+ */
+export function normalizeSchemaRoles<T extends { classe?: TemplateFieldClasse; role?: TemplateFieldRole }>(
+  schema: T[],
+): T[] {
+  return schema.map((f) => {
+    const iaField = isCampoIa(f);
+    const expectedRole: TemplateFieldRole = iaField ? "ia_sugerida" : "manual";
+    return f.role === expectedRole ? f : { ...f, role: expectedRole };
+  });
+}
+
 /** Human-readable label for each class (pt-BR). */
 export const CLASSE_LABELS: Record<TemplateFieldClasse, string> = {
   perfil:      "Perfil",

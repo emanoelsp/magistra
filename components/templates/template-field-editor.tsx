@@ -36,7 +36,7 @@ import type { TemplateFieldSchema, TemplateRecord } from "../../lib/types/firest
 import { ESTADOS_BRASIL } from "../../lib/constants/estados-brasil";
 import { OfficeInlineViewer } from "../shared/office-inline-viewer";
 import { showMagisToast } from "../../lib/utils/magis-toast";
-import { inferirClasse, CLASSE_LABELS, CLASSE_COLORS } from "../../lib/utils/field-taxonomy";
+import { inferirClasse, isCampoIa, CLASSE_LABELS, CLASSE_COLORS } from "../../lib/utils/field-taxonomy";
 
 interface TemplateFieldEditorProps {
   template: TemplateRecord;
@@ -2700,43 +2700,49 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                         </div>
                       )}
 
-                      {/* Role toggle */}
+                      {/* Role toggle — escreve role E classe juntos para o badge
+                          (classe) e o comportamento na geração (role) nunca divergirem */}
+                      {(() => {
+                        const fieldIsIa = isCampoIa(field);
+                        return (
                       <div>
                         <span className="text-[11px] font-semibold text-slate-600">Quem preenche este campo?</span>
                         <div className="mt-1.5 flex gap-2">
                           <button
                             type="button"
-                            onClick={() => preserveScroll(() => updateField(index, { role: "manual", group: field.group ?? "dados_turma" }))}
+                            onClick={() => preserveScroll(() => updateField(index, { role: "manual", classe: "perfil", origem: "manual", group: field.group ?? "dados_turma" }))}
                             className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
-                              field.role !== "ia_sugerida"
+                              !fieldIsIa
                                 ? "border-amber-400 bg-amber-50 text-amber-800"
                                 : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
                             }`}
                           >
-                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${field.role !== "ia_sugerida" ? "border-amber-500 bg-amber-500" : "border-slate-300"}`}>
-                              {field.role !== "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${!fieldIsIa ? "border-amber-500 bg-amber-500" : "border-slate-300"}`}>
+                              {!fieldIsIa && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
                             </span>
                             Professor preenche
                           </button>
                           <button
                             type="button"
-                            onClick={() => preserveScroll(() => updateField(index, { role: "ia_sugerida", group: field.group ?? "outros" }))}
+                            onClick={() => preserveScroll(() => updateField(index, { role: "ia_sugerida", classe: "pedagogico", origem: "ia", group: field.group ?? "outros" }))}
                             className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
-                              field.role === "ia_sugerida"
+                              fieldIsIa
                                 ? "border-violet-400 bg-violet-50 text-violet-800"
                                 : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
                             }`}
                           >
-                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${field.role === "ia_sugerida" ? "border-violet-500 bg-violet-500" : "border-slate-300"}`}>
-                              {field.role === "ia_sugerida" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                            <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center ${fieldIsIa ? "border-violet-500 bg-violet-500" : "border-slate-300"}`}>
+                              {fieldIsIa && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
                             </span>
                             Magis sugere
                           </button>
                         </div>
                       </div>
+                        );
+                      })()}
 
                       {/* AI instructions — ia_sugerida only */}
-                      {field.role === "ia_sugerida" && (
+                      {isCampoIa(field) && (
                         <label className="block">
                           <span className="text-[11px] font-semibold text-violet-700">Contexto para a Magis</span>
                           <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">
@@ -2753,7 +2759,7 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
                       )}
 
                       {/* Default value — manual only */}
-                      {field.role !== "ia_sugerida" && (
+                      {!isCampoIa(field) && (
                         <label className="block">
                           <span className="text-[11px] font-semibold text-amber-700">Valor padrão</span>
                           <p className="mt-0.5 mb-1 text-[10px] leading-relaxed text-slate-400">

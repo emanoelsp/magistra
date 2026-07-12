@@ -360,7 +360,7 @@ function parseSchema(
     const fields = parseToonSchema(raw);
     const check = validateParsedSchema(fields);
     if (!check.valid) throw new Error(`invalid_toon_schema: ${check.reason}`);
-    return fields;
+    return coerceRoleFromClasse(fields);
   }
 
   // JSON path (Gemini)
@@ -384,11 +384,30 @@ function parseSchema(
   const check = validateParsedSchema(raw_fields);
   if (!check.valid) throw new Error(`invalid_json_schema: ${check.reason}`);
   // Backfill classe/origem for any field the model didn't classify
-  return raw_fields.map((f) => ({
+  return coerceRoleFromClasse(raw_fields.map((f) => ({
     ...f,
     classe: VALID_CLASSES.has(f.classe ?? "") ? f.classe : inferirClasse(f.key, f.role),
     origem: inferirOrigem(f.role),
-  }));
+  })));
+}
+
+/**
+ * O modelo pode emitir role e classe CONTRADITÓRIOS (role=manual +
+ * classe=pedagogico) — o prompt só força consistência numa direção. Como a
+ * classe é a taxonomia canônica (role está deprecado), o role gravado no
+ * Firestore é derivado dela: campo pedagogico sai ia_sugerida, o resto manual.
+ * Sem isso, o badge da UI (classe) e o comportamento na geração (role) divergem.
+ */
+function coerceRoleFromClasse(
+  fields: import("../../../../lib/types/firestore").TemplateFieldSchema[],
+): import("../../../../lib/types/firestore").TemplateFieldSchema[] {
+  return fields.map((f) => {
+    if (!f.classe) return f;
+    const expectedRole = f.classe === "pedagogico" ? "ia_sugerida" as const : "manual" as const;
+    if (f.role === expectedRole) return f;
+    console.info(`[introspect] Coerção role: key=${f.key} classe=${f.classe} role ${f.role ?? "(vazio)"}→${expectedRole}`);
+    return { ...f, role: expectedRole, origem: inferirOrigem(expectedRole) };
+  });
 }
 
 export async function POST(request: Request) {
