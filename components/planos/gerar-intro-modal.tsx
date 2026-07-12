@@ -50,8 +50,10 @@ function MagisModal({ children, wide }: { children: React.ReactNode; wide?: bool
       style={{ background: "rgba(0,0,0,0.55)" }}
     >
       <style>{`@keyframes magis-pop { from { opacity:0;transform:scale(.85) translateY(24px)} to { opacity:1;transform:scale(1) translateY(0)} }`}</style>
+      {/* Altura automática até 80vh (≥10vh de respiro em cima/embaixo via
+          items-center) — listas internas com min-h-0 fazem o scroll próprio */}
       <div
-        className={`flex w-full flex-col overflow-hidden rounded-3xl shadow-2xl ${wide ? "max-w-md" : "max-w-sm"}`}
+        className={`flex max-h-[80vh] w-full flex-col overflow-hidden rounded-3xl shadow-2xl ${wide ? "max-w-md" : "max-w-sm"}`}
         style={{ animation: "magis-pop 0.35s cubic-bezier(0.34,1.56,0.64,1) both" }}
       >
         {children}
@@ -666,14 +668,15 @@ export function GerarPlanoFlow({
     return (
       <MagisModal wide>
         <MagisHeader onClose={() => setPhase("wizard")} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
           <MagisBubble text="Para qual turma é esse plano?" />
           {escolaTurmas.length === 0 && selectedEscolaId && (
             <MagisBubble text="Nenhuma turma cadastrada para esta escola ainda." />
           )}
         </div>
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
-          <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+        {/* Lista cresce com o conteúdo; só scrolla quando o modal bate no teto de 80vh */}
+        <div className="flex min-h-0 flex-1 flex-col border-t border-slate-200 bg-white px-5 py-4 gap-3">
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-1.5 pr-1">
             <label className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-2.5 cursor-pointer hover:bg-slate-50">
               <input
                 type="radio"
@@ -708,7 +711,7 @@ export function GerarPlanoFlow({
               </label>
             ))}
           </div>
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-2">
             <button
               type="button"
               onClick={() => setIntroStep(escolaCursos.length > 0 ? "curso" : templateHasEscola ? "template" : "escola")}
