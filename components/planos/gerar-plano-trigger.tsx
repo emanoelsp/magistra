@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Download, FileText, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Download, FileText, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { GerarPlanoFlow } from "./gerar-intro-modal";
+import { planosService } from "../../lib/services/firestore/planos.service";
+import { showMagisToast } from "../../lib/utils/magis-toast";
 import type { RecentPlano, ResumeData } from "./plan-generation-wizard";
 import type { EscolaRecord, EstudanteRecord, PlanoRegenteRecord, TemplateOption, TurmaRecord } from "../../lib/types/firestore";
 
@@ -63,6 +66,32 @@ export function GerarPlanoTrigger({
   ...flowProps
 }: GerarPlanoTriggerProps) {
   const [open, setOpen] = useState(hasTemplates && (!!resumeData || !!preSelectedTemplateId || !!peiEstudanteId));
+  const router = useRouter();
+  // Soft delete otimista: some da lista na hora; router.refresh() confirma
+  // contra o servidor (a query já filtra deleted_at)
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const visiblePlanos = recentPlanos.filter((p) => !deletedIds.has(p.id));
+
+  async function handleDeletePlano(plano: RecentPlano) {
+    if (deletingId) return;
+    const titulo =
+      typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
+        ? plano.conteudo_gerado._plano_titulo
+        : plano.template_nome;
+    if (!window.confirm(`Excluir o rascunho "${titulo}"?\n\nEssa ação não pode ser desfeita.`)) return;
+    setDeletingId(plano.id);
+    try {
+      await planosService.deletePlano(plano.id);
+      setDeletedIds((prev) => new Set([...prev, plano.id]));
+      showMagisToast("Rascunho excluído.", "success");
+      router.refresh();
+    } catch {
+      showMagisToast("Não consegui excluir o rascunho. Tente novamente.", "error");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const { limitsStatus } = flowProps;
   const planosRestantes = Math.max(
@@ -137,7 +166,7 @@ export function GerarPlanoTrigger({
             )}
           </div>
 
-          {recentPlanos.length > 0 && (
+          {visiblePlanos.length > 0 && (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-4">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -145,12 +174,12 @@ export function GerarPlanoTrigger({
                   Planos gerados
                 </h2>
                 <span className="text-xs text-slate-400">
-                  {recentPlanos.length} {recentPlanos.length === 1 ? "plano recente" : "planos recentes"}
+                  {visiblePlanos.length} {visiblePlanos.length === 1 ? "plano recente" : "planos recentes"}
                 </span>
               </div>
 
               <ul className="space-y-3">
-                {recentPlanos.map((plano) => {
+                {visiblePlanos.map((plano) => {
                   const status = STATUS_MAP[plano.status] ?? { label: plano.status, cls: "bg-slate-100 text-slate-600" };
                   const temConteudo = Object.keys(plano.conteudo_gerado ?? {}).length > 0;
                   const titulo =
@@ -199,6 +228,20 @@ export function GerarPlanoTrigger({
                           >
                             Continuar
                           </Link>
+                        )}
+                        {/* Excluir só para não-finalizados: planos "gerado" contam
+                            no limite mensal e não podem sair da contagem */}
+                        {plano.status !== "gerado" && (
+                          <button
+                            type="button"
+                            onClick={() => void handleDeletePlano(plano)}
+                            disabled={deletingId === plano.id}
+                            title="Excluir rascunho"
+                            className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:border-rose-500 hover:bg-rose-50 disabled:opacity-50"
+                          >
+                            {deletingId === plano.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            Excluir
+                          </button>
                         )}
                       </div>
                     </li>
