@@ -1940,6 +1940,8 @@ export function TemplateFieldEditor({ template, mode = "edit" }: TemplateFieldEd
             setPreviewVersion((v) => v + 1);
             if (labelsFaltando.length > 0) toastFaltando("Posicione pelo editor.");
           } else if (mode === "confirm") {
+            // Fail-visible também na confirmação — era o único branch sem o aviso
+            if (labelsFaltando.length > 0) toastFaltando("Posicione pelo editor antes de confirmar.");
             setMagisQuestionsMode(true);
             setMagisStep(1);
           } else {

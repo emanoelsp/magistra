@@ -14,6 +14,7 @@ import {
   injectAtCell,
   injectAtCoord,
   injectAtHFCoord,
+  injectIntoParagraph,
   injectRawCell,
   injectPlaceholders,
   isCoordValid,
@@ -29,6 +30,13 @@ interface FieldPosition {
   cellText: string;
   ordinal: number;
   coord?: string;  // "T{ti}R{ri}C{ci}" — preferred over text/ordinal
+  /**
+   * Conteúdo completo de um PARÁGRAFO fora de tabela onde o chip foi digitado
+   * (ex.: linha de título "PLANEJAMENTO MENSAL PERÍODO {{data_atual}}").
+   * Parágrafos não têm coord T/R/C nem HF, então o Immutable Base precisa
+   * reaplicar o conteúdo inteiro a cada regeneração do fillable.
+   */
+  paraContent?: string;
 }
 
 interface CellEdit {
@@ -274,6 +282,20 @@ export async function PATCH(
           const prevBuf2 = buffer;
           buffer = injectRawCell(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
           console.info(`[schema/cell_edit] no-coord rawCell cellText="${cleanCellText.slice(0, 60)}" ordinal=${edit.ordinal ?? 0} worked=${buffer !== prevBuf2}`);
+          // Fallback: parágrafo FORA de tabela (ex.: linha de título). injectRawCell
+          // só procura <w:tc>, então chips digitados em títulos sumiam em silêncio.
+          if (buffer === prevBuf2) {
+            buffer = injectIntoParagraph(buffer, cleanCellText, edit.ordinal ?? 0, edit.newContent);
+            const paraWorked = buffer !== prevBuf2;
+            console.info(`[schema/cell_edit] no-coord paragraph fallback worked=${paraWorked}`);
+            if (paraWorked) {
+              // Persistir o conteúdo do parágrafo: sem coord T/R/C nem HF, o
+              // Immutable Base precisa reaplicá-lo a cada regeneração futura.
+              for (const k of keysInEdit) {
+                allPositions[k] = { cellText: cleanCellText, ordinal: edit.ordinal ?? 0, paraContent: edit.newContent };
+              }
+            }
+          }
         } else {
           console.info(`[schema/cell_edit] skip empty-cellText no-coord keys=${keysInEdit.join(",")}`);
         }
@@ -297,6 +319,16 @@ export async function PATCH(
           .replace(/\s*\{\{[A-Za-z_][A-Za-z0-9_]*\}\}\s*/g, " ")
           .replace(/\s+/g, " ")
           .trim();
+        // Parágrafo fora de tabela: reaplica o conteúdo completo salvo no 1º
+        // save. Sem match (ex.: outro chip do mesmo parágrafo já reescreveu a
+        // linha nesta passada), segue sem tentar os injetores de célula — eles
+        // poderiam acertar uma célula errada por texto parecido.
+        if (pos.paraContent) {
+          const prevBuf = buffer;
+          buffer = injectIntoParagraph(buffer, cleanCellText, pos.ordinal, pos.paraContent);
+          console.info(`[schema/1b] key=${key} paragraph changed=${buffer !== prevBuf}`);
+          continue;
+        }
         if (pos.coord) {
           if (pos.coord.startsWith("HF:")) {
             // Header/footer structural coord.

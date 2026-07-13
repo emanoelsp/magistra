@@ -1229,6 +1229,54 @@ function setCellContent(cellXml: string, content: string): string {
   return cellXml.replace(firstPara, newPara);
 }
 
+// ── Standalone paragraph injection ────────────────────────────────────────────
+
+/**
+ * Rewrites the Nth paragraph whose text matches `paraText` with `newContent`,
+ * preserving paragraph (pPr) and run (rPr) formatting.
+ *
+ * Fallback dos cell_edits para linhas FORA de células — ex.: o título
+ * "PLANEJAMENTO MENSAL PERÍODO ___/___/2026" onde o professor digita um chip.
+ * O caminho sem coord só tentava injectRawCell (procura <w:tc>) e o chip
+ * sumia em silêncio no save. Matching por texto COMPACTADO (sem espaços,
+ * tabs e underscores, case-insensitive) porque leaders de preenchimento
+ * (____, tabs) variam entre o extractText do XML e o textContent do DOM.
+ *
+ * Returns the original buffer untouched when no paragraph matches.
+ */
+export function injectIntoParagraph(
+  docxBuffer: Buffer,
+  paraText: string,
+  ordinal: number,
+  newContent: string,
+): Buffer {
+  const zip = new PizZip(docxBuffer);
+  const xmlPath = "word/document.xml";
+  if (!zip.files[xmlPath]) return docxBuffer;
+  const xml = zip.files[xmlPath].asText();
+
+  const compact = (s: string) =>
+    s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[\s_]+/g, "");
+  const target = compact(paraText);
+  if (!target) return docxBuffer;
+
+  const matches: Array<{ paraXml: string; start: number }> = [];
+  const paraRe = /<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g;
+  let m: RegExpExecArray | null;
+  while ((m = paraRe.exec(xml)) !== null) {
+    if (compact(extractText(m[0])) === target) matches.push({ paraXml: m[0], start: m.index });
+  }
+  // Ordinal do cliente conta ocorrências no DOM (células + parágrafos juntos);
+  // aqui só parágrafos contam — se o índice não existir, a 1ª ocorrência vale.
+  const hit = matches[Math.max(0, ordinal)] ?? matches[0];
+  if (!hit) return docxBuffer;
+
+  const newParaXml = clearAndSetCellText(hit.paraXml, newContent);
+  if (newParaXml === hit.paraXml) return docxBuffer;
+  zip.file(xmlPath, spliceAt(xml, hit.start, hit.paraXml, newParaXml));
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
 // ── Latent page breaks ────────────────────────────────────────────────────────
 
 /**
