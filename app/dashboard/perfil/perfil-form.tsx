@@ -2,14 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, BookOpen, Check, ChevronDown, Eye, EyeOff, Loader2, Lock } from "lucide-react";
-import type { PerfilPedagogico } from "../../../lib/types/firestore";
+import { AlertCircle, Check, ChevronDown, Eye, EyeOff, Loader2, Lock } from "lucide-react";
 
 interface PerfilFormProps {
   nome: string;
   email: string;
   escolaPadrao: string | null;
-  perfilPedagogico: PerfilPedagogico;
 }
 
 // ─── Dados pessoais ───────────────────────────────────────────────────────────
@@ -18,7 +16,7 @@ function DadosPessoaisSection({
   nome,
   email,
   escolaPadrao,
-}: Omit<PerfilFormProps, "perfilPedagogico">) {
+}: PerfilFormProps) {
   const router = useRouter();
   const [values, setValues] = useState({
     nome: nome ?? "",
@@ -134,197 +132,6 @@ function DadosPessoaisSection({
             </span>
           ) : (
             "Salvar alterações"
-          )}
-        </button>
-
-        {saved && (
-          <span className="flex items-center gap-1.5 text-sm font-medium text-emerald-600">
-            <Check className="h-4 w-4" />
-            Salvo!
-          </span>
-        )}
-
-        {error && <span className="text-sm text-rose-600">{error}</span>}
-      </div>
-    </form>
-  );
-}
-
-// ─── Dados pedagógicos ────────────────────────────────────────────────────────
-
-const NIVEIS_ENSINO = [
-  { value: "",     label: "Selecione…" },
-  { value: "EI",   label: "Educação Infantil (EI)" },
-  { value: "EF1",  label: "Ensino Fundamental — Anos Iniciais (1º ao 5º)" },
-  { value: "EF2",  label: "Ensino Fundamental — Anos Finais (6º ao 9º)" },
-  { value: "EM",   label: "Ensino Médio (EM)" },
-  { value: "EJA",  label: "EJA" },
-  { value: "TEC",  label: "Ensino Técnico / Profissionalizante" },
-];
-
-const UFS = [
-  "",
-  "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT",
-  "PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO",
-];
-
-function DadosPedagogicosSection({ initial }: { initial: PerfilPedagogico }) {
-  const router = useRouter();
-  const [values, setValues] = useState<PerfilPedagogico>({
-    disciplina:   initial.disciplina   ?? "",
-    turma:        initial.turma        ?? "",
-    nivel_ensino: initial.nivel_ensino ?? "",
-    uf:           initial.uf           ?? "",
-    municipio:    initial.municipio    ?? "",
-    cargo:        initial.cargo        ?? "",
-  });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const dirty = JSON.stringify(values) !== JSON.stringify({
-    disciplina:   initial.disciplina   ?? "",
-    turma:        initial.turma        ?? "",
-    nivel_ensino: initial.nivel_ensino ?? "",
-    uf:           initial.uf           ?? "",
-    municipio:    initial.municipio    ?? "",
-    cargo:        initial.cargo        ?? "",
-  });
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!dirty) return;
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-
-    try {
-      const res = await fetch("/api/user/profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ perfil_pedagogico: values }),
-      });
-
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Erro ao salvar");
-
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Não foi possível salvar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const set = (k: keyof PerfilPedagogico) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setValues((v) => ({ ...v, [k]: e.target.value }));
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-700">
-        Preencha uma vez e a Magis usa esses dados para sugerir automaticamente os campos pedagógicos dos seus planos — sem precisar de IA.
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Componente curricular principal
-          </label>
-          <input
-            type="text"
-            value={values.disciplina ?? ""}
-            onChange={set("disciplina")}
-            placeholder="ex: Língua Portuguesa"
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Turma / Série
-          </label>
-          <input
-            type="text"
-            value={values.turma ?? ""}
-            onChange={set("turma")}
-            placeholder="ex: 9º B, Turma 301"
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Nível de ensino
-          </label>
-          <select
-            value={values.nivel_ensino ?? ""}
-            onChange={set("nivel_ensino")}
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950 bg-white"
-          >
-            {NIVEIS_ENSINO.map((n) => (
-              <option key={n.value} value={n.value}>{n.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Cargo / Função
-          </label>
-          <input
-            type="text"
-            value={values.cargo ?? ""}
-            onChange={set("cargo")}
-            placeholder="ex: Professor, Coordenador"
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Estado (UF)
-          </label>
-          <select
-            value={values.uf ?? ""}
-            onChange={set("uf")}
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950 bg-white"
-          >
-            <option value="">Selecione…</option>
-            {UFS.filter(Boolean).map((uf) => (
-              <option key={uf} value={uf}>{uf}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Município
-          </label>
-          <input
-            type="text"
-            value={values.municipio ?? ""}
-            onChange={set("municipio")}
-            placeholder="ex: Florianópolis"
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-950"
-          />
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 pt-1">
-        <button
-          type="submit"
-          disabled={saving || !dirty}
-          className="rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {saving ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Salvando…
-            </span>
-          ) : (
-            "Salvar dados pedagógicos"
           )}
         </button>
 
@@ -498,26 +305,16 @@ function AlterarSenhaSection() {
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 
-export function PerfilForm({ nome, email, escolaPadrao, perfilPedagogico }: PerfilFormProps) {
+// "Dados pedagógicos" foi removido: o mesmo professor atua em escolas e turmas
+// diferentes — esses dados pertencem ao momento de gerar o plano (metadados).
+// Organização por escolas/turmas é funcionalidade dos planos pagos superiores.
+export function PerfilForm({ nome, email, escolaPadrao }: PerfilFormProps) {
   return (
     <div className="space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="mb-5 text-lg font-semibold tracking-tight text-slate-950">Dados pessoais</h2>
         <DadosPessoaisSection nome={nome} email={email} escolaPadrao={escolaPadrao} />
         <AlterarSenhaSection />
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-5 flex items-center gap-2.5">
-          <div className="rounded-xl bg-blue-100 p-2 text-blue-600">
-            <BookOpen className="h-4 w-4" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold leading-tight tracking-tight text-slate-950">Dados pedagógicos</h2>
-            <p className="text-xs text-slate-500">Preenchidos automaticamente nos campos de perfil dos seus planos</p>
-          </div>
-        </div>
-        <DadosPedagogicosSection initial={perfilPedagogico} />
       </div>
     </div>
   );

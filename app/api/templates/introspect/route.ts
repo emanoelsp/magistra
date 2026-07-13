@@ -659,6 +659,20 @@ export async function POST(request: Request) {
     }
     console.info(`[introspect] Campos baixa confiança: ${camposBaixaConfianca.length > 0 ? camposBaixaConfianca.join(", ") : "nenhum"}`);
 
+    // Nome do professor é dado fixo por definição: se o perfil tem nome real,
+    // o campo professor do template já nasce com Valor padrão preenchido —
+    // aparece na config do template e pré-preenche o balão da geração.
+    // Só por prefixo de key (professor/docente/nome_prof): label contendo
+    // "professor" pega falso positivo ("ADAPTAÇÕES ... DO PROFESSOR REGENTE").
+    const nomeProfessor = (user.nome ?? "").trim();
+    if (nomeProfessor && !nomeProfessor.includes("@")) {
+      for (const field of schema) {
+        if (!field.defaultValue && field.role !== "ia_sugerida" && /^(professor|docente|nome_prof)/.test(field.key)) {
+          field.defaultValue = nomeProfessor;
+        }
+      }
+    }
+
     void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
       void logUsage({
         userId: user.uid,
