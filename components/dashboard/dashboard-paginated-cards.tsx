@@ -313,7 +313,8 @@ export function PlanosPaginatedList({ items: initialItems, pageSize = DEFAULT_PA
                     </button>
                   )
                 )}
-                {(plano.status === "rascunho" || plano.status === "aguardando_geracao") && (
+                {/* Escondido durante a confirmação de exclusão para o foco ficar no Confirmar/Cancelar */}
+                {(plano.status === "rascunho" || plano.status === "aguardando_geracao") && confirmingId !== plano.id && (
                   <Link
                     href={`/dashboard/gerar?resume=${plano.id}`}
                     className="flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-medium text-violet-700 transition hover:border-violet-400 hover:bg-violet-100 sm:px-3"

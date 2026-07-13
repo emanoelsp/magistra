@@ -68,18 +68,15 @@ export function GerarPlanoTrigger({
   const [open, setOpen] = useState(hasTemplates && (!!resumeData || !!preSelectedTemplateId || !!peiEstudanteId));
   const router = useRouter();
   // Soft delete otimista: some da lista na hora; router.refresh() confirma
-  // contra o servidor (a query já filtra deleted_at)
+  // contra o servidor (a query já filtra deleted_at). Confirmação inline
+  // (Confirmar/Cancelar no lugar dos botões) — mesmo padrão do dashboard.
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const visiblePlanos = recentPlanos.filter((p) => !deletedIds.has(p.id));
 
   async function handleDeletePlano(plano: RecentPlano) {
     if (deletingId) return;
-    const titulo =
-      typeof plano.conteudo_gerado?._plano_titulo === "string" && plano.conteudo_gerado._plano_titulo.trim()
-        ? plano.conteudo_gerado._plano_titulo
-        : plano.template_nome;
-    if (!window.confirm(`Excluir o rascunho "${titulo}"?\n\nEssa ação não pode ser desfeita.`)) return;
     setDeletingId(plano.id);
     try {
       await planosService.deletePlano(plano.id);
@@ -90,6 +87,7 @@ export function GerarPlanoTrigger({
       showMagisToast("Não consegui excluir o rascunho. Tente novamente.", "error");
     } finally {
       setDeletingId(null);
+      setConfirmingId(null);
     }
   }
 
@@ -221,27 +219,50 @@ export function GerarPlanoTrigger({
                             Baixar
                           </a>
                         )}
-                        {plano.status !== "gerado" && (
-                          <Link
-                            href={`/dashboard/gerar?resume=${plano.id}`}
-                            className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:border-violet-600 hover:text-violet-800"
-                          >
-                            Continuar
-                          </Link>
-                        )}
                         {/* Excluir só para não-finalizados: planos "gerado" contam
-                            no limite mensal e não podem sair da contagem */}
+                            no limite mensal e não podem sair da contagem.
+                            Durante a confirmação, o Continuar some — foco no
+                            Confirmar/Cancelar (mesmo padrão do dashboard). */}
                         {plano.status !== "gerado" && (
-                          <button
-                            type="button"
-                            onClick={() => void handleDeletePlano(plano)}
-                            disabled={deletingId === plano.id}
-                            title="Excluir rascunho"
-                            className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:border-rose-500 hover:bg-rose-50 disabled:opacity-50"
-                          >
-                            {deletingId === plano.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                            Excluir
-                          </button>
+                          confirmingId === plano.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingId(null)}
+                                disabled={deletingId === plano.id}
+                                className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs text-slate-500 transition hover:border-slate-400 disabled:opacity-40"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeletePlano(plano)}
+                                disabled={deletingId === plano.id}
+                                className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:bg-rose-100 disabled:opacity-40"
+                              >
+                                {deletingId === plano.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                                {deletingId === plano.id ? "Excluindo…" : "Confirmar"}
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <Link
+                                href={`/dashboard/gerar?resume=${plano.id}`}
+                                className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:border-violet-600 hover:text-violet-800"
+                              >
+                                Continuar
+                              </Link>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingId(plano.id)}
+                                title="Excluir rascunho"
+                                className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:border-rose-500 hover:bg-rose-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Excluir
+                              </button>
+                            </>
+                          )
                         )}
                       </div>
                     </li>
