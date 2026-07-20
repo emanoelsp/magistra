@@ -237,14 +237,14 @@ export function GerarPlanoFlow({
       return (
         <MagisModal>
           <MagisHeader onClose={() => setPhase("wizard")} />
-          <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+          <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
             {hasPeiShortcut ? (
               <MagisBubble text="Você ainda não tem templates de Plano Educacional Individualizado. Cadastre um template PEI primeiro." />
             ) : (
               <MagisBubble text="Você ainda não tem templates cadastrados. Vamos criar o primeiro?" />
             )}
           </div>
-          <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-2">
+          <div className="min-h-0 overflow-y-auto border-t border-slate-200 bg-white px-5 py-4 space-y-2">
             <Link
               href="/dashboard/templates"
               className="flex w-full items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
@@ -265,14 +265,14 @@ export function GerarPlanoFlow({
     return (
       <MagisModal>
         <MagisHeader onClose={() => setPhase("wizard")} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
           {hasPeiShortcut ? (
             <MagisBubble text={`Vou criar um Plano Educacional Individualizado para ${peiEstudanteNome ?? "o estudante"}. Qual template PEI você quer usar?`} />
           ) : (
             <MagisBubble text="Vi que você tem templates cadastrados! Qual deles você quer usar nesse plano?" />
           )}
         </div>
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        <div className="min-h-0 overflow-y-auto border-t border-slate-200 bg-white px-5 py-4 space-y-3">
           <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
             {visibleTemplates.map((t) => (
               <label
@@ -343,13 +343,13 @@ export function GerarPlanoFlow({
     return (
       <MagisModal wide>
         <MagisHeader onClose={() => setPhase("wizard")} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
           <MagisBubble text="Este é um Plano Educacional Individualizado (2º Professor). Para qual estudante você vai criar o plano?" />
           {estudantes.length === 0 && (
             <MagisBubble text="Você ainda não tem estudantes cadastrados. Cadastre o aluno antes de criar o plano." />
           )}
         </div>
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        <div className="min-h-0 overflow-y-auto border-t border-slate-200 bg-white px-5 py-4 space-y-3">
           {estudantes.length > 0 ? (
             <>
               <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
@@ -446,14 +446,16 @@ export function GerarPlanoFlow({
     return (
       <MagisModal wide>
         <MagisHeader onClose={() => setPhase("wizard")} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
           <MagisBubble text="Envie os planos de ensino dos professores regentes (PDF ou DOCX). Podem ser vários de uma vez." />
           <MagisBubble text="A IA extrai os campos por disciplina e já monta os blocos da Seção 3 no editor do PEI — um bloco por disciplina, com habilidades e conteúdo da turma pré-preenchidos." />
         </div>
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        {/* flex/min-h-0: a lista scrolla e os botões NUNCA saem da tela — com o
+            teto de 80vh do card, conteúdo alto cortava o Avançar (fora do alcance) */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 border-t border-slate-200 bg-white px-5 py-4">
           {/* Drop zone */}
           <div
-            className="relative flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition"
+            className="relative flex shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition"
             onClick={() => regenteInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
@@ -483,9 +485,9 @@ export function GerarPlanoFlow({
             <p className="text-xs text-slate-400">PDF, DOCX · máx. 10 MB cada</p>
           </div>
 
-          {/* Extracted discipline blocks list */}
+          {/* Extracted discipline blocks list — cresce até o teto do modal e scrolla */}
           {disciplinaBlocks.length > 0 && (
-            <ul className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+            <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
               {disciplinaBlocks.map((b, i) => (
                 <li key={`${b.arquivo_nome}-${i}`} className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs">
                   <BookOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" />
@@ -511,14 +513,14 @@ export function GerarPlanoFlow({
           <button
             type="button"
             onClick={() => goToNomePlano()}
-            className="w-full rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 transition"
+            className="w-full shrink-0 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 transition"
           >
             {disciplinaBlocks.length > 0 ? `Continuar com ${disciplinaBlocks.length} disciplina(s) →` : "Pular →"}
           </button>
           <button
             type="button"
             onClick={() => setIntroStep(hasPeiShortcut ? "template" : "estudante")}
-            className="w-full rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="w-full shrink-0 rounded-2xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             ← Voltar
           </button>
@@ -535,13 +537,13 @@ export function GerarPlanoFlow({
     return (
       <MagisModal wide>
         <MagisHeader onClose={() => setPhase("wizard")} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
           <MagisBubble text="Deseja associar esse plano a uma escola?" />
           {escolas.length === 0 && (
             <MagisBubble text="Você ainda não tem escolas cadastradas." />
           )}
         </div>
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        <div className="min-h-0 overflow-y-auto border-t border-slate-200 bg-white px-5 py-4 space-y-3">
           {escolas.length > 0 && (
             <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-2.5 cursor-pointer hover:bg-slate-50">
@@ -602,10 +604,10 @@ export function GerarPlanoFlow({
     return (
       <MagisModal wide>
         <MagisHeader onClose={() => setPhase("wizard")} />
-        <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+        <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
           <MagisBubble text={`Qual curso está relacionado a essa aula em ${selectedEscola?.nome ?? "sua escola"}?`} />
         </div>
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+        <div className="min-h-0 overflow-y-auto border-t border-slate-200 bg-white px-5 py-4 space-y-3">
           <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
             <label className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-2.5 cursor-pointer hover:bg-slate-50">
               <input
@@ -739,10 +741,10 @@ export function GerarPlanoFlow({
   return (
     <MagisModal>
       <MagisHeader onClose={() => setPhase("wizard")} />
-      <div className="bg-[#ece5dd] px-4 py-5 space-y-2">
+      <div className="shrink-0 bg-[#ece5dd] px-4 py-5 space-y-2">
         <MagisBubble text="Vou criar o plano com esse nome — se desejar alterar, é só editar abaixo!" />
       </div>
-      <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-4 space-y-3">
+      <div className="min-h-0 overflow-y-auto border-t border-slate-200 bg-white px-5 py-4 space-y-3">
         <input
           type="text"
           value={planoTitulo}
