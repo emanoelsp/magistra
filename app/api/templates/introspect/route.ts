@@ -672,6 +672,17 @@ export async function POST(request: Request) {
         }
       }
     }
+    // Mesmo princípio para a escola padrão do perfil ("Preenchida automaticamente
+    // nos planos que você gerar" — promessa da página de perfil): campos de
+    // escola nascem com Valor padrão, e o wizard pré-preenche o balão.
+    const escolaPadrao = (user.escola_padrao ?? "").trim();
+    if (escolaPadrao) {
+      for (const field of schema) {
+        if (!field.defaultValue && field.role !== "ia_sugerida" && /^(escola|unidade_escolar|colegio|instituicao)/.test(field.key)) {
+          field.defaultValue = escolaPadrao;
+        }
+      }
+    }
 
     void import("../../../../lib/services/usage-logger").then(({ logUsage }) => {
       void logUsage({
@@ -693,6 +704,10 @@ export async function POST(request: Request) {
       campos_baixa_confianca: camposBaixaConfianca,
       template_type,
       tipo_incerto,
+      // escola_nome do template alimenta o pré-preenchimento do wizard e o
+      // agrupamento por escola — sem carimbar aqui, template de conta nova
+      // nunca ganhava escola. Nunca sobrescreve um escola_nome já definido.
+      ...(escolaPadrao && !templateSnap.data()?.escola_nome ? { escola_nome: escolaPadrao } : {}),
     });
 
     console.log("[PlanoMagistra] 2. Campos extraídos com sucesso", { templateId, totalCampos: schema.length, provider: aiProvider, format: aiFormat });

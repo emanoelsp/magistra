@@ -23,6 +23,8 @@ interface GerarPlanoTriggerProps {
   userId: string;
   userName: string;
   userEmail?: string;
+  /** Escola padrão do perfil — fallback de pré-preenchimento quando o template não tem escola. */
+  userEscolaPadrao?: string;
   templates: TemplateOption[];
   escolas: EscolaRecord[];
   turmas: TurmaRecord[];

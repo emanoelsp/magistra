@@ -16,6 +16,8 @@ interface GerarPlanoFlowProps {
   userId: string;
   userName: string;
   userEmail?: string;
+  /** Escola padrão do perfil — fallback de pré-preenchimento quando o template não tem escola. */
+  userEscolaPadrao?: string;
   templates: TemplateOption[];
   escolas: EscolaRecord[];
   turmas: TurmaRecord[];
@@ -116,6 +118,7 @@ export function GerarPlanoFlow({
   userId,
   userName,
   userEmail,
+  userEscolaPadrao,
   templates,
   escolas,
   turmas,
@@ -206,6 +209,7 @@ export function GerarPlanoFlow({
         userId={userId}
         userName={userName}
         userEmail={userEmail}
+        userEscolaPadrao={userEscolaPadrao}
         availableTemplates={templates}
         preSelectedTemplateId={selectedTemplateId || undefined}
         recentPlanos={recentPlanos}

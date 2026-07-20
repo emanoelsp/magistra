@@ -53,6 +53,8 @@ interface PlanGenerationWizardProps {
   userId: string;
   userName: string;
   userEmail?: string;
+  /** Escola padrão do perfil — fallback de pré-preenchimento quando o template não tem escola. */
+  userEscolaPadrao?: string;
   availableTemplates: TemplateOption[];
   preSelectedTemplateId?: string;
   recentPlanos?: RecentPlano[];
@@ -131,6 +133,7 @@ export function PlanGenerationWizard({
   userId,
   userName,
   userEmail,
+  userEscolaPadrao,
   availableTemplates,
   preSelectedTemplateId,
   recentPlanos = [],
@@ -259,12 +262,16 @@ export function PlanGenerationWizard({
     for (const f of manualFields) {
       initial[f.key] = saved[f.key] ?? f.defaultValue ?? "";
     }
-    if (selectedTemplate.escolaNome) {
+    // Escola: template.escolaNome primeiro; escola padrão do PERFIL como
+    // fallback — é a promessa da página de perfil ("Preenchida automaticamente
+    // nos planos que você gerar") e a única fonte em contas novas/plano free.
+    const escolaPrefill = selectedTemplate.escolaNome || userEscolaPadrao?.trim() || "";
+    if (escolaPrefill) {
       const escolaField = manualFields.find(
         (f) => f.key.includes("escola") || f.label.toLowerCase().includes("escola"),
       );
       if (escolaField && !initial[escolaField.key]) {
-        initial[escolaField.key] = selectedTemplate.escolaNome;
+        initial[escolaField.key] = escolaPrefill;
       }
     }
     if (initialTurmaId && !hasAppliedInitialTurmaRef.current) {
