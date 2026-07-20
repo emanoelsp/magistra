@@ -208,6 +208,7 @@ export default async function GerarPlanoPage({ searchParams }: GerarPlanoPagePro
           hasPlanos={planos.length > 0}
           canAssociateEscola={caps.canAssociateEscola}
           canUseBulkIa={caps.canUseBulkIa}
+          canAccessHistorico={caps.canAccessHistorico}
         />
       )}
 

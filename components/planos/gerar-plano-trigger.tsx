@@ -48,6 +48,8 @@ interface GerarPlanoTriggerProps {
   hasPlanos: boolean;
   canAssociateEscola?: boolean;
   canUseBulkIa?: boolean;
+  /** Esconde o link do histórico para planos sem acesso (free) — a página redirecionaria em silêncio. */
+  canAccessHistorico?: boolean;
 }
 
 export function GerarPlanoTrigger({
@@ -61,6 +63,7 @@ export function GerarPlanoTrigger({
   recentPlanos,
   canAssociateEscola = true,
   canUseBulkIa = true,
+  canAccessHistorico = true,
   estudantes = [],
   canManageEstudantes = false,
   ...flowProps
@@ -270,14 +273,16 @@ export function GerarPlanoTrigger({
                 })}
               </ul>
 
-              <div className="mt-4 border-t border-slate-100 pt-4 text-center">
-                <Link
-                  href="/dashboard/historico"
-                  className="text-sm font-medium text-slate-500 transition hover:text-slate-900"
-                >
-                  Ver histórico de planos gerados →
-                </Link>
-              </div>
+              {canAccessHistorico && (
+                <div className="mt-4 border-t border-slate-100 pt-4 text-center">
+                  <Link
+                    href="/dashboard/historico"
+                    className="text-sm font-medium text-slate-500 transition hover:text-slate-900"
+                  >
+                    Ver histórico de planos gerados →
+                  </Link>
+                </div>
+              )}
             </div>
           )}
         </div>

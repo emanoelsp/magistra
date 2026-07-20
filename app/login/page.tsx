@@ -77,7 +77,10 @@ function LoginForm() {
             nome: credentials.user.displayName ?? "",
             email: credentials.user.email ?? email,
             escola_padrao: null,
-            plano: "medio",
+            // Fonte de verdade: todo usuário nasce free (Explorador) — o
+            // onboarding confirma e upgrades passam pelo Mercado Pago.
+            // "medio" aqui dava Mestre de graça a quem fechasse o onboarding.
+            plano: "free",
             plano_validade: null,
             tokens_usados_mes: 0,
             onboarding_concluido: false,

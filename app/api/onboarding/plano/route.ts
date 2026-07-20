@@ -20,7 +20,7 @@ export async function POST(request: Request) {
 
     if (!plano || !ALLOWED_PLANS.includes(plano as (typeof ALLOWED_PLANS)[number])) {
       return NextResponse.json(
-        { error: "Plano inválido. Somente 'starter' disponível no MVP." },
+        { error: "Plano inválido. A ativação direta vale só para o plano gratuito — planos pagos passam pelo checkout." },
         { status: 400 },
       );
     }

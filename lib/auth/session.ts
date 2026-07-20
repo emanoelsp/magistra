@@ -81,6 +81,14 @@ export const getCurrentUserProfile = cache(async (): Promise<UserProfile | null>
         : 0,
     role: userData.role === "admin" ? "admin" : "professor",
     is_segundo_professor,
+    // Contadores do teto mensal de IA: as rotas ia/campo e ia/gerar-plano leem
+    // ESTES campos do profile para decidir o bloqueio. Sem o mapeamento, o
+    // callsMes era sempre 0 e o limite mensal nunca bloqueava ninguém.
+    ia_campo_calls_mes:
+      typeof userData.ia_campo_calls_mes === "number" && Number.isFinite(userData.ia_campo_calls_mes)
+        ? userData.ia_campo_calls_mes
+        : undefined,
+    ia_campo_mes: typeof userData.ia_campo_mes === "string" ? userData.ia_campo_mes : undefined,
     perfil_pedagogico: ((): PerfilPedagogico | undefined => {
       const pp = userData.perfil_pedagogico;
       if (!pp || typeof pp !== "object") return undefined;
