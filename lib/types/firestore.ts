@@ -238,6 +238,12 @@ export interface PlanoRecord {
   pdf_url?: string;
   pdf_status?: "gerando" | "pronto" | "erro";
   pdf_error?: string;
+  /**
+   * True quando o PDF armazenado é o layout genérico (buildFallbackPdf), NÃO a
+   * conversão fiel do DOCX — acontece quando Gotenberg e CloudConvert falham.
+   * O download evita servir este PDF do cache e tenta uma conversão fiel nova.
+   */
+  pdf_is_fallback?: boolean;
 }
 
 export interface CreatePlanoInput {
