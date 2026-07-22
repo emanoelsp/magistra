@@ -786,7 +786,28 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
 
       const currentText = el.textContent ?? "";
       const matches = [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)];
-      if (matches.length === 0) continue;
+      if (matches.length === 0) {
+        // Sem chip: capturar mudança de TEXTO LIVRE (adicionado/editado/limpo) como
+        // override de conteúdo completo. Baseline (originalTextsRef) já vem sem
+        // chips e normalizado; compara com o texto atual normalizado.
+        const baseline = originalTextsRef.current.get(el) ?? "";
+        const currentNorm = currentText.replace(/\s+/g, " ").trim();
+        if (currentNorm !== baseline) {
+          const alreadyQueued = cellEdits.some(
+            (ce) => ce.replaceContent && ce.coord === coord && ce.ordinal === effectiveOrdinal,
+          );
+          if (!alreadyQueued) {
+            cellEdits.push({
+              cellText: baseline,
+              ordinal: effectiveOrdinal,
+              newContent: currentText,
+              coord,
+              replaceContent: true,
+            });
+          }
+        }
+        continue;
+      }
 
       // Register each key in scan order and detect new fields.
       for (const match of matches) {
@@ -906,12 +927,31 @@ function DocxInteractive({ templateId, fields, fieldPositions, activeKey, locate
 
         const currentText = el.textContent ?? "";
         const matches = [...currentText.matchAll(/\{\{([A-Za-z0-9_][A-Za-z0-9_]*)\}\}/g)];
-        if (matches.length === 0) continue;
-
         // data-hf-coord is assigned by assignHFCellCoords after rendering.
         // When present it uniquely identifies the XML cell so we can always send
         // a precise cellEdit — even for cells that were originally empty.
         const hfCoord = el.getAttribute("data-hf-coord") ?? undefined;
+
+        if (matches.length === 0) {
+          // Texto livre em célula de cabeçalho/rodapé — só com hfCoord (sem coord,
+          // injectRawCell empty-cell mode escreveria na célula errada do corpo).
+          const currentNorm = currentText.replace(/\s+/g, " ").trim();
+          if (hfCoord && currentNorm !== originalText) {
+            const alreadyQueued = cellEdits.some(
+              (ce) => ce.replaceContent && ce.coord === hfCoord && ce.ordinal === ordinal,
+            );
+            if (!alreadyQueued) {
+              cellEdits.push({
+                cellText: originalText,
+                ordinal,
+                newContent: currentText,
+                coord: hfCoord,
+                replaceContent: true,
+              });
+            }
+          }
+          continue;
+        }
 
         // Skip cells where originalText is empty AND we have no HF coord.
         // Without a coord we'd have to use injectRawCell empty-cell mode, which

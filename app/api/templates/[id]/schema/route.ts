@@ -24,7 +24,7 @@ import {
   wrapAllChipsInSdt,
 } from "../../../../../lib/utils/docx-filler";
 import { requireCurrentUserProfile } from "../../../../../lib/auth/session";
-import type { TemplateFieldSchema } from "../../../../../lib/types/firestore";
+import type { ContentEdit, TemplateFieldSchema } from "../../../../../lib/types/firestore";
 
 interface FieldPosition {
   cellText: string;
@@ -174,7 +174,23 @@ export async function PATCH(
     // get re-injected in B, causing duplication. Fix: strip repositioned keys from
     // the original as well, by passing (newKeys − repositionedKeys) to the strip pass.
     // After stripping, cell_edits inject them at the correct new locations.
-    const cellEditsPayload: CellEdit[] = Array.isArray(body.cell_edits) ? body.cell_edits : [];
+    // Content-edits overlay: edições completas de células/parágrafos EXISTENTES
+    // (texto livre + chips) persistidas e reaplicadas sobre o Immutable Base.
+    // O incoming (replaceContent, deste save) vence os armazenados na mesma
+    // posição; os armazenados não sobrescritos são reaplicados como replaceContent.
+    // Chave de dedupe: coord quando houver, senão cellText+ordinal.
+    const ceKey = (e: { coord?: string; cellText: string; ordinal: number }) =>
+      e.coord ?? `${e.cellText} ${e.ordinal}`;
+    const incomingCellEdits: CellEdit[] = Array.isArray(body.cell_edits) ? body.cell_edits : [];
+    const storedContentEdits: CellEdit[] = Array.isArray(data.content_edits)
+      ? (data.content_edits as ContentEdit[]).map((e) => ({ ...e, replaceContent: true as const }))
+      : [];
+    const incomingReplaceKeys = new Set(
+      incomingCellEdits.filter((e) => e.replaceContent).map(ceKey),
+    );
+    const storedNotOverridden = storedContentEdits.filter((e) => !incomingReplaceKeys.has(ceKey(e)));
+    const cellEditsPayload: CellEdit[] = [...incomingCellEdits, ...storedNotOverridden];
+
     const repositionedKeys = new Set<string>(
       cellEditsPayload.flatMap((edit) =>
         [...(edit.newContent ?? "").matchAll(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g)].map((m) => m[1]),
@@ -473,6 +489,28 @@ export async function PATCH(
       }
     }
 
+    // 5c. Persistir o overlay de content-edits (união armazenados + incoming,
+    // incoming vence). Reaplicado a cada save para o texto livre/chips das
+    // células editadas sobreviverem ao Immutable Base. Cleanup: remove tokens
+    // de campos deletados (não estão em newKeys) — mesma proteção anti-ghost.
+    const stripDeletedTokens = (content: string) =>
+      content.replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (m, k: string) => (newKeys.has(k) ? m : ""));
+    const mergedContentMap = new Map<string, ContentEdit>();
+    for (const e of storedContentEdits) {
+      mergedContentMap.set(ceKey(e), { coord: e.coord, cellText: e.cellText, ordinal: e.ordinal, newContent: e.newContent });
+    }
+    for (const e of incomingCellEdits) {
+      if (!e.replaceContent) continue; // só full-content vira override persistido
+      mergedContentMap.set(ceKey(e), { coord: e.coord, cellText: e.cellText, ordinal: e.ordinal, newContent: e.newContent });
+    }
+    const persistedContentEdits: ContentEdit[] = [...mergedContentMap.values()].map((e) => {
+      const cleaned = stripDeletedTokens(e.newContent);
+      // Firestore rejeita undefined — só inclui coord quando presente
+      return e.coord
+        ? { coord: e.coord, cellText: e.cellText, ordinal: e.ordinal, newContent: cleaned }
+        : { cellText: e.cellText, ordinal: e.ordinal, newContent: cleaned };
+    });
+
     // 6. Update Firestore (persist merged positions + corrections audit log)
     const firestoreUpdate: Record<string, unknown> = {
       nome,
@@ -483,6 +521,7 @@ export async function PATCH(
       arquivo_fillable_url: newFillableUrl,
       fillable_status: "pronto",
       field_positions: allPositions,    // source of truth for placement, now includes coords
+      content_edits: persistedContentEdits,
       remove_page_breaks: removePageBreaks,
     };
     if (corrections.length > 0) {

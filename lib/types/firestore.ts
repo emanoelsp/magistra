@@ -183,11 +183,32 @@ export interface TemplateRecord {
   fillable_status?: TemplateFillableStatus;
   /** Persisted cell-click positions (cellText + ordinal) keyed by field key. */
   field_positions?: Record<string, { cellText: string; ordinal: number }>;
+  /**
+   * Edições de CONTEÚDO (texto livre + chips) de células/parágrafos existentes,
+   * reaplicadas sobre o Immutable Base a cada regeneração do fillable. É o que
+   * dá liberdade de conteúdo preservando o design (só o texto do elemento muda).
+   */
+  content_edits?: ContentEdit[];
   /** Fields whose label has no structural backing in the deterministic scan — need manual review. */
   campos_baixa_confianca?: string[];
   /** Consented: strip pageBreakBefore outside tables when regenerating the fillable. */
   remove_page_breaks?: boolean;
   deleted_at?: string;
+}
+
+/**
+ * Uma edição de conteúdo de célula/parágrafo EXISTENTE do template.
+ * `coord` (T{ti}R{ri}C{ci} corpo, ou HF:{n} cabeçalho/rodapé) é a chave estável
+ * quando disponível; sem coord (parágrafo fora de tabela), casa por
+ * `cellText` (texto original, chips removidos) + `ordinal`. `newContent` é o
+ * conteúdo completo desejado, com chips no formato {{key}}. Espelha o CellEdit
+ * interno da rota schema.
+ */
+export interface ContentEdit {
+  coord?: string;
+  cellText: string;
+  ordinal: number;
+  newContent: string;
 }
 
 export interface CreateTemplateInput {
